@@ -10,12 +10,11 @@ set -e
 setup_zotonic()
 {
     cd /var/lib/zotonic
-    mkdir bin
+    test -d bin || mkdir bin
     cd bin
     ln -s ../zotonic/bin/zotonic
     cd ../zotonic
-    mkdir ebin
-    rm src/erlydtl/erlydtl_parser.erl
+    test -d ebin || mkdir ebin
     make -j3
     cd ..
     chown zotonic:zotonic . -R
