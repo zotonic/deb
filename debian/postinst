@@ -9,10 +9,14 @@ set -e
 
 setup_zotonic()
 {
-    cd /var/lib/zotonic/zotonic
+    cd /var/lib/zotonic
     mkdir bin
     cd bin
     ln -s ../zotonic/bin/zotonic
+    cd ../zotonic
+    mkdir ebin
+    make -j3
+    cd ..
     chown zotonic:zotonic . -R
 }
 
