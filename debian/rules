@@ -5,4 +5,4 @@ override_dh_auto_install:
 override_dh_auto_build:
 
 %:
-    dh $@
+	dh $@
