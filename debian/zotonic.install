@@ -7,4 +7,3 @@ modules/ /var/lib/zotonic/zotonic
 priv/ /var/lib/zotonic/zotonic
 Makefile /var/lib/zotonic/zotonic
 Emakefile /var/lib/zotonic/zotonic
-doc usr/share/doc/zotonic
