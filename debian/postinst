@@ -12,7 +12,7 @@ setup_zotonic()
     cd /var/lib/zotonic
     test -d bin || mkdir bin
     cd bin
-    ln -s ../zotonic/bin/zotonic
+    test -L zotonic || ln -s ../zotonic/bin/zotonic
     cd ../zotonic
     test -d ebin || mkdir ebin
     make -j3
