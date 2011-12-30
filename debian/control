@@ -5,10 +5,11 @@ Maintainer: Arjan Scherpenisse <arjan@scherpenisse.net>
 Build-Depends: debhelper (>= 7.0)
 Standards-Version: 3.9.2
 Homepage: http://zotonic.com/
+Vcs-Git: git://github.com/zotonic/zotonic.git
 
 Package: zotonic
 Architecture: any
-Depends: ${misc:Depends}, imagemagick, erlang, postgresql-8.4, python, erlang-base
-Description: The Erlang CMS
- This package contains Zotonic, an erlang-based web development
+Depends: adduser, ${erlang:Depends}, ${erlang-abi:Depends}, ${misc:Depends}, ${shlibs:Depends}, imagemagick, erlang, postgresql-8.4, python, erlang-base, openssl
+Description: distributed, fault-tolerant CMS and web framework
+ This package contains Zotonic, an Erlang-based web development
  framework and content management system.
