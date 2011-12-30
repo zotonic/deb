@@ -14,8 +14,12 @@ case "$1" in
     ;;
 
     purge)
-	rm -f /var/lib/zotonic/bin
-	rm -f /var/lib/zotonic/zotonic
+	rm -rf /var/lib/zotonic/bin
+	rm -rf /var/lib/zotonic/zotonic
+	if which deluser >/dev/null ; then
+	    deluser zotonic 2>/dev/null || true
+	    delgroup zotonic 2>/dev/null || true
+	fi
     ;;
 
     *)
