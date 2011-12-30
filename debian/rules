@@ -1,5 +1,5 @@
 #!/usr/bin/make -f
-DEB_BUILD_OPTIONS=noopt
+DEB_BUILD_OPTIONS=-Snone
 
 %:
 	dh $@
