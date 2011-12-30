@@ -1,3 +1,9 @@
+zotonic (0.7.3-3) oneiric; urgency=low
+
+  * Override unused dh_clean build stage to avoid erlang build dep
+
+ -- Arjan Scherpenisse <arjan@scherpenisse.net>  Fri, 30 Dec 2011 21:37:19 +0100
+
 zotonic (0.7.3-2) oneiric; urgency=low
 
   * Fixed the distribution in the changelog
