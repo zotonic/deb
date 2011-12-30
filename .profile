@@ -20,3 +20,6 @@ fi
 if [ -d "$HOME/bin" ] ; then
     PATH="$HOME/bin:$PATH"
 fi
+
+# load the Zotonic completion for this user
+source zotonic/src/scripts/helpers/zotonic_completion
