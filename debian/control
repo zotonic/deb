@@ -3,7 +3,7 @@ Section: erlang
 Priority: optional
 Maintainer: Arjan Scherpenisse <arjan@scherpenisse.net>
 Build-Depends: debhelper (>= 7.0)
-Standards-Version: 3.9.1
+Standards-Version: 3.9.2
 Homepage: http://zotonic.com/
 
 Package: zotonic
