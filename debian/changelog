@@ -1,3 +1,9 @@
+zotonic (0.7.3-2) oneiric; urgency=low
+
+  * Fixed the distribution in the changelog
+
+ -- Arjan Scherpenisse <arjan@scherpenisse.net>  Fri, 30 Dec 2011 21:22:50 +0100
+
 zotonic (0.7.3-1) unstable; urgency=low
 
   * Initial packaging.
