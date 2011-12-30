@@ -1,9 +1,10 @@
 bin/ /var/lib/zotonic/zotonic
+ebin/ /var/lib/zotonic/zotonic
 src/ /var/lib/zotonic/zotonic
 deps/ /var/lib/zotonic/zotonic
-doc usr/share/doc/zotonic
 include/ /var/lib/zotonic/zotonic
 modules/ /var/lib/zotonic/zotonic
 priv/ /var/lib/zotonic/zotonic
 Makefile /var/lib/zotonic/zotonic
 Emakefile /var/lib/zotonic/zotonic
+doc usr/share/doc/zotonic
