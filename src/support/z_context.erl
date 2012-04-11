@@ -46,10 +46,10 @@
 
     continue_session/1,
     has_session/1,
+    has_session_page/1,
     
     ensure_all/1,
     ensure_session/1,
-    ensure_page_session/1,
     ensure_qs/1,
 
     get_reqdata/1,
@@ -76,6 +76,7 @@
 
     set_session/3,
     get_session/2,
+    get_session/3,
     incr_session/3,
 
     set_page/3,
@@ -105,6 +106,10 @@
     get_req_header/2,
 
     get_req_path/1,
+
+    set_cookie/3,
+    set_cookie/4,
+    get_cookie/2,
 
     cookie_domain/1,
     document_domain/1,
@@ -379,7 +384,7 @@ output1([C|Rest], Context, Acc) ->
     
     render_script(Args, Context) ->
         NoStartup = z_convert:to_bool(proplists:get_value(nostartup, Args, false)),
-        Extra = [ S || S <- z_notifier:map({scomp_script_render, NoStartup, Args}, Context), S /= undefined ],
+        Extra = [ S || S <- z_notifier:map(#scomp_script_render{is_nostartup=NoStartup, args=Args}, Context), S /= undefined ],
         Script = case NoStartup of
             false ->
                 [ z_script:get_page_startup_script(Context),
@@ -441,19 +446,20 @@ copy_scripts(From, Context) ->
 
 %% @doc Continue an existing session, if the session id is in the request.
 continue_session(Context) ->
-    case Context#context.session_pid of
-        undefined ->
-            case z_session_manager:continue_session(Context) of
-                {ok, Context1} ->
-                    Context2 = z_auth:logon_from_session(Context1),
-                    z_notifier:foldl(session_context, Context2, Context2);
-                {error, _} ->
-                    Context
-            end;
-        _ ->
+    case z_session_manager:continue_session(Context) of
+        {ok, Context1} ->
+            Context2 = z_auth:logon_from_session(Context1),
+            z_notifier:foldl(session_context, Context2, Context2);
+        {error, _} ->
             Context
     end.
     
+
+%% @doc Check if the current context has a session page attached
+has_session_page(#context{page_pid=PagePid}) when is_pid(PagePid) ->
+    true;
+has_session_page(_) ->
+    false.
 
 %% @doc Check if the current context has a session attached
 has_session(#context{session_pid=SessionPid}) when is_pid(SessionPid) ->
@@ -462,18 +468,22 @@ has_session(_) ->
     false.
 
 
-%% @doc Ensure session and page session and fetch and parse the query string
+%% @doc Ensure session and page session. Fetches and parses the query string.
 ensure_all(Context) ->
-    ensure_page_session(
-        ensure_session(
-            ensure_qs(Context))).
+    case get(no_session, Context, false) of
+        false ->
+            ensure_page_session(ensure_session(ensure_qs(Context)));
+        true ->
+            continue_page_session(continue_session(ensure_qs(Context)))
+    end.
+
 
 
 %% @doc Ensure that we have a session, start a new session process when needed
 ensure_session(Context) ->
     case Context#context.session_pid of
         undefined ->
-            Context1 = z_session_manager:ensure_session(Context),
+            {ok, Context1} = z_session_manager:ensure_session(Context),
             Context2 = z_auth:logon_from_session(Context1),
             Context3 = z_notifier:foldl(session_context, Context2, Context2),
             add_nocache_headers(Context3);
@@ -481,15 +491,23 @@ ensure_session(Context) ->
             Context
     end.
 
-%% @doc Ensure that we have a page session, used for comet and postback requests
+%% @doc Ensure that we have a page session, used for comet and postback requests.
 ensure_page_session(Context) ->
     case Context#context.page_pid of
         undefined ->
-            Context1 = ensure_session(Context),
-            z_session:ensure_page_session(Context1);
+            z_session:ensure_page_session(Context);
         _ ->
             Context
     end.
+
+continue_page_session(Context) ->
+    case Context#context.session_pid of
+        undefined ->
+            Context;
+        _ ->
+            z_session:ensure_page_session(Context)
+    end.
+
 
 %% @doc Ensure that we have parsed the query string, fetch body if necessary
 ensure_qs(Context) ->
@@ -563,15 +581,19 @@ get_q(Key, Context, Default) ->
 %% @spec get_q_all(Context) -> [{Key::string(), [Values]}]
 %% @doc Get all parameters.
 get_q_all(Context) ->
-    {'q', Qs} = proplists:lookup('q', Context#context.props),
-    Qs.
+    case proplists:lookup('q', Context#context.props) of
+        {'q', Qs} -> Qs;
+        none -> []
+    end.
 
 
 %% @spec get_q_all(Key::string(), Context) -> [Values]
 %% @doc Get the all the parameters with the same name, returns the empty list when non found.
 get_q_all(Key, Context) ->
-    {'q', Qs} = proplists:lookup('q', Context#context.props),
-    proplists:get_all_values(z_convert:to_list(Key), Qs).
+    case proplists:lookup('q', Context#context.props) of
+        none -> [];
+        {'q', Qs} -> proplists:get_all_values(z_convert:to_list(Key), Qs)
+    end.
 
 
 %% @spec get_q_all_noz(Context) -> [{Key::string(), [Values]}]
@@ -584,6 +606,8 @@ get_q_all_noz(Context) ->
     is_zotonic_arg("postback") -> true;
     is_zotonic_arg("triggervalue") -> true;
     is_zotonic_arg("z_trigger_id") -> true;
+    is_zotonic_arg("z_target_id") -> true;
+    is_zotonic_arg("z_delegate") -> true;
     is_zotonic_arg("z_sid") -> true;
     is_zotonic_arg("z_pageid") -> true;
     is_zotonic_arg("z_v") -> true;
@@ -705,6 +729,13 @@ get_session(_Key, #context{session_pid=undefined}) ->
 get_session(Key, Context) ->
     z_session:get(Key, Context#context.session_pid).
 
+%% @spec get_session(Key, Context, DefaultValue) -> Value
+%% @doc Fetch the value of the session variable Key, falling back to default.
+get_session(_Key, #context{session_pid=undefined}, DefaultValue) ->
+    DefaultValue;
+get_session(Key, Context, DefaultValue) ->
+    z_session:get(Key, Context#context.session_pid, DefaultValue).
+
 %% @spec incr_session(Key, Increment, Context) -> {NewValue, NewContext}
 %% @doc Increment the session variable Key
 incr_session(Key, Value, Context) ->
@@ -786,8 +817,14 @@ language(Context) ->
 
 %% @doc Set the language of the context.
 %% @spec set_language(atom(), context()) -> context()
+set_language(Lang, Context) when is_atom(Lang) ->
+    Context#context{language=Lang};
 set_language(Lang, Context) ->
-    Context#context{language=Lang}.
+    Lang1 = z_convert:to_list(Lang),
+    case z_trans:is_language(Lang1) of
+        true -> set_language(list_to_atom(Lang1), Context);
+        false -> Context
+    end.
 
 %% @doc Set a response header for the request in the context.
 %% @spec set_resp_header(Header, Value, Context) -> NewContext
@@ -907,3 +944,24 @@ add_nocache_headers(Context = #context{wm_reqdata=ReqData}) ->
     % This let IE6 accept our cookies, basically we tell IE6 that our cookies do not contain any private data.
     RD3 = wrq:set_resp_header("P3P", "CP=\"NOI ADM DEV PSAi COM NAV OUR OTRo STP IND DEM\"", RD2),
     Context#context{wm_reqdata=RD3}.
+
+
+%% @doc Set a cookie value with default options.
+set_cookie(Key, Value, Context) ->
+    set_cookie(Key, Value, [], Context).
+
+%% @doc Set a cookie value with cookie options.
+set_cookie(Key, Value, Options, Context) ->
+    % Add domain to cookie if not set
+    Options1 = case proplists:lookup(domain, Options) of
+                   {domain, _} -> Options;
+                   none -> [{domain, z_context:cookie_domain(Context)}|Options]
+               end,
+    RD = Context#context.wm_reqdata,
+    Hdr = mochiweb_cookies:cookie(Key, Value, Options1),
+    RD1 = wrq:merge_resp_headers([Hdr], RD),
+    z_context:set_reqdata(RD1, Context).
+
+%% @doc Read a cookie value from the current request.
+get_cookie(Key, #context{wm_reqdata=RD}) ->
+    wrq:get_cookie_value(Key, RD).

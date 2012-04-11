@@ -23,71 +23,84 @@
 -include("zotonic.hrl").
 
 -export ([
-	are_equal/2,
-	assert/2,
-    encode_value/2,
-    decode_value/2,
-    encode_value_expire/3,
-    decode_value_expire/2,
-	checksum/2,
-	checksum_assert/3,
-	coalesce/1,
-	combine/2,
-	combine_defined/2,
-	decode/2,
-	depickle/2,
-	encode/2,
-	f/1,
-	f/2,
-	get_seconds/0,
-	group_by/3,
-	group_proplists/2,
-	hex_decode/1,
-	hex_encode/1,
-	index_proplist/2,
-	nested_proplist/1,
-	nested_proplist/2,
-	get_nth/2,
-	set_nth/3,
-	is_empty/1,
-	is_process_alive/1,
-	is_true/1,
-	js_escape/1,
-	js_array/1,
-	js_object/1,
-	js_object/2,
-	lib_dir/0,
-	lib_dir/1,
-	list_dir_recursive/1,
-	name_for_host/2,
-	only_digits/1,
-	only_letters/1,
-	is_iolist/1,
-	is_proplist/1,
-	os_escape/1,
-	os_filename/1,
-	pickle/2,
-	prefix/2,
-	prop_delete/2,
-	prop_replace/3,
-	randomize/1,
-	randomize/2,
-	replace1/3,
-	split/2,
-	split_in/2,
-	url_path_encode/1,
-	url_encode/1,
-	url_decode/1,
-	vsplit_in/2,
-    now/0,
-    now_msec/0,
-    tempfile/0,
-    temppath/0,
-    url_reserved_char/1,
-    url_unreserved_char/1,
-    url_valid_char/1,
-    flush_message/1
-]).
+          are_equal/2,
+          assert/2,
+          encode_value/2,
+          decode_value/2,
+          encode_value_expire/3,
+          decode_value_expire/2,
+          checksum/2,
+          checksum_assert/3,
+          coalesce/1,
+          combine/2,
+          combine_defined/2,
+          decode/2,
+          depickle/2,
+          encode/2,
+          f/1,
+          f/2,
+          get_seconds/0,
+          group_by/3,
+          group_proplists/2,
+          hex_decode/1,
+          hex_encode/1,
+          index_proplist/2,
+          nested_proplist/1,
+          nested_proplist/2,
+          get_nth/2,
+          set_nth/3,
+          is_empty/1,
+          is_process_alive/1,
+          erase_process_dict/0,
+          is_true/1,
+          js_escape/1,
+          js_array/1,
+          js_object/1,
+          js_object/2,
+          json_escape/1,
+          lib_dir/0,
+          lib_dir/1,
+          list_dir_recursive/1,
+          name_for_host/2,
+          only_digits/1,
+          only_letters/1,
+          is_iolist/1,
+          is_proplist/1,
+          os_escape/1,
+          os_filename/1,
+          pickle/2,
+          prefix/2,
+          prop_delete/2,
+          prop_replace/3,
+          randomize/1,
+          randomize/2,
+          replace1/3,
+          split/2,
+          split_in/2,
+          url_path_encode/1,
+          url_encode/1,
+          url_decode/1,
+          percent_encode/1,
+          vsplit_in/2,
+          now/0,
+          now_msec/0,
+          tempfile/0,
+          temppath/0,
+          url_reserved_char/1,
+          url_unreserved_char/1,
+          url_valid_char/1,
+          flush_message/1,
+          ensure_existing_module/1,
+          generate_username/2
+         ]).
+
+-define(is_uppercase_alpha(C), C >= $A, C =< $Z).
+-define(is_lowercase_alpha(C), C >= $a, C =< $z).
+-define(is_alpha(C), ?is_uppercase_alpha(C); ?is_lowercase_alpha(C)).
+-define(is_digit(C), C >= $0, C =< $9).
+-define(is_alphanumeric(C), ?is_alpha(C); ?is_digit(C)).
+-define(is_unreserved(C), ?is_alphanumeric(C); C =:= $-; C =:= $_; C =:= $.; C =:= $~).
+
 
 %%% FORMAT %%%
 
@@ -131,6 +144,15 @@ is_process_alive(Pid) ->
 		_ -> false
 	end.
 	
+
+
+%% @doc Safe erase of process dict, keeps some 'magical' proc_lib vars
+erase_process_dict() ->
+    Values = [ {K, erlang:get(K)} || K <- ['$initial_call', '$ancestors', '$erl_eval_max_line'] ],
+    erlang:erase(),
+    [ erlang:put(K,V) || {K,V} <- Values, V =/= undefined ],
+    ok.
+
 
 %%% HEX ENCODE and HEX DECODE
 
@@ -202,18 +224,18 @@ checksum_assert(Data, Checksum, Context) ->
 
 pickle(Data, Context) ->
     BData = erlang:term_to_binary(Data),
-	Nonce = z_ids:number(1 bsl 31),
-	Sign  = z_ids:sign_key(Context),
-	SData = <<BData/binary, Nonce:32, Sign/binary>>,
-	<<C1:64,C2:64>> = erlang:md5(SData),
-	base64:encode(<<C1:64, C2:64, Nonce:32, BData/binary>>).
+    Nonce = crypto:rand_bytes(4), 
+    Sign  = z_ids:sign_key(Context),
+    SData = <<BData/binary, Nonce:4/binary>>,
+    <<Mac:16/binary>> = crypto:md5_mac(Sign, SData),	
+    base64url:encode(<<Mac:16/binary, Nonce:4/binary, BData/binary>>).
 
 depickle(Data, Context) ->
     try
-        <<C1:64, C2:64, Nonce:32, BData/binary>> = base64:decode(Data),
+        <<Mac:16/binary, Nonce:4/binary, BData/binary>> = base64url:decode(Data),
     	Sign  = z_ids:sign_key(Context),
-    	SData = <<BData/binary, Nonce:32, Sign/binary>>,
-    	<<C1:64, C2:64>> = erlang:md5(SData),
+    	SData = <<BData/binary, Nonce:4/binary>>,
+    	<<Mac:16/binary>> = crypto:md5_mac(Sign, SData),
     	erlang:binary_to_term(BData)
     catch
         _M:_E -> erlang:throw("Postback data invalid, could not depickle: "++Data)
@@ -222,38 +244,16 @@ depickle(Data, Context) ->
 
 %%% URL ENCODE %%%
 
-url_encode(S) -> quote_plus(S).
+url_encode(S) -> 
+    %% @todo possible speedups for binaries
+    mochiweb_util:quote_plus(S).
 
-% quote_plus and hexdigit are from Mochiweb.
+% hexdigit is from Mochiweb.
 
 -define(PERCENT, 37).  % $\%
--define(FULLSTOP, 46). % $\.
--define(QS_SAFE(C), ((C >= $a andalso C =< $z) orelse
-                     (C >= $A andalso C =< $Z) orelse
-                     (C >= $0 andalso C =< $9) orelse
-                     (C =:= ?FULLSTOP orelse C =:= $- orelse C =:= $~ orelse
-                      C =:= $_))).
 
 hexdigit(C) when C < 10 -> $0 + C;
 hexdigit(C) when C < 16 -> $A + (C - 10).
-
-quote_plus(Atom) when is_atom(Atom) ->
-    quote_plus(atom_to_list(Atom));
-quote_plus(Int) when is_integer(Int) ->
-    quote_plus(integer_to_list(Int));
-quote_plus(String) ->
-    quote_plus(String, []).
-
-quote_plus([], Acc) ->
-    lists:reverse(Acc);
-quote_plus([C | Rest], Acc) when ?QS_SAFE(C) ->
-    quote_plus(Rest, [C | Acc]);
-quote_plus([$\s | Rest], Acc) ->
-    quote_plus(Rest, [$+ | Acc]);
-quote_plus([C | Rest], Acc) ->
-    <<Hi:4, Lo:4>> = <<C>>,
-    quote_plus(Rest, [hexdigit(Lo), hexdigit(Hi), ?PERCENT | Acc]).
-
 
 %%% URL PATH ENCODE %%%
 
@@ -277,6 +277,24 @@ url_path_encode([C|R], Acc)->
             <<Hi:4, Lo:4>> = <<C>>,
             url_path_encode(R, [hexdigit(Lo), hexdigit(Hi), ?PERCENT | Acc])
     end.
+
+
+%%% PERCENT encode ENCODE %%%
+
+%% @doc Percent encoding/decoding as defined by RFC 3986 (http://tools.ietf.org/html/rfc3986).
+percent_encode(Chars) when is_list(Chars) ->
+    percent_encode(Chars, []);
+percent_encode(Chars) ->
+    percent_encode(z_convert:to_list(Chars)).
+
+percent_encode([], Encoded) ->
+  lists:flatten(lists:reverse(Encoded));
+percent_encode([C|Etc], Encoded) when ?is_unreserved(C) ->
+  percent_encode(Etc, [C|Encoded]);
+percent_encode([C|Etc], Encoded) ->
+  Value = [io_lib:format("%~s", [z_utils:encode([Char], 16)]) 
+            || Char <- binary_to_list(unicode:characters_to_binary([C]))],
+  percent_encode(Etc, [lists:flatten(Value)|Encoded]).
 
 
 %% @spec os_filename(String) -> String
@@ -394,14 +412,11 @@ url_reserved_char($[) -> true;
 url_reserved_char($]) -> true;
 url_reserved_char(_) -> false.
 
-url_unreserved_char(Ch) when Ch >= $A andalso Ch < $Z + 1 -> true;
-url_unreserved_char(Ch) when Ch >= $a andalso Ch < $z + 1 -> true;
-url_unreserved_char(Ch) when Ch >= $0 andalso Ch < $9 + 1 -> true;
-url_unreserved_char($-) -> true;
-url_unreserved_char($_) -> true;
-url_unreserved_char($.) -> true;
-url_unreserved_char($~) -> true;
-url_unreserved_char(_)  -> false.
+url_unreserved_char(Ch) when ?is_unreserved(Ch) ->
+    true;
+url_unreserved_char(_) -> 
+    false.
+
 
 
 
@@ -483,6 +498,34 @@ js_prop_value(pattern, [$/|T]=List) ->
     end;
 js_prop_value(_, Int) when is_integer(Int) -> integer_to_list(Int);
 js_prop_value(_, Value) -> [$",js_escape(Value),$"].
+
+
+%%% ESCAPE JSON %%%
+
+%% @doc JSON escape for safe quoting of JSON strings. Subtly different
+%% from JS escape, see http://www.json.org/
+json_escape(undefined) -> [];
+json_escape([]) -> [];
+json_escape(<<>>) -> [];
+json_escape(Value) when is_integer(Value) -> integer_to_list(Value);
+json_escape(Value) when is_atom(Value) -> json_escape(atom_to_list(Value), []);
+json_escape(Value) when is_binary(Value) -> json_escape(binary_to_list(Value), []);
+json_escape(Value) -> json_escape(Value, []).
+
+json_escape([], Acc) -> lists:reverse(Acc);
+json_escape([$" |T], Acc) -> json_escape(T, [$" ,$\\|Acc]);
+json_escape([$\\|T], Acc) -> json_escape(T, [$\\,$\\|Acc]);
+json_escape([$/ |T], Acc) -> json_escape(T, [$/ ,$\\|Acc]);
+json_escape([$\b|T], Acc) -> json_escape(T, [$b ,$\\|Acc]);
+json_escape([$\f|T], Acc) -> json_escape(T, [$f ,$\\|Acc]);
+json_escape([$\n|T], Acc) -> json_escape(T, [$n ,$\\|Acc]);
+json_escape([$\r|T], Acc) -> json_escape(T, [$r ,$\\|Acc]);
+json_escape([$\t|T], Acc) -> json_escape(T, [$t ,$\\|Acc]);
+json_escape([H|T], Acc) when is_integer(H) ->
+    json_escape(T, [H|Acc]);
+json_escape([H|T], Acc) ->
+    H1 = json_escape(H),
+    json_escape(T, [H1|Acc]).
 
 
 only_letters([]) ->
@@ -847,6 +890,43 @@ name_for_host(Name, Host) ->
     z_convert:to_atom(z_convert:to_list(Name) ++ [$$, z_convert:to_list(Host)]).
 
 
+%% @doc Ensure that the given string matches an existing module. Used to prevent
+%%      a denial of service attack where we exhaust the atom space.
+ensure_existing_module(ModuleName) when is_list(ModuleName) ->
+    case catch list_to_existing_atom(ModuleName) of
+        {'EXIT', {badarg, _Traceback}} ->
+            case code:where_is_file(ensure_valid_modulename(ModuleName) ++ ".beam") of
+                non_existing -> {error, not_found};
+                Absname ->
+                    {module, Module} = code:load_abs(filename:rootname(Absname)),
+                    {ok, Module}
+            end;
+        M ->
+            ensure_existing_module(M)
+     end;
+ensure_existing_module(ModuleName) when is_atom(ModuleName) ->
+    case module_loaded(ModuleName) of
+        true -> 
+            {ok, ModuleName};
+        false ->
+            case code:ensure_loaded(ModuleName) of
+                {module, Module} -> {ok, Module};
+                {error, E} -> {error, E}
+            end
+    end;
+ensure_existing_module(ModuleName) when is_binary(ModuleName) ->
+    ensure_existing_module(binary_to_list(ModuleName)).
+
+    % Crash on a modulename that is not valid.
+    ensure_valid_modulename(Name) ->
+        lists:filter(fun ensure_valid_modulechar/1, Name).
+            
+        ensure_valid_modulechar(C) when C >= $0, C =< $9 -> true;
+        ensure_valid_modulechar(C) when C >= $a, C =< $z -> true;
+        ensure_valid_modulechar(C) when C >= $A, C =< $Z -> true;
+        ensure_valid_modulechar(C) when C == $_ -> true.
+
+
 %% @doc return a unique temporary filename.
 %% @spec tempfile() -> string()
 tempfile() ->
@@ -869,5 +949,30 @@ flush_message(Msg) ->
         Msg -> flush_message(Msg)
     after 0 ->
         ok
+    end.
+
+
+%% @doc Generate a unique user name from a proplist.
+generate_username(Props, Context) ->
+    case proplists:get_value(title, Props) of
+        [] ->
+            First = proplists:get_value(name_first, Props),
+            Last = proplists:get_value(name_surname, Props),
+            generate_username1(z_string:nospaces(z_string:to_lower(First) ++ "." ++ z_string:to_lower(Last)), Context);
+        Title ->
+            generate_username1(z_string:nospaces(z_string:to_lower(Title)), Context)
+    end.
+
+generate_username1(Name, Context) ->
+    case m_identity:lookup_by_username(Name, Context) of
+        undefined -> Name;
+        _ -> generate_username2(Name, Context)
+    end.
+
+generate_username2(Name, Context) ->
+    N = integer_to_list(z_ids:number() rem 1000),
+    case m_identity:lookup_by_username(Name++N, Context) of
+        undefined -> Name;
+        _ -> generate_username2(Name, Context)
     end.
 

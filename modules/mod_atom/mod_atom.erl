@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009 Arjan Scherpenisse
-%% @date 2009-10-02
+%% Date: 2009-10-02
 %% @doc Atom support.
 
 %% Copyright 2009 Arjan Scherpenisse
@@ -32,5 +32,5 @@
 -include_lib("zotonic.hrl").
 
 %% Dispatch to the atom representation.
-observe_content_types_dispatch(content_types_dispatch, Acc, _Context) ->
+observe_content_types_dispatch(#content_types_dispatch{}, Acc, _Context) ->
     [{"application/atom+xml", atom_entry} | Acc].

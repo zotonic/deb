@@ -1,7 +1,7 @@
 %% @doc Import a csv file according to the derived file/record definitions.
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @author Marc Worrell <marc@worrell.nl>
-%% @date 2010-06-26
+%% Date: 2010-06-26
 
 %% Copyright 2010-2011 Marc Worrell, Arjan Scherpenisse
 %%
@@ -405,6 +405,9 @@ map_one({surroundspace, Field}, Row, State) ->
     end;           
 map_one({name_prefix, Prefix, Rest}, Row, State) ->
     {name_prefix, Prefix, map_one(Rest, Row, State)};
+
+map_one({datetime, F}, Row, State) ->
+    z_convert:to_datetime(map_one(F, Row, State));
 
 map_one({date, F}, Row, State) ->
     z_convert:to_date(map_one(F, Row, State));

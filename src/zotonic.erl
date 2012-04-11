@@ -19,7 +19,7 @@
 
 -module(zotonic).
 -author('Marc Worrell <marc@worrell.nl>').
--export([start/0, start/1, stop/0, stop/1, status/1, update/0, update/1, run_tests/0, ensure_started/1]).
+-export([start/0, start/1, stop/0, stop/1, status/0, status/1, update/0, update/1, run_tests/0, ensure_started/1]).
 -revision("$Id$").
 
 ensure_started(App) ->
@@ -39,7 +39,8 @@ start() -> start([]).
 start(_Args) ->
     zotonic_deps:ensure(),    
     ensure_started(crypto),
-    ensure_started(webmachine),
+    ensure_started(webzmachine),
+    ensure_started(lager),
     ensure_started(mnesia),
     ok = application:start(zotonic).
 
@@ -48,7 +49,8 @@ start(_Args) ->
 stop() ->
     Res = application:stop(zotonic),
     application:stop(mnesia),
-    application:stop(webmachine),
+    application:stop(lager),
+    application:stop(webzmachine),
     application:stop(crypto),
     Res.
 
@@ -65,9 +67,14 @@ stop([Node]) ->
 
 
 %% @spec status() -> ok
-%% @doc Get server status.  Gets the state of sites running.
+%% @doc Print the status of the current node.
+status() ->
+    status([node()]).
+
+%% @spec status([node()]) -> ok
+%% @doc Get server status.  Prints the state of sites running.
 status([Node]) ->
-	io:format("~p~n", [rpc:call(Node, z_sites_manager, get_sites_status, [])]),
+	[io:format("~-20s- ~s~n", [Site, Status]) || [Site,Status|_] <- rpc:call(Node, z_sites_manager, get_sites_status, [])],
 	ok.
 
 %% @spec update() -> ok

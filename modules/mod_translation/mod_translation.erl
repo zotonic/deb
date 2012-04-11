@@ -1,9 +1,9 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2010 Marc Worrell
-%% @date 2010-05-19
+%% @copyright 2010-2011 Marc Worrell
+%% Date: 2010-05-19
 %% @doc Translation support for i18n.  Generates .po files by scanning templates.
 
-%% Copyright 2010 Marc Worrell
+%% Copyright 2010-2011 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,13 +21,21 @@
 -author("Marc Worrell <marc@worrell.nl>").
 
 -mod_title("Translation").
--mod_description("Generate .po files containing translatable texts by scanning templates.").
+-mod_description("Handle user’s language and generate .pot files with translatable texts.").
 -mod_prio(500).
+-mod_depends([admin]).
+-mod_provides([translation]).
 
 -export([
     observe_session_init_fold/3,
     observe_session_context/3,
     observe_auth_logon/3,
+    observe_set_user_language/3,
+    observe_url_rewrite/3,
+    observe_dispatch_rewrite/3,
+    observe_scomp_script_render/2,
+    
+    try_set_language/2,
     
     init/1, 
     event/2,
@@ -48,11 +56,14 @@ init(Context) ->
             case m_config:get(i18n, language_list, Context) of
                 undefined ->
                     m_config:set_prop(i18n, language_list, list, [
+                            {ar, [ {language, <<"العربية">>}, {is_enabled, false}]},
                             {en, [ {language, <<"English">>}, {is_enabled, true}]},
+                            {ee, [ {language, <<"Eesti">>}, {is_enabled, true}]},
                             {es, [ {language, <<"Español">>}, {is_enabled, true}]},
                             {fr, [ {language, <<"Français">>}, {is_enabled, true}]},
                             {nl, [ {language, <<"Nederlands">>}, {is_enabled, true}]},
-                            {tr, [ {language, <<"Türkçe">>}, {is_enabled, true}]}
+                            {pl, [ {language, <<"Türkçe">>}, {is_enabled, true}]},
+                            {tr, [ {language, <<"Polski">>}, {is_enabled, true}]}
                         ], Context);
                 _Exists ->
                     ok
@@ -63,36 +74,40 @@ init(Context) ->
 %% @doc Check if the user has a prefered language (in the user's persistent data). If not
 %%      then check the accept-language header (if any) against the available languages.
 observe_session_init_fold(session_init_fold, Context, _Context) ->
-    case z_context:get_persistent(language, Context) of
+    case get_q_language(Context) of
         undefined ->
-            case z_context:get_req_header("accept-language", Context) of
+            case z_context:get_persistent(language, Context) of
                 undefined ->
-                    Context;
-                AcceptLanguage ->
-                    LanguagesAvailable = [ atom_to_list(Lang)
-                                            || {Lang, Props} <- get_language_config(Context), 
-                                               proplists:get_value(is_enabled, Props) =:= true 
-                                         ],
-                    case catch do_choose(LanguagesAvailable, AcceptLanguage) of
-                        Lang when is_list(Lang) ->
-                            do_set_language(list_to_atom(Lang), Context);
-                        none ->
+                    case z_context:get_req_header("accept-language", Context) of
+                        undefined ->
                             Context;
-                        _Error ->
-                            % @todo log the error, might be a problem in the accept-language header
-                            Context
-                    end
+                        AcceptLanguage ->
+                            try_set_language(AcceptLanguage, Context)
+                    end;
+                Language ->
+                    do_set_language(Language, Context)
             end;
-        Language ->
-            do_set_language(Language, Context)
+        QsLang ->
+            try_set_language(QsLang, Context)
     end.
+
+    get_q_language(Context) ->
+        case z_context:get_q_all("z_language", Context) of
+            [] -> undefined;
+            L -> lists:last(L)
+        end.
 
 
 observe_session_context(session_context, Context, _Context) ->
-    case z_context:get_session(language, Context) of
-        undefined -> Context;
-        Language -> Context#context{language=Language}
+    Context1 = case z_context:get_session(language, Context) of
+                    undefined -> Context;
+                    Language -> Context#context{language=Language}
+               end,
+    case get_q_language(Context1) of
+        undefined -> Context1;
+        QsLang -> try_set_language(QsLang, Context1)
     end.
+    
 
 observe_auth_logon(auth_logon, Context, _Context) ->
     UserId = z_acl:user(Context),
@@ -109,8 +124,54 @@ observe_auth_logon(auth_logon, Context, _Context) ->
             Context1
     end.
 
+observe_set_user_language(#set_user_language{id=UserId}, Context, _Context) when is_integer(UserId) ->
+    case m_rsc:p_no_acl(UserId, pref_language, Context) of
+        Code when is_atom(Code), Code /= undefined -> 
+            z_context:set_language(Code, Context);
+        _ ->
+            Context
+    end;
+observe_set_user_language(#set_user_language{}, Context, _Context) ->
+    Context.
+
+
+observe_url_rewrite(#url_rewrite{args=Args}, Url, Context) ->
+    case lists:keyfind(z_language, 1, Args) of
+        false ->
+            case is_multiple_languages_config(Context) of
+                true ->
+                    % Insert the current language in front of the url
+                    iolist_to_binary([$/, atom_to_list(z_context:language(Context)), Url]);
+                false ->
+                    Url
+            end;
+        _ ->
+            Url
+    end.
+    
+observe_dispatch_rewrite(#dispatch_rewrite{is_dir=IsDir}, {Parts, Args} = Dispatch, Context) ->
+    case Parts of
+        [First|Rest] when IsDir orelse Rest /= [] ->
+            case z_trans:is_language(First) of
+                true ->
+                    case lists:keyfind(list_to_atom(First), 1, get_enabled_languages(Context)) of
+                        false -> Dispatch;
+                        _ -> {Rest, [{z_language, First}|Args]}
+                    end;
+                false ->
+                    Dispatch
+            end;
+        _ ->
+            Dispatch
+    end.
+
+
+observe_scomp_script_render(#scomp_script_render{}, Context) ->
+    [<<"z_language=\"">>, atom_to_list(z_context:language(Context)), $", $; ].
+        
+
 %% @doc Set the current session (and user) language, reload the user agent's page.
-event({postback, {set_language, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={set_language, Args}}, Context) ->
     Code = case proplists:get_value(code, Args) of
                 undefined -> z_context:get_q("triggervalue", Context);
                 ArgCode -> ArgCode
@@ -124,13 +185,13 @@ event({postback, {set_language, Args}, _TriggerId, _TargetId}, Context) ->
         UserId ->
             case m_rsc:p_no_acl(UserId, pref_language, Context1) of
                 Code -> nop;
-                _ -> catch m_rsc:update(UserId, [{pref_language, Code}], Context1)
+                _ -> catch m_rsc:update(UserId, [{pref_language, z_context:language(Context1)}], Context1)
             end
     end,
-    z_render:wire({reload, []}, Context1);
+    z_render:wire({reload, [{z_language,z_context:language(Context1)}]}, Context1);
 
 %% @doc Set the default language.
-event({postback, {language_default, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={language_default, Args}}, Context) ->
     case z_acl:is_allowed(use, ?MODULE, Context) of
         true ->
             {code, Code} = proplists:lookup(code, Args),
@@ -141,7 +202,7 @@ event({postback, {language_default, Args}, _TriggerId, _TargetId}, Context) ->
     end;
 
 %% @doc Start rescanning all templates for translation tags.
-event({postback, translation_generate, _TriggerId, _TargetId}, Context) ->
+event(#postback{message=translation_generate}, Context) ->
     case z_acl:is_allowed(use, ?MODULE, Context) of
         true ->
             spawn(fun() -> generate(Context) end),
@@ -149,7 +210,7 @@ event({postback, translation_generate, _TriggerId, _TargetId}, Context) ->
         false ->
             z_render:growl_error("Sorry, you don't have permission to scan for translations.", Context)
     end;
-event({postback, translation_reload, _TriggerId, _TargetId}, Context) ->
+event(#postback{message=translation_reload}, Context) ->
     case z_acl:is_allowed(use, ?MODULE, Context) of
         true ->
             spawn(fun() -> z_trans_server:load_translations(Context) end),
@@ -158,7 +219,7 @@ event({postback, translation_reload, _TriggerId, _TargetId}, Context) ->
             z_render:growl_error("Sorry, you don't have permission to reload translations.", Context)
     end;
 
-event({submit, {language_edit, Args}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={language_edit, Args}}, Context) ->
     case z_acl:is_allowed(use, ?MODULE, Context) of
         true ->
             OldCode = proplists:get_value(code, Args, '$empty'),
@@ -170,7 +231,7 @@ event({submit, {language_edit, Args}, _TriggerId, _TargetId}, Context) ->
             z_render:growl_error("Sorry, you don't have permission to change the language list.", Context)
     end;
 
-event({postback, {language_delete, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={language_delete, Args}}, Context) ->
     case z_acl:is_allowed(use, ?MODULE, Context) of
         true ->
             {code, Code} = proplists:lookup(code, Args),
@@ -181,7 +242,7 @@ event({postback, {language_delete, Args}, _TriggerId, _TargetId}, Context) ->
             z_render:growl_error("Sorry, you don't have permission to change the language list.", Context)
     end;
 
-event({postback, {language_enable, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={language_enable, Args}}, Context) ->
     case z_acl:is_allowed(use, ?MODULE, Context) of
         true ->
             {code, Code} = proplists:lookup(code, Args),
@@ -192,6 +253,28 @@ event({postback, {language_enable, Args}, _TriggerId, _TargetId}, Context) ->
     end.
 
 
+
+%% @doc Set the language of the user. Only done when the found language is a known language.
+try_set_language(LanguagesRequested, Context) when is_atom(LanguagesRequested) ->
+    try_set_language(atom_to_list(LanguagesRequested), Context);
+try_set_language(LanguagesRequested, Context) when is_binary(LanguagesRequested) ->
+    try_set_language(binary_to_list(LanguagesRequested), Context);
+try_set_language(LanguagesRequested, Context) when is_list(LanguagesRequested) ->
+    LanguagesAvailable = [ atom_to_list(Lang)
+                            || {Lang, Props} <- get_language_config(Context), 
+                               proplists:get_value(is_enabled, Props) =:= true 
+                         ],
+    case catch do_choose(LanguagesAvailable, LanguagesRequested) of
+        Lang when is_list(Lang) ->
+            do_set_language(list_to_atom(Lang), Context);
+        none ->
+            Context;
+        _Error ->
+            % @todo log the error, might be a problem in the accept-language header
+            Context
+    end.
+
+
 %% @doc Set the language of the current user/session
 set_language(Code, [{CodeAtom, _Language}|Other], Context) ->
     case z_convert:to_list(CodeAtom) of
@@ -199,11 +282,17 @@ set_language(Code, [{CodeAtom, _Language}|Other], Context) ->
         _Other -> set_language(Code, Other, Context)
     end.
 
+
 do_set_language(Code, Context) when is_atom(Code) ->
     Context1 = z_context:set_language(Code, Context),
-    z_context:set_session(language, Code, Context1),
-    z_notifier:notify({language, Code}, Context1),
-    Context1.
+    case z_context:language(Context) of
+        Code -> 
+            Context;
+        _ ->
+            z_context:set_session(language, Code, Context1),
+            z_notifier:notify(#language{language=Code}, Context1),
+            Context1
+    end.
 
 
 %% @doc Add a language to the i18n configuration
@@ -233,6 +322,19 @@ language_enable(Code, IsEnabled, Context) ->
     set_language_config(Languages1, Context).
 
 
+is_multiple_languages_config(Context) ->
+    length(get_enabled_languages(Context)) > 1.
+
+get_enabled_languages(Context) ->
+    case z_memo:get('mod_translation$enabled_languages') of
+        V when is_boolean(V) ->
+            V;
+        _ ->
+            Languages = lists:filter(fun({_,Props}) -> proplists:get_value(is_enabled, Props) =:= true end,
+                                     get_language_config(Context)),
+            z_memo:set('mod_translation$enabled_languages', Languages)
+    end.
+
 %% @doc Get the list of languages
 get_language_config(Context) ->
     case m_config:get(i18n, language_list, Context) of
@@ -254,10 +356,7 @@ generate(Host) when is_atom(Host) ->
 
 
 %% do_choose/2 is adapted from webmachine_util:do_choose/3
-%% 
-%% @author Justin Sheehy <justin@basho.com>
-%% @author Andy Gross <andy@basho.com>
-%% @copyright 2007-2008 Basho Technologies
+%% Original code copyright 2007-2008 Basho Technologies
 do_choose(Choices, Header) ->
     Accepted = build_conneg_list(string:tokens(Header, ",")),
     StarPrio = [P || {P,C} <- Accepted, C =:= "*"],

@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-16
+%% Date: 2009-07-16
 %% @doc Replace the content of the target with the result of a render action.
 
 %% Copyright 2009 Marc Worrell
@@ -89,6 +89,6 @@ render_postback(Method, TriggerId, TargetId, Html, Args, Context) ->
     {PostbackMsgJS, _PickledPostback} = z_render:make_postback({render, Method, Html, Args}, undefined, TriggerId, TargetId, ?MODULE, Context),
     {PostbackMsgJS, Context}.
 
-event({postback, {render, Method, Html, Args}, _TriggerId, TargetId}, Context) ->
+event(#postback{message={render, Method, Html, Args}, target=TargetId}, Context) ->
     {[], Context1} = render_inline(Method, TargetId, Html, Args, Context),
     Context1.

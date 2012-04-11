@@ -1,9 +1,9 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009 Marc Worrell
-%% @date 2009-08-16
+%% @copyright 2009-2011 Marc Worrell
+%% Date: 2009-08-16
 %% @doc Search engine optimization.  Provides admin interface for the SEO modules.
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2011 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -23,3 +23,5 @@
 -mod_title("SEO Search Engine Optimization").
 -mod_description("Provides admin interface for the SEO modules.").
 -mod_prio(600).
+-mod_depends([base, admin]).
+-mod_provides([seo]).

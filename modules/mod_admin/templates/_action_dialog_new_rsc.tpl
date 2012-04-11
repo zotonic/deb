@@ -4,10 +4,10 @@
 		$('.do_fieldreplace').fieldreplace();
 	});
 </script>
-<p>{_ Please fill in the title _} {% if not nocatselect %}{_ and the category of the new page._}{% else %}{_ of the new _}{{ catname }}.{% endif %} </p>
+<p>{_ Please fill in the title _} {% if not nocatselect %}{_ and the category of the new page._}{% else %}{_ of the new _} {{ catname }}.{% endif %} </p>
 
 {% wire id=#form type="submit" 
-	postback={new_page subject_id=subject_id predicate=predicate redirect=redirect edge_template=edge_template} 
+	postback={new_page subject_id=subject_id predicate=predicate redirect=redirect edge_template=edge_template actions=actions }
 	delegate=delegate 
 %}
 <form id="{{ #form }}" method="POST" action="postback">

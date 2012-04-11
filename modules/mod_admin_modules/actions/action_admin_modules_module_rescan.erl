@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-04
+%% Date: 2009-07-04
 %% @doc Force a rescan of all modules, actions, templates etc. This is needed after a template, action or 
 %% validation has been added.  It will also tell the dispatcher to reload all dispatch rules.
 
@@ -37,7 +37,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Signal the module indexer to rescan all modules for actions, templates etc.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {module_rescan, Actions}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={module_rescan, Actions}}, Context) ->
     z_notifier:notify(module_ready, Context),
     Context1 = z_render:growl("Module rescan is in progress.", Context),
     z_render:wire(Actions, Context1).

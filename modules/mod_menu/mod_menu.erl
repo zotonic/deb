@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-12
+%% Date: 2009-07-12
 %% @doc Menu module.  Supports menus in Zotonic. Adds admin interface to define the menu.
 
 %% Copyright 2009 Marc Worrell
@@ -22,47 +22,28 @@
 
 -mod_title("Menus").
 -mod_description("Menus in Zotonic, adds amdin interface to define the menu.").
+-mod_schema(1).
+-mod_depends([admin]).
+-mod_provides([menu]).
 
 -include("zotonic.hrl").
 
 %% interface functions
 -export([
+	manage_schema/2,
     init/1,
-    datamodel/1,
+    event/2,
+    observe_menu_get_rsc_ids/2,
+    observe_menu_save/2,
     get_menu/1,
     get_menu/2,
     set_menu/3,
-    observe_menu_get_rsc_ids/2,
-    test/0,
-    menu_flat/2
+    menu_flat/2,
+    remove_invisible/2,
+    test/0
 ]).
 
-%% @doc The datamodel for the menu routines.
-datamodel(Context) ->
-    [
-     {categories,
-      [
-       {menu, categorization,
-        [{title, <<"Page menu">>}]
-       }
-      ]
-     },
-     {resources,
-      case z_install_defaultdata:default_menu(m_site:get(skeleton, Context)) of
-          undefined ->
-              [];
-          Menu ->
-              [
-               {main_menu,
-                menu,
-                [{title, <<"Main menu">>},
-                 {menu, Menu}
-                ]
-               }
-              ]
-      end
-     }
-    ].
+
 
 %% @doc Initializes the module (after the datamodel is installed).
 init(Context) ->
@@ -75,6 +56,142 @@ init(Context) ->
             set_menu(OldMenu, Context),
             m_config:delete(menu, menu_default, Context)
     end.
+
+
+event(#postback_notify{message="menuedit", trigger=TriggerId}, Context) ->
+    {Kind, RootId, Predicate} = get_kind_root(TriggerId),
+    Tree = unpack(z_context:get_q("tree", Context)),
+    {Tree1, Context1} = create_new(Tree, Context),
+    case z_context:get_q("kind", Context1, Kind) of
+        category ->
+            % This is the category hierarchy.
+            z_notifier:notify(#category_hierarchy_save{tree=Tree1}, Context1),
+            Context1;
+        menu ->
+            % A menu hierarchy, give it to the menu routines
+            z_notifier:notify(#menu_save{id=m_rsc:rid(RootId, Context1), tree=Tree1}, Context1),
+            Context1;
+        edge ->
+            % Hierarchy using edges between resources
+            hierarchy_edge(m_rsc:rid(RootId, Context1), Predicate, Tree1, Context1)
+    end.
+
+% @doc Sync a hierarchy based on edges (silently ignore ACL errors)
+hierarchy_edge(RootId, Predicate, Tree, Context) ->
+    Predicate = z_context:get_q("z_predicate", Context, Predicate),
+    {ok, PredId} = m_predicate:name_to_id(Predicate, Context),
+    {ok, PredName} = m_predicate:id_to_name(PredId, Context),
+    move_edges(RootId, Tree, PredName, Context),
+    z_notifier:notify(#hierarchy_updated{root_id=RootId, predicate=PredName}, Context),
+    Context.
+
+move_edges(RootId, Tree, Pred, Context) ->
+    Wanted = [ Id || {Id,_SubTree} <- Tree ],
+    case z_acl:rsc_editable(RootId, Context) of
+        true -> ok = m_edge:replace(RootId, Pred, Wanted, Context);
+        false -> ignore
+    end,
+    [ move_edges(Id, SubTree, Pred, Context) || {Id, SubTree} <- Tree ].
+
+
+
+%% @doc The id of the root ul should be one of:
+%%      category
+%%      menu-ID
+%%      edge-ROOTID
+%%      edge-ROOTID-PREDICATE
+%%      collection-ROOTID
+get_kind_root("category") ->
+    {category, undefined, undefined};
+get_kind_root("menu-"++MenuId) ->
+    {menu, MenuId, undefined};
+get_kind_root(TriggerId) ->
+    case string:tokens(TriggerId, "-") of
+        ["edge", RootId, Predicate] ->
+            {edge, RootId, Predicate};
+        ["collection", RootId] ->
+            {edge, RootId, haspart};
+        _ ->
+            {edge, TriggerId, haspart}
+    end.
+
+unpack(S) ->
+    {[], Tree} = unpack(S, []),
+    Tree.
+
+unpack([$[|S], Acc) ->
+    unpack(S, Acc);
+unpack([$]|S], Acc) ->
+    {S, lists:reverse(Acc)};
+unpack([$,|S], Acc) ->
+    unpack(S, Acc);
+unpack(S, Acc) ->
+    {Id,S1} = lists:splitwith(fun(C) when C==$[; C==$]; C==$, -> false; (_) -> true end, S),
+    {Rest,Sub} = case S1 of
+                    [$[|Xs] -> unpack(Xs, []);
+                    _ -> {S1,[]}
+                 end,
+    Acc1 = [{map_id(Id),Sub}|Acc],
+    unpack(Rest,Acc1).
+
+map_id(Id) ->
+    Id1 = lists:last(string:tokens(Id, "-")),
+    case z_utils:only_digits(Id1) of
+        true -> list_to_integer(Id1);
+        false -> Id
+    end.
+
+
+create_new([], Context) ->
+    {[], Context};
+create_new(List, Context) ->
+    create_new(List, [], Context).
+
+
+    create_new([], Acc, Context) ->
+        {lists:reverse(Acc), Context};
+    create_new([{Id,Sub}|Rest], Acc, Context) ->
+        {Id1, Context1} = create_new_if_needed(Id, Context),
+        {Sub1, Context2} = create_new(Sub, Context1),
+        create_new(Rest, [{Id1,Sub1}|Acc], Context2).
+    
+    
+    create_new_if_needed(Id, Context) when is_integer(Id) ->
+        {Id, Context};
+    create_new_if_needed(Id, Context) ->
+        Category = case lists:last(string:tokens(Id, "-")) of
+                        [] ->
+                            text;
+                        C ->
+                            case m_category:name_to_id(C, Context) of
+                                {error, _} -> text;
+                                {ok, C1} -> C1
+                            end
+                   end,
+        Props = [
+            {is_published, false},
+            {category, Category},
+            {title, ?__("New page", Context)}
+        ],
+        {ok, RscId} = m_rsc:insert(Props, Context),
+        OuterId = iolist_to_binary(["outernew-",integer_to_list(RscId)]),
+        InnerId = iolist_to_binary(["innernew-",integer_to_list(RscId)]),
+        Context1 = z_render:wire(
+            [
+                {script, [{script, ["$('#",Id,"').attr('id','",OuterId,"');"]}]},
+                {dialog_edit_basics, [
+                            {id, RscId}, 
+                            {target, InnerId},
+                            {template, "_menu_edit_item.tpl"}
+                    ]},
+                {update, [
+                            {target, OuterId}, 
+                            {menu_id, InnerId}, 
+                            {id, RscId}, 
+                            {template, "_menu_edit_item.tpl"}
+                    ]}
+            ], Context),
+        {RscId, Context1}.
 
 
 
@@ -90,6 +207,11 @@ observe_menu_get_rsc_ids(menu_get_rsc_ids, Context) ->
         menu_ids(T, Acc1);
     menu_ids([H|T], Acc) ->
         menu_ids(T, [H|Acc]).
+
+
+%% @doc Observer the 'menu_save' notification
+observe_menu_save(#menu_save{id=MenuId, tree=Menu}, Context) ->
+    set_menu(MenuId, Menu, Context).
 
 
 %% @doc Fetch the default menu. Performs validation/visibility checking on the menu items.
@@ -114,16 +236,21 @@ get_menu(Id, Context) ->
 		validate(Ms, [{M,[]}|Acc]).
 
 
+remove_invisible(Menu, Context) ->
+    remove_invisible(Menu, [], Context).
+
 %% Remove invisible menu items
+remove_invisible(<<>>, Acc, _Context) ->
+    lists:reverse(Acc);
 remove_invisible([], Acc, _Context) ->
     lists:reverse(Acc);
 remove_invisible([{Id,Sub}|Rest], Acc, Context) ->
-    case m_rsc:is_visible(Id, Context) of
+    case m_rsc:is_visible(Id, Context) andalso m_rsc:exists(Id, Context) of
         true ->  remove_invisible(Rest, [{Id,remove_invisible(Sub, [], Context)} | Acc], Context);
         false -> remove_invisible(Rest, Acc, Context)
     end;
 remove_invisible([Id|Rest], Acc, Context) ->
-    case m_rsc:is_visible(Id, Context) of
+    case m_rsc:is_visible(Id, Context) andalso m_rsc:exists(Id, Context) of
         true ->  remove_invisible(Rest, [Id | Acc], Context);
         false -> remove_invisible(Rest, Acc, Context)
     end.
@@ -166,6 +293,30 @@ menu_flat([ MenuId | Rest ], P, A, C) when is_integer(MenuId) ->
     %% oldschool notation fallback
     menu_flat([{MenuId, []} | Rest], P, A, C).
 
+
+%% @doc The datamodel for the menu routines.
+manage_schema(install, Context) ->
+    z_datamodel:manage(
+      mod_menu,
+      #datamodel{
+        categories = [
+              {menu, categorization,
+               [{title, <<"Page menu">>}]
+              }
+        ],
+        resources = [
+              {main_menu,
+                   menu,
+                   [{title, <<"Main menu">>},
+                    {menu, case z_install_defaultdata:default_menu(m_site:get(skeleton, Context)) of
+                                undefined -> [];
+                                Menu -> Menu
+                           end}
+                   ]
+              }
+        ]
+      },
+      Context).
 
 
 %% @doc test function

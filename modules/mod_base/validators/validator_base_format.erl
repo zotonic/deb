@@ -29,16 +29,27 @@ render_validator(format, TriggerId, _TargetId, Args, Context)  ->
 
 
 %% @spec validate(Type, TriggerId, Value, Args, Context) -> {ok,AcceptedValue} | {error,Id,Error}
-%%          Error -> invalid | novalue | {script, Script}
+%%          Error = invalid | novalue | {script, Script}
 validate(format, _Id, [], _, Context) ->
     {{ok, []}, Context};
 validate(format, Id, Value, [Negate,Pattern], Context) ->
-    {Re,Options} = pattern_to_re(Pattern),
+    PcrePattern = javascript_to_pcre_pattern(Pattern),
+    {Re,Options} = pattern_to_re(PcrePattern),
+
+    %% If a unicode pattern is given, convert the utf8 list into a unicode char list
+    {Value1, Options1} = case z_string:contains("\\u", Pattern) of
+			     true ->
+				 {unicode:characters_to_list(erlang:list_to_binary(Value)), [unicode|Options]};
+			     false ->
+				 {Value, Options}
+			 end,
+		 
     Ok = not Negate,
-    Match = case re:run(Value, Re, Options) of
+    Match = case re:run(Value1, Re, Options1) of
                 {match, _} -> true;
                 nomatch -> false
             end,
+
     case Match of
         Ok -> {{ok, Value}, Context};
         _  -> {{error, Id, invalid}, Context}
@@ -76,3 +87,8 @@ trans_options([$U|T], Acc) ->
 trans_options([_|T], Acc) -> 
     trans_options(T, Acc).
 
+%% @doc Make a javascript regular expression pcre compatible.
+javascript_to_pcre_pattern(Pattern) ->    
+    %% convert \uXXXX to \x{XXXX}
+    R1 = re:replace(Pattern, "([\\\\]{1}[u]{1}[0-9a-fA-F]{4,6})", "@@--@@&}", [global]),
+    re:replace(R1, "@@--@@[\\\\]u", "\\\\x{", [{return, list}, global]).

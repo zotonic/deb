@@ -31,13 +31,16 @@
     pivot/2,
     pivot_resource_update/2,
     queue_all/1,
-
+    insert_queue/2,
+         
     get_pivot_title/1,
     get_pivot_title/2,
 
     insert_task/3,
     insert_task/4,
     insert_task/5,
+    
+    insert_task_after/6,
     
     pivot_resource/2,
     pg_lang/1,
@@ -83,7 +86,7 @@ pivot_resource_update(UpdateProps, RawProps) ->
                                     true ->
                                         All
                                 end
-                        end, UpdateProps, [date_start, date_end]),
+                        end, UpdateProps, [date_start, date_end, title]),
 
     {DateStart, DateEnd} = pivot_date(Props),
     PivotTitle = truncate(get_pivot_title(Props), 100),
@@ -141,29 +144,43 @@ insert_task(Module, Function, UniqueKey, Context) ->
     
 %% @doc Insert a slow running pivot task with unique key and arguments.
 insert_task(Module, Function, UniqueKey, Args, Context) ->
-    z_db:transaction(fun(Ctx) -> insert_transaction(Module, Function, UniqueKey, Args, Ctx) end, Context).
+    insert_task_after(undefined, Module, Function, UniqueKey, Args, Context).
 
-    insert_transaction(Module, Function, UniqueKey, Args, Context) ->
+%% @doc Insert a slow running pivot task with unique key and arguments that should start after Seconds seconds.
+insert_task_after(Seconds, Module, Function, UniqueKey, Args, Context) ->
+    z_db:transaction(fun(Ctx) -> insert_transaction(Seconds, Module, Function, UniqueKey, Args, Ctx) end, Context).
+
+    insert_transaction(Seconds, Module, Function, UniqueKey, Args, Context) ->
+        Due = case Seconds of 
+                undefined -> undefined; 
+                _ -> calendar:gregorian_seconds_to_datetime(
+                        calendar:datetime_to_gregorian_seconds(calendar:local_time()) + Seconds)
+              end,
         Fields = [
             {module, Module},
             {function, Function},
             {key, UniqueKey},
-            {args, Args}
+            {args, Args},
+            {due, Due}
         ],
-        case z_db:q1("select id from pivot_task_queue where module = $1 and function = $2 and key = $3", 
+        case z_db:q1("select id 
+                      from pivot_task_queue 
+                      where module = $1 and function = $2 and key = $3", 
                     [Module, Function, UniqueKey], Context) of
-            undefined -> z_db:insert(pivot_task_queue, Fields, Context);
-            Id -> {ok, Id}
+            undefined -> 
+                z_db:insert(pivot_task_queue, Fields, Context);
+            Id when is_integer(Id) -> 
+                case Due of
+                    undefined -> 
+                        nop;
+                    _ ->
+                        z_db:q("update pivot_task_queue 
+                                set due = $1 
+                                where id = $2", 
+                               [Due, Id], Context)
+                end,
+                {ok, Id}
         end.
-
-
-
-count_queue(Context) ->
-    z_db:q1("select count(*) from rsc_pivot_queue", Context).
-
-count_task(Context) ->
-    z_db:q1("select count(*) from pivot_task_queue", Context).
-
 
 %%====================================================================
 %% API
@@ -257,20 +274,23 @@ code_change(_OldVsn, State, _Extra) ->
 do_poll(Context) ->
     % Perform some queued tasks
     case poll_task(Context) of
-        {Module, Function, Key, Args} -> 
+        {TaskId, Module, Function, _Key, Args} ->
             try
-                ?zInfo(io_lib:format("Executing task: ~p:~p( ~p )", [Module, Function, Args]), Context),
-                erlang:apply(Module, Function, z_convert:to_list(Args) ++ [Context])
+                case erlang:apply(Module, Function, z_convert:to_list(Args) ++ [Context]) of
+                    {delay, Seconds} ->
+                        Due = calendar:gregorian_seconds_to_datetime(
+                                calendar:datetime_to_gregorian_seconds(calendar:local_time()) + Seconds
+                              ),
+                        z_db:q("update pivot_task_queue set due = $1 where id = $2", [Due, TaskId], Context);
+                    _OK ->
+                        z_db:q("delete from pivot_task_queue where id = $1", [TaskId], Context)
+                end
             catch
                 error:undef -> 
-                    ?zWarning(io_lib:format("Undefined task, aborting: ~p:~p(~p)~n", [Module, Function, Args]), Context);
+                    ?zWarning(io_lib:format("Undefined task, aborting: ~p:~p(~p)~n", [Module, Function, Args]), Context),
+                    z_db:q("delete from pivot_task_queue where id = $1", [TaskId], Context);
                 Error:Reason -> 
-                    ?zWarning(io_lib:format("Task failed(~p:~p): ~p:~p(~p)~n", [Error, Reason, Module, Function, Args]), Context),
-                    insert_task(Module, Function, Key, Args, Context)
-            end,
-            case count_task(Context) of
-                0 -> nop;
-                N1 -> ?zInfo(io_lib:format("Task queue size: ~p", [N1]), Context)
+                    ?zWarning(io_lib:format("Task failed(~p:~p): ~p:~p(~p)~n", [Error, Reason, Module, Function, Args]), Context)
             end;
         empty ->
             nop
@@ -289,10 +309,6 @@ do_poll(Context) ->
                                  ({Id,Error}) -> log_error(Id, Error, Context) end, 
                               L),
                     delete_queue(Qs, Context)
-            end,
-            case count_queue(Context) of
-                0 -> nop;
-                N2 -> ?zInfo(io_lib:format("Pivot queue size: ~p", [N2]), Context)
             end
     end.
 
@@ -301,15 +317,20 @@ do_poll(Context) ->
 
     %% @doc Fetch the next task uit de task queue, if any.
     poll_task(Context) ->
-        case z_db:q_row("select id, module, function, key, props from pivot_task_queue order by id asc limit 1", Context) of
+        case z_db:q_row("select id, module, function, key, props 
+                         from pivot_task_queue 
+                         where due is null
+                            or due < now()
+                         order by id asc 
+                         limit 1", Context) 
+        of
             {Id,Module,Function,Key,Props} ->
                 Args = case Props of
                     [{args,Args0}] -> Args0;
                     _ -> []
                 end,
                 %% @todo We delete the task right now, this needs to be changed to a deletion after the task has been running.
-                z_db:q("delete from pivot_task_queue where id = $1", [Id], Context),
-                {z_convert:to_atom(Module), z_convert:to_atom(Function), Key, Args};
+                {Id, z_convert:to_atom(Module), z_convert:to_atom(Function), Key, Args};
             undefined ->
                 empty
         end.
@@ -383,7 +404,8 @@ pivot_resource(Id, Context) ->
             ", pivot_date_end   = $",integer_to_list(N+11),
             ", pivot_date_start_month_day   = $",integer_to_list(N+12),
             ", pivot_date_end_month_day   = $",integer_to_list(N+13),
-            " where id = $",integer_to_list(N+14)
+            ", pivot_title   = $",integer_to_list(N+14),
+            " where id = $",integer_to_list(N+15)
         ]),
 
     SqlArgs = ArgsD ++ [
@@ -400,14 +422,15 @@ pivot_resource(Id, Context) ->
         proplists:get_value(pivot_date_end, PropsPrePivoted),
         proplists:get_value(pivot_date_start_month_day, PropsPrePivoted),
         proplists:get_value(pivot_date_end_month_day, PropsPrePivoted),
+        proplists:get_value(pivot_title, PropsPrePivoted),
         Id
     ],
     z_db:q(Sql, SqlArgs, Context),
-    Results = z_notifier:map({custom_pivot, Id}, Context),
+    Results = z_notifier:map(#custom_pivot{id=Id}, Context),
     [ok = update_custom_pivot(Id, Res, Context) || Res <- Results],
 
     IsA = m_rsc:is_a(Id, Context),
-    z_notifier:notify({rsc_pivot_done, Id, IsA}, Context),
+    z_notifier:notify(#rsc_pivot_done{id=Id, is_a=IsA}, Context),
     ok.
 
 
@@ -426,7 +449,7 @@ pivot_resource(Id, Context) ->
     
         {z_utils:combine(" || ", Sql1), Args1}.
             
-    
+
     %      new.tsv := 
     %        setweight(to_tsvector('pg_catalog.dutch', coalesce(new.title_nl,'')), 'A') || 
     %        setweight(to_tsvector('pg_catalog.dutch', coalesce(new.desc_nl,'')),  'D') ||
@@ -435,7 +458,7 @@ pivot_resource(Id, Context) ->
 
 
 truncate(undefined, _Len) -> undefined;
-truncate(S, Len) -> truncate(S, Len, Len).
+truncate(S, Len) -> z_string:to_lower(truncate(S, Len, Len)).
     
     truncate(_S, 0, _Bytes) ->
         "";
@@ -487,7 +510,7 @@ get_pivot_data(Id, Context) ->
     get_pivot_data(Id, get_pivot_rsc(Id, Context), Context).
     
 get_pivot_data(Id, Rsc, Context) ->
-    R = z_notifier:foldr({pivot_get, Id}, Rsc, Context),
+    R = z_notifier:foldr(#pivot_get{id=Id}, Rsc, Context),
     {A,B} = lists:foldl(fun(Res,Acc) -> fetch_texts(Res, Acc, Context) end, {[],[]}, R),
     {ObjIds, ObjTexts} = related(Id, Context),
     {CatIds, CatTexts} = category(proplists:get_value(category_id, R), Context),
@@ -518,8 +541,8 @@ split_lang([Text|Rest], Dict, Context) ->
 %% @doc Fetch the title of all things related to the resource
 related(Id, Context) ->
     Ids = lists:usort(m_edge:objects(Id, Context)),
-    Ids1 = z_notifier:foldr({pivot_related, Id}, Ids, Context),
-    IdsTexts = z_notifier:foldr({pivot_related_text_ids, Id}, Ids, Context),
+    Ids1 = z_notifier:foldr(#pivot_related{id=Id}, Ids, Context),
+    IdsTexts = z_notifier:foldr(#pivot_related_text_ids{id=Id}, Ids, Context),
     Texts = [ m_rsc:p(R, title, Context) || R <- IdsTexts ],
     {Ids1, Texts}.
     

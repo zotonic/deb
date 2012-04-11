@@ -20,6 +20,14 @@ export SITES=${SITES:=$ZOTONIC/priv/sites}
 # Path to the Erlang VM
 export ERL=${ERL:=erl}
 
+export MAKE=${MAKE:=make}
+
+# Increase this if you expect a lot of concurrent connections. For example
+# if you use comet on popular pages.
+# Please check the documentation of your system on how to increase 
+# the maximum number of open files your operating system. 
+export MAX_PORTS=${MAX_PORTS:=1024}
+
 # The include path for the erlang vm, add when needed for your application.
 export PA=${PA:="$ZOTONIC/ebin $ZOTONIC/deps/*/ebin $ZOTONIC/modules/*/deps/*/ebin $ZOTONIC/priv/modules/*/deps/*/ebin $ZOTONIC/priv/sites/*/modules/*/deps/*/ebin"}
 
@@ -36,9 +44,6 @@ if [ "$HOSTNAME" != "localhost" ]; then
 fi
 export HOSTNAME=$HOSTNAME
 
-# The command used to restart zotonic when crashed, only used after a "zotonic.sh start"
-export HEART_COMMAND="$ZOTONIC_BIN/zotonic start"
-
 # The filename where zotonic writes its unix process Id to, for monitoring applications.
 export ZOTONIC_PIDFILE=$ZOTONIC/zotonic.pid
 
@@ -46,4 +51,10 @@ export ZOTONIC_PIDFILE=$ZOTONIC/zotonic.pid
 if [ ! -e "$ZOTONIC/priv/erlang.config" -a -e "$ZOTONIC/priv/erlang.config.in" ]; then
     echo "Installing default erlang.config file"
     cp "$ZOTONIC/priv/erlang.config.in" "$ZOTONIC/priv/erlang.config"
+fi
+
+# Make sure Zotonic is built
+if [ ! -e "$ZOTONIC/ebin/zotonic.app" ]; then
+    echo "Building Zotonic for the first time."
+    $MAKE
 fi

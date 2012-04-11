@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-08-07
+%% Date: 2009-08-07
 %% @doc Allow editing and inserting config keys with string values.
 
 %% Copyright 2009 Marc Worrell
@@ -23,4 +23,6 @@
 -mod_title("Admin config support").
 -mod_description("Allow admins to edit the system configuration.").
 -mod_prio(800).
+-mod_depends([admin]).
+-mod_provides([]).
 

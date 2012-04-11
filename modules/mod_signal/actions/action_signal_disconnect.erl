@@ -1,6 +1,6 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @copyright 2010 Maas-Maarten Zeeman
-%% @date 2010-12-03
+%% Date: 2010-12-03
 %% @doc Disconnect a page from a signal
 
 %% Copyright 2010 Maas-Maarten Zeeman
@@ -28,16 +28,13 @@ render_action(TriggerId, TargetId, Args, Context) ->
     Signal = proplists:get_value(signal, Args),
     Name = proplists:get_value(name, Args),
   
-    ?DEBUG(Name),
-    
     Postback = {disconnect, [{signal, Signal}, {name, Name}]},
     
     {Script, _Context} = z_render:make_postback(Postback, click, TriggerId, TargetId, ?MODULE, Context),
     {Script, Context}.
 
 %
-event({postback, {disconnect, [{signal, Signal}, {name, Name}]}, _TriggerId, _TargetId}, Context) ->
-    ?DEBUG(Name),
+event(#postback{message={disconnect, [{signal, Signal}, {name, Name}]}}, Context) ->
     case action_signal_connect:get_slot(Name, Context) of
 	undefined -> ok;
 	Slot ->

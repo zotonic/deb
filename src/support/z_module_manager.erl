@@ -1,11 +1,11 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009-2010 Marc Worrell
+%% @copyright 2009-2011 Marc Worrell
 %% Date: 2009-06-03
 
 %% @doc Module supervisor. Uses a z_supervisor.  Starts/restarts module processes.
 %% @todo Take module dependencies into account when starting/restarting modules.
 
-%% Copyright 2009-2010 Marc Worrell
+%% Copyright 2009-2011 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@
     active/1,
     active/2,
     active_dir/1,
+    get_provided/1,
     get_modules/1,
     get_modules_status/1,
     whereis/2,
@@ -44,6 +45,9 @@
     scan/1,
     prio/1,
     prio_sort/1,
+    dependency_sort/1,
+    dependencies/1,
+    startable/2,
     module_exists/1,
     title/1
 ]).
@@ -53,8 +57,11 @@
 %% The default module priority
 -define(MOD_PRIO, 500).
 
+%% Give a module a minute to start
+-define(MODULE_START_TIMEOUT, 60000).
+
 %% Module manager state
--record(state, {context, sup}).
+-record(state, {context, sup, start_wait=none, start_queue=[], start_error=[]}).
 
 
 %%====================================================================
@@ -94,7 +101,7 @@ activate(Module, Context) ->
             1 -> 1
         end
     end,
-    z_db:transaction(F, Context),
+    1 = z_db:transaction(F, Context),
     upgrade(Context).
 
 
@@ -145,6 +152,11 @@ active_dir(Context) ->
 %% @doc Return the list of all modules running.
 get_modules(Context) ->
     gen_server:call(name(Context), get_modules).
+
+
+%% @doc Return the list of all provided functionalities in running modules.
+get_provided(Context) ->
+    gen_server:call(name(Context), get_provided).
 
 
 %% @doc Return the status of all running modules.
@@ -208,6 +220,57 @@ prio_sort(Modules) ->
     [ M || {_Prio, M} <- Sorted ].
 
 
+%% @doc Sort all modules on their dependencies (with sub sort the module's priority)
+dependency_sort(#context{} = Context) ->
+    dependency_sort(active(Context));
+dependency_sort(Modules) when is_list(Modules) ->
+    Ms = [ dependencies(M) || M <- prio_sort(Modules) ],
+    z_toposort:sort(Ms).
+
+
+%% @doc Return a module's dependencies as a tuple usable for z_toposort:sort/1.
+dependencies({M, X}) ->
+    {_, Ds, Ps} = dependencies(M),
+    {{M,X}, Ds, Ps};
+dependencies(M) when is_atom(M) ->
+    try
+        Info = erlang:get_module_info(M, attributes),
+        Depends = proplists:get_value(mod_depends, Info, [base]),
+        Provides = [ M | proplists:get_value(mod_provides, Info, []) ],
+        {M, Depends, Provides}
+    catch
+        _M:_E -> {M, [], []}
+    end.
+
+
+startable(M, #context{} = Context) ->
+    Provided = get_provided(Context),
+    startable(M, Provided);
+startable(Module, Dependencies) when is_list(Dependencies) ->
+    case is_module(Module) of
+        true ->
+            case dependencies(Module) of
+                {Module, Depends, _Provides} ->
+                    Missing = lists:foldl(fun(Dep, Ms) ->
+                                            case lists:member(Dep, Dependencies) of
+                                                true -> Ms;
+                                                false -> [Dep|Ms]
+                                            end
+                                          end,
+                                          [],
+                                          Depends),
+                    case Missing of
+                        [] -> ok;
+                        _ -> {error, {missing_dependencies, Missing}}
+                    end;
+                _ ->
+                    {error, could_not_derive_dependencies}
+            end;
+        false ->
+            {error, not_found}
+    end.
+
+
 
 %% @doc Check if the code of a module exists. The database can hold module references to non-existing modules.
 module_exists(M) ->
@@ -224,6 +287,24 @@ title(M) ->
     catch
         _M:_E -> undefined
     end.
+
+
+%% @doc Get the schema version of a module.
+mod_schema(M) ->
+    try
+        {mod_schema, [S]} = proplists:lookup(mod_schema, M:module_info(attributes)),
+        S
+    catch
+        _M:_E -> undefined
+    end.
+
+db_schema_version(M, Context) ->
+    z_db:q1("SELECT schema_version FROM module WHERE name = $1", [M], Context).
+
+set_db_schema_version(M, V, Context) ->
+    1 = z_db:q("UPDATE module SET schema_version = $1 WHERE name = $2", [V, M], Context),
+    ok.
+
 
 
 %%====================================================================
@@ -254,6 +335,11 @@ handle_call(get_modules, _From, State) ->
     All = handle_get_modules(State),
     {reply, All, State};
 
+%% @doc Return the list of all provided services by the modules.
+handle_call(get_provided, _From, State) ->
+    Provided = handle_get_provided(State),
+    {reply, Provided, State};
+
 %% @doc Return all running modules and their status
 handle_call(get_modules_status, _From, State) ->
     {reply, z_supervisor:which_children(State#state.sup), State};
@@ -263,7 +349,7 @@ handle_call({whereis, Module}, _From, State) ->
     Running = proplists:get_value(running, z_supervisor:which_children(State#state.sup)),
     Ret = case lists:keysearch(Module, 1, Running) of
         {value, {Module, _, Pid, _}} -> {ok, Pid};
-        false -> {error, enoent}
+        false -> {error, not_running}
     end,
     {reply, Ret, State};
 
@@ -277,21 +363,31 @@ handle_call(Message, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @doc Sync enabled modules with loaded modules
 handle_cast(upgrade, State) ->
-    handle_upgrade(State),
-    {noreply, State};
+    State1 = handle_upgrade(State),
+    {noreply, State1};
+
+%% @doc Sync enabled modules with loaded modules
+handle_cast(start_next, State) ->
+    State1 = handle_start_next(State),
+    {noreply, State1};
 
 %% @doc New child process started, add the event listeners
+%% @todo When this is an automatic restart, start all depending modules
 handle_cast({supervisor_child_started, ChildSpec, Pid}, State) ->
     Module = ChildSpec#child_spec.name,
-    add_observers(Module, Pid, State#state.context),
-    z_notifier:notify({module_activate, Module, Pid}, State#state.context), 
-    {noreply, State};
+    State1 = handle_start_child_result(Module, {ok, Pid}, State),
+    {noreply, State1};
+
+handle_cast({start_child_result, Module, Result}, State) ->
+    State1 = handle_start_child_result(Module, Result, State),
+    {noreply, State1};
 
 %% @doc Existing child process stopped, remove the event listeners
 handle_cast({supervisor_child_stopped, ChildSpec, Pid}, State) ->
     Module = ChildSpec#child_spec.name,
     remove_observers(Module, Pid, State#state.context),
-    z_notifier:notify({module_deactivate, Module}, State#state.context), 
+    z_notifier:notify(#module_deactivate{module=Module}, State#state.context), 
+    stop_children_with_missing_depends(State),
     {noreply, State};
 
 
@@ -342,49 +438,173 @@ handle_upgrade(#state{context=Context, sup=ModuleSup} = State) ->
     Old  = sets:from_list([Name || {Name, _} <- ChildrenPids]),
     New  = sets:from_list(ValidModules),
     Kill = sets:subtract(Old, New),
-    Create = lists:reverse(prio_sort(sets:to_list(sets:subtract(New, Old)))),
-
+    Create = sets:subtract(New, Old),
+    
+    Running = z_supervisor:running_children(State#state.sup),
+    Start = sets:to_list(sets:subtract(New, sets:from_list(Running))),
+    {ok, StartList} = dependency_sort(Start),
+    
     sets:fold(fun (Module, ok) ->
               z_supervisor:delete_child(ModuleSup, Module),
               ok
           end, ok, Kill),
 
-    [ start_child(C, ModuleSup, module_spec(C, Context), Context) || C <- Create ],
-    case {Kill, Create} of
-        {[], []} -> nop;
-        _ -> z_notifier:notify(module_ready, Context)
-    end,
-    ok.
+    sets:fold(fun (Module, ok) ->
+            z_supervisor:add_child_async(ModuleSup, module_spec(Module, Context)),
+            ok
+        end, ok, Create),
 
+    % 1. Put all to be started modules into a start list (add to State)
+    % 2. Let the module manager start them one by one (if startable)
+    % 3. Log any start errors, suppress modules that have errors.
+    % 4. Log non startable modules (remaining after all startable modules have started)
+    
+    case {StartList, sets:size(Kill)} of
+        {[], 0} -> 
+            State#state{start_queue=[]};
+        _ ->
+            gen_server:cast(self(), start_next),
+            State#state{start_queue=StartList}
+    end.
 
-    %% @doc Try to add and start the child, do not crash on missing modules.
-    start_child(Module, ModuleSup, Spec, Context) ->
-        Info =  try
-                    erlang:get_module_info(Spec#child_spec.name, attributes)
-                catch
-                    M:E -> 
-                        ?ERROR("Can not fetch module info for module ~p, error: ~p:~p", [Spec#child_spec.name, M, E]),
-                        error
-                end,
-        case Info of
-            L when is_list(L) ->
-                case catch manage_datamodel(Module, Context) of
-                    ok ->
-                        ok = z_supervisor:add_child(ModuleSup, Spec),
-                        z_supervisor:start_child(ModuleSup, Spec#child_spec.name);
-                    Error ->
-                        ?ERROR("Error starting module ~p, datamodel initialization error: ~p", Error),
-                        error
-                end;
-            error ->
-                error
+handle_start_next(#state{context=Context, start_queue=[]} = State) ->
+    % Signal modules are loaded, and load all translations.
+    z_notifier:notify(module_ready, Context),
+    spawn_link(fun() -> z_trans_server:load_translations(Context) end),
+    State;
+handle_start_next(#state{context=Context, sup=ModuleSup, start_queue=Starting} = State) ->
+    % Filter all children on the capabilities of the loaded modules.
+    Provided = handle_get_provided(State),
+    case lists:filter(fun(M) -> is_startable(M, Provided) end, Starting) of
+        [] ->
+            [
+                ?ERROR("[~p] Error starting module ~p: ~p~n", 
+                        [ z_context:site(Context), 
+                          M, 
+                          startable(M, Provided)
+                        ])
+                || M <- Starting
+            ],
+            
+            % Add non-started modules to the list with errors.
+            CleanedUpErrors = lists:foldl(fun(M,Acc) -> 
+                                            proplists:delete(M,Acc) 
+                                          end,
+                                          State#state.start_error,
+                                          Starting),
+            
+            handle_start_next(State#state{
+                start_error=[ {M, case is_module(M) of false -> not_found; true -> dependencies_error end} 
+                              || M <- Starting 
+                            ] ++ CleanedUpErrors,
+                start_queue=[]
+            });
+        [C|_] ->
+            case start_child(self(), C, ModuleSup, module_spec(C, Context), Context) of
+                {ok, StartHelperPid} -> 
+                    State#state{
+                        start_error=proplists:delete(C, State#state.start_error),
+                        start_wait={C, StartHelperPid, now()},
+                        start_queue=lists:delete(C, Starting)
+                    };
+                {error, Reason} -> 
+                    handle_start_next(
+                        State#state{
+                            start_error=[ {C, Reason} | proplists:delete(C, State#state.start_error) ],
+                            start_queue=lists:delete(C, Starting)
+                        })
+            end
+    end.
+
+    %% @doc Check if all module dependencies are running.
+    is_startable(Module, Dependencies) ->
+        startable(Module, Dependencies) =:= ok.
+
+    %% @doc Check if we can load the module
+    is_module(Module) ->
+        try 
+            {ok, _} = z_utils:ensure_existing_module(Module),
+            true
+        catch 
+            M:E -> 
+                ?ERROR("Can not fetch module info for module ~p, error: ~p:~p", [Module, M, E]),
+                false
         end.
+
+    %% @doc Try to add and start the child, do not crash on missing modules. Run as a separate process.
+    %% @todo Add some preflight tests
+    start_child(ManagerPid, Module, ModuleSup, Spec, Context) ->
+        StartPid = spawn_link(
+            fun() ->
+                Result = case catch manage_schema(Module, Context) of
+                            ok ->
+                                % Try to start it
+                                z_supervisor:start_child(ModuleSup, Spec#child_spec.name, ?MODULE_START_TIMEOUT);
+                            Error ->
+                                ?ERROR("[~p] Error starting module ~p, Schema initialization error:~n~p~n", 
+                                        [z_context:site(Context), Module, Error]),
+                                {error, {schema_init, Error}}
+                         end,
+                gen_server:cast(ManagerPid, {start_child_result, Module, Result})
+            end
+        ),
+        {ok, StartPid}.
+
+
+
+handle_start_child_result(Module, Result, State) ->
+    % ?DEBUG({module_start_result, Module, Result}),
+    % Where we waiting for this child? If so, start the next.
+    State1 = case State#state.start_wait of
+                {Module, _Pid, _NowStarted} ->
+                    gen_server:cast(self(), start_next),
+                    State#state{start_wait=none};
+                _Other ->
+                    % Check if there are any non-started modules that 
+                    % depend on this module
+                    State
+             end,
+    case Result of
+        {ok, Pid} ->
+            % Remove any registered errors for the started module
+            State2 = State1#state{start_error=lists:keydelete(Module, 1, State1#state.start_error)},
+            add_observers(Module, Pid, State2#state.context),
+            z_notifier:notify(#module_activate{module=Module, pid=Pid}, State2#state.context),
+            State2;
+        {error, _Reason} = Error ->
+            State1#state{
+                start_error=[ {Module, Error} | lists:keydelete(Module, 1, State1#state.start_error) ]
+            }
+    end.
+
+
+%% @doc Return the list of all provided services.
+handle_get_provided(State) ->
+    get_provided_for_modules(handle_get_running(State)).
+
+get_provided_for_modules(Modules) ->
+    lists:flatten(
+        [ case dependencies(M) of
+                {_, _, Provides} -> Provides;
+                _ -> []
+           end
+           || M <- Modules ]).    
+
+
+stop_children_with_missing_depends(State) ->
+    Modules = handle_get_modules(State),
+    Provided = get_provided_for_modules(Modules),
+    Unstartable = lists:filter(fun(M) -> not is_startable(M, Provided) end, Modules),
+    [ z_supervisor:stop_child(State#state.sup, M) || M <- Unstartable ].
 
 
 %% @doc Return the list of module names currently managed by the z_supervisor.
 handle_get_modules(State) ->
     [ Name || {Name,_Pid} <- handle_get_modules_pid(State) ].
 
+%% @doc Return the list of module names currently managed and running by the z_supervisor.
+handle_get_running(State) ->
+    z_supervisor:running_children(State#state.sup).
 
 %% @doc Return the list of module names and their pid currently managed by the z_supervisor.
 handle_get_modules_pid(State) ->
@@ -393,7 +613,6 @@ handle_get_modules_pid(State) ->
                           [ {Name,Pid} || {Name,_Spec,Pid,_Time} <- Children ]
                         end,
                         z_supervisor:which_children(State#state.sup))).
-
 
 %% @doc Get a list of all valid modules
 valid_modules(Context) ->
@@ -431,13 +650,65 @@ valid(M, Context) ->
     lists:member(M, [Mod || {Mod,_} <- scan(Context)]).
 
 
-%% @doc Initialize the datamodel of the module.
-manage_datamodel(Module, Context) ->
-    case proplists:get_value(datamodel, erlang:get_module_info(Module, exports)) of
-        undefined -> ok;
-        0 -> z_datamodel:manage(Module, Module:datamodel(), Context);
-        1 -> z_datamodel:manage(Module, Module:datamodel(Context), Context)
+%% @doc Manage the upgrade/install of this module.
+manage_schema(Module, Context) ->
+    Target = mod_schema(Module),
+    Current = db_schema_version(Module, Context),
+    case {proplists:get_value(manage_schema, erlang:get_module_info(Module, exports)), Target =/= undefined} of
+        {undefined, false} ->
+            ok; %% No manage_schema function, and no target schema
+        {undefined, true} ->
+            throw({error, {"Schema version defined in module but no manage_schema/2 function.", Module}});
+        {2, _} ->
+            %% Module has manage_schema function
+            manage_schema(Module, Current, Target, Context)
     end.
+
+%% @doc Database version equals target version; ignore
+manage_schema(_Module, Version, Version, _Context) ->
+    ok;
+
+%% @doc Upgrading to undefined schema version..?
+manage_schema(_Module, _Current, undefined, _Context) ->
+    ok; %% or?: throw({error, {upgrading_to_empty_schema_version, Module}});
+
+%% @doc Installing a schema
+manage_schema(Module, undefined, Target, Context) ->
+    F = fun(C) ->
+                case Module:manage_schema(install, C) of
+                    D=#datamodel{} ->
+                        ok = z_datamodel:manage(Module, D, Context);
+                    ok -> ok
+                end,
+                ok = set_db_schema_version(Module, Target, C),
+                ok = z_db:flush(C)
+        end,
+    ok = z_db:transaction(F, Context);
+
+%% @doc Attempting a schema downgrade.
+manage_schema(Module, Current, Target, _Context) when
+      is_integer(Current) andalso is_integer(Target)
+      andalso Current > Target ->
+    throw({error, {"Module downgrades currently not supported.", Module}});
+
+%% @doc Do a single upgrade step.
+manage_schema(Module, Current, Target, Context) when
+      is_integer(Current) andalso is_integer(Target) ->
+    F = fun(C) ->
+                case Module:manage_schema({upgrade, Current+1}, C) of
+                    D=#datamodel{} ->
+                        ok = z_datamodel:manage(Module, D, Context);
+                    ok -> ok
+                end,
+                ok = set_db_schema_version(Module, Current+1, C),
+                ok = z_db:flush(C)
+        end,
+    ok = z_db:transaction(F, Context),
+    manage_schema(Module, Current+1, Target, Context);
+
+%% @doc Invalid version numbering
+manage_schema(_, Current, Target, _) ->
+    throw({error, {"Invalid schema version numbering", Current, Target}}).
 
 
 %% @doc Add the observers for a module, called after module has been activated

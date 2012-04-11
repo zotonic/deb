@@ -25,6 +25,7 @@
 -export([
     has_connection/1,
     transaction/2,
+    transaction/3,
     transaction_clear/1,
     set/3,
     get/2,
@@ -35,12 +36,16 @@
     assoc_props_row/3,
     assoc/2,
     assoc/3,
+    assoc/4,
     assoc_props/2,
     assoc_props/3,
+    assoc_props/4,
     q/2,
     q/3,
+    q/4,
     q1/2,
     q1/3,
+    q1/4,
     q_row/2,
     q_row/3,
     equery/2,
@@ -54,7 +59,7 @@
     column_names/2,
     update_sequence/3,
     table_exists/2,
-    ensure_table/3,
+    create_table/3,
     drop_table/2,
     flush/1,
     
@@ -69,16 +74,61 @@
 
 %% @doc Perform a function inside a transaction, do a rollback on exceptions
 %% @spec transaction(Function, Context) -> FunctionResult | {error, Reason}
-transaction(Function, #context{dbc=undefined} = Context) ->
+transaction(Function, Context) ->
+    transaction(Function, [], Context).
+
+% @doc Perform a transaction with extra options. Default retry on deadlock
+transaction(Function, Options, Context) ->
+    Result = case transaction1(Function, Context) of
+                {rollback, {{error, {error, error, <<"40P01">>, _, _}}, Trace1}} ->
+                    {rollback, {deadlock, Trace1}};
+                {rollback, {{case_clause, {error, {error, error,<<"40P01">>, _, _}}}, Trace2}} ->
+                    {rollback, {deadlock, Trace2}};
+                {rollback, {{badmatch, {error, {error, error,<<"40P01">>, _, _}}}, Trace2}} ->
+                    {rollback, {deadlock, Trace2}};
+                Other -> 
+                    Other
+            end,
+    case Result of
+        {rollback, {deadlock, Trace}} = DeadlockError ->
+            case proplists:get_value(noretry_on_deadlock, Options) of
+                true ->
+                    ?zWarning(
+                        io_lib:format("DEADLOCK on database transaction, NO RETRY '~p'", [Trace]),
+                        Context
+                    ),
+                    DeadlockError;
+                _False ->
+                    ?zWarning(
+                        io_lib:format("DEADLOCK on database transaction, will retry '~p'", [Trace]),
+                        Context
+                    ),
+                    % Sleep random time, then retry transaction
+                    timer:sleep(z_ids:number(100)),
+                    transaction(Function, Options, Context)
+            end;
+        R ->
+            R
+    end.
+
+
+% @doc Perform the transaction, return error when the transaction function crashed
+transaction1(Function, #context{dbc=undefined} = Context) ->
     case has_connection(Context) of
         true ->
             Host     = Context#context.host,
             {ok, C}  = pgsql_pool:get_connection(Host),
             Context1 = Context#context{dbc=C},
             Result = try
-                        {ok, [], []} = pgsql:squery(C, "BEGIN"),
+                        case pgsql:squery(C, "BEGIN") of
+                            {ok, [], []} -> ok;
+                            {error, _} = ErrorBegin -> throw(ErrorBegin)
+                        end,
                         R = Function(Context1),
-                        {ok, [], []} = pgsql:squery(C, "COMMIT"),
+                        case pgsql:squery(C, "COMMIT") of
+                            {ok, [], []} -> ok;
+                            {error, _} = ErrorCommit -> throw(ErrorCommit)
+                        end,
                         R
                      catch
                         _:Why ->
@@ -90,9 +140,11 @@ transaction(Function, #context{dbc=undefined} = Context) ->
         false ->
             {rollback, {no_database_connection, erlang:get_stacktrace()}}
     end;
-transaction(Function, Context) ->
+transaction1(Function, Context) ->
     % Nested transaction, only keep the outermost transaction
     Function(Context).
+    
+    
 
 %% @doc Clear any transaction in the context, useful when starting a thread with this context.
 transaction_clear(#context{dbc=undefined} = Context) ->
@@ -131,6 +183,20 @@ return_connection(C, #context{dbc=undefined, host=Host}) ->
 return_connection(_C, _Context) -> 
     ok.
 
+%% @doc Apply function F with a connection as parameter. Make sure the
+%% connection is returned after usage.
+with_connection(F, Context) ->
+    with_connection(F, get_connection(Context), Context).
+
+    with_connection(F, none, _Context) -> 
+        F(none);
+    with_connection(F, Connection, Context) when is_pid(Connection) -> 
+        try
+            F(Connection)
+        after
+            return_connection(Connection, Context)
+	end.
+
 
 assoc_row(Sql, Context) ->
     assoc_row(Sql, [], Context).
@@ -152,13 +218,11 @@ assoc_props_row(Sql, Parameters, Context) ->
     
 
 get_parameter(Parameter, Context) ->
-    C = get_connection(Context),
-    try
-        {ok, Result} = pgsql:get_parameter(C, z_convert:to_binary(Parameter)),
-        Result
-    after
-        return_connection(C, Context)
-    end.
+    F = fun(C) ->
+		{ok, Result} = pgsql:get_parameter(C, z_convert:to_binary(Parameter)),
+		Result
+	end,
+    with_connection(F, Context).
     
 
 %% @doc Return property lists of the results of a query on the database in the Context
@@ -166,69 +230,74 @@ get_parameter(Parameter, Context) ->
 assoc(Sql, Context) ->
     assoc(Sql, [], Context).
 
-assoc(Sql, Parameters, Context) ->
-    case get_connection(Context) of
-        none -> [];
-        C ->
-            try
-                {ok, Result} = pgsql:assoc(C, Sql, Parameters),
+assoc(Sql, Parameters, #context{} = Context) ->
+    assoc(Sql, Parameters, Context, ?PGSQL_TIMEOUT);
+assoc(Sql, #context{} = Context, Timeout) when is_integer(Timeout) ->
+    assoc(Sql, [], Context, Timeout).
+
+assoc(Sql, Parameters, Context, Timeout) ->
+    F = fun(C) when C =:= none -> [];
+	   (C) ->
+                {ok, Result} = pgsql:assoc(C, Sql, Parameters, Timeout),
                 Result
-            after
-                return_connection(C, Context)
-            end
-    end.
+	end,
+    with_connection(F, Context).
 
 
 assoc_props(Sql, Context) ->
     assoc_props(Sql, [], Context).
 
-assoc_props(Sql, Parameters, Context) ->
-    case get_connection(Context) of
-        none -> [];
-        C ->
-            try
-                {ok, Result} = pgsql:assoc(C, Sql, Parameters),
+assoc_props(Sql, Parameters, #context{} = Context) ->
+    assoc_props(Sql, Parameters, Context, ?PGSQL_TIMEOUT);
+assoc_props(Sql, #context{} = Context, Timeout) when is_integer(Timeout) ->
+    assoc_props(Sql, [], Context, Timeout).
+
+assoc_props(Sql, Parameters, Context, Timeout) ->
+    F = fun(C) when C =:= none -> [];
+	   (C) ->
+                {ok, Result} = pgsql:assoc(C, Sql, Parameters, Timeout),
                 merge_props(Result)
-            after
-                return_connection(C, Context)
-            end
-    end.
+	end,
+    with_connection(F, Context).
 
 
 q(Sql, Context) ->
-    q(Sql, [], Context).
+    q(Sql, [], Context, ?PGSQL_TIMEOUT).
 
-q(Sql, Parameters, Context) ->
-    case get_connection(Context) of
-        none -> [];
-        C ->
-            try
-                case pgsql:equery(C, Sql, Parameters) of
+q(Sql, Parameters, #context{} = Context) ->
+    q(Sql, Parameters, Context, ?PGSQL_TIMEOUT);
+q(Sql, #context{} = Context, Timeout) when is_integer(Timeout) ->
+    q(Sql, [], Context, Timeout).
+
+q(Sql, Parameters, Context, Timeout) ->
+    F = fun(C) when C =:= none -> [];
+	   (C) ->
+                case pgsql:equery(C, Sql, Parameters, Timeout) of
                     {ok, _Affected, _Cols, Rows} -> Rows;
                     {ok, _Cols, Rows} -> Rows;
                     {ok, Rows} -> Rows
                 end
-            after
-                return_connection(C, Context)
-            end
-    end.
+	end,
+    with_connection(F, Context).
 
 q1(Sql, Context) ->
     q1(Sql, [], Context).
 
-q1(Sql, Parameters, Context) ->
-    case get_connection(Context) of
-        none -> undefined;
-        C ->
-            try
-                case pgsql:equery1(C, Sql, Parameters) of
+q1(Sql, Parameters, #context{} = Context) ->
+    q1(Sql, Parameters, Context, ?PGSQL_TIMEOUT);
+q1(Sql, #context{} = Context, Timeout) when is_integer(Timeout) ->
+    q1(Sql, [], Context, Timeout).
+
+q1(Sql, Parameters, Context, Timeout) ->
+    F = fun(C) when C =:= none -> undefined;
+           (C) ->
+                case pgsql:equery1(C, Sql, Parameters, Timeout) of
                     {ok, Value} -> Value;
                     {error, noresult} -> undefined
                 end
-            after
-                return_connection(C, Context)
-            end
-    end.
+    end,
+    with_connection(F, Context).
+
 
 q_row(Sql, Context) ->
     q_row(Sql, [], Context).
@@ -243,17 +312,17 @@ q_row(Sql, Args, Context) ->
 equery(Sql, Context) ->
     equery(Sql, [], Context).
     
-equery(Sql, Parameters, Context) ->
-    case get_connection(Context) of
-        none -> 
-            {error, noresult};
-        C ->
-            try
-                pgsql:equery(C, Sql, Parameters)
-            after
-                return_connection(C, Context)
-            end
-    end.
+equery(Sql, Parameters, #context{} = Context) ->
+    equery(Sql, Parameters, Context, ?PGSQL_TIMEOUT);
+equery(Sql, #context{} = Context, Timeout) when is_integer(Timeout) ->
+    equery(Sql, [], Context, Timeout).
+
+equery(Sql, Parameters, Context, Timeout) ->
+    F = fun(C) when C =:= none -> {error, noresult};
+           (C) -> pgsql:equery(C, Sql, Parameters, Timeout)
+        end,
+    with_connection(F, Context).
+
 
 %% @doc Insert a new row in a table, use only default values.
 %% @spec insert(Table, Context) -> {ok, Id}
@@ -261,12 +330,10 @@ insert(Table, Context) when is_atom(Table) ->
     insert(atom_to_list(Table), Context);
 insert(Table, Context) ->
     assert_table_name(Table),
-    C = get_connection(Context),
-    try
-        pgsql:equery1(C, "insert into \""++Table++"\" default values returning id")
-    after
-        return_connection(C, Context)
-    end.
+    F = fun(C) ->
+		pgsql:equery1(C, "insert into \""++Table++"\" default values returning id")
+	end,
+    with_connection(F, Context).
 
 
 %% @doc Insert a row, setting the fields to the props.  Unknown columns are serialized in the props column.
@@ -301,16 +368,15 @@ insert(Table, Props, Context) ->
         false -> Sql
     end,
 
-    C = get_connection(Context),
-    try
-        Id = case pgsql:equery1(C, FinalSql, Parameters) of
-                {ok, IdVal} -> IdVal;
-                {error, noresult} -> undefined
-             end,
-         {ok, Id}
-    after
-        return_connection(C, Context)
-    end.
+    F = fun(C) ->
+		Id = case pgsql:equery1(C, FinalSql, Parameters) of
+			 {ok, IdVal} -> IdVal;
+			 {error, noresult} -> undefined
+		     end,
+		{ok, Id}
+	end,
+    with_connection(F, Context).
+
 
 %% @doc Update a row in a table, merging the props list with any new props values
 %% @spec update(Table, Id, Parameters, Context) -> {ok, RowsUpdated}
@@ -320,8 +386,7 @@ update(Table, Id, Parameters, Context) ->
     assert_table_name(Table),
     Cols         = column_names(Table, Context),
     UpdateProps  = prepare_cols(Cols, Parameters),
-    C            = get_connection(Context),
-    try
+    F = fun(C) ->
         UpdateProps1 = case proplists:is_defined(props, UpdateProps) of
             true ->
                 % Merge the new props with the props in the database
@@ -346,9 +411,8 @@ update(Table, Id, Parameters, Context) ->
                  ++ " where id = $1",
         {ok, RowsUpdated} = pgsql:equery1(C, Sql, [Id | Params]),
         {ok, RowsUpdated}
-    after
-        return_connection(C, Context)
-    end.
+    end,
+    with_connection(F, Context).
 
 
 %% @doc Delete a row from a table, the row must have a column with the name 'id'
@@ -357,14 +421,12 @@ delete(Table, Id, Context) when is_atom(Table) ->
     delete(atom_to_list(Table), Id, Context);
 delete(Table, Id, Context) ->
     assert_table_name(Table),
-    C = get_connection(Context),
-    try
+    F = fun(C) ->
         Sql = "delete from \""++Table++"\" where id = $1", 
         {ok, RowsDeleted} = pgsql:equery1(C, Sql, [Id]),
         {ok, RowsDeleted}
-    after
-        return_connection(C, Context)
-    end.
+	end,
+    with_connection(F, Context).
 
 
 
@@ -375,13 +437,11 @@ select(Table, Id, Context) when is_atom(Table) ->
     select(atom_to_list(Table), Id, Context);
 select(Table, Id, Context) ->
     assert_table_name(Table),
-    C = get_connection(Context),
-    {ok, Row} = try
-        Sql = "select * from \""++Table++"\" where id = $1 limit 1", 
-        pgsql:assoc(C, Sql, [Id])
-    after
-        return_connection(C, Context)
-    end,
+    F = fun(C) ->
+		Sql = "select * from \""++Table++"\" where id = $1 limit 1", 
+		pgsql:assoc(C, Sql, [Id])
+	end,
+    {ok, Row} = with_connection(F, Context),
     
     Props = case Row of
         [R] ->
@@ -500,24 +560,22 @@ column_names(Table, Context) ->
 flush(Context) ->
     {ok, Db} = pgsql_pool:get_database(?HOST(Context)),
     z_depcache:flush({database, Db}, Context).
-    
+
 
 %% @doc Update the sequence of the ids in the table. They will be renumbered according to their position in the id list.
 %% @spec update_sequence(Table, IdList, Context) -> void()
+%% @todo Make the steps of the sequence bigger, and try to keep the old sequence numbers in tact (needs a diff routine)
 update_sequence(Table, Ids, Context) when is_atom(Table) ->
     update_sequence(atom_to_list(Table), Ids, Context);
 update_sequence(Table, Ids, Context) ->
     assert_table_name(Table),
     Args = lists:zip(Ids, lists:seq(1, length(Ids))),
-    case get_connection(Context) of
-        none -> [];
-        C ->
-	    try
+    F = fun(C) when C =:= none -> 
+		[];
+	   (C) -> 
 		[ {ok, _} = pgsql:equery1(C, "update \""++Table++"\" set seq = $2 where id = $1", Arg) || Arg <- Args ]
-	    after
-		return_connection(C, Context)
-	    end
-    end.
+	   end,
+    with_connection(F, Context).
 
 
 
@@ -550,77 +608,40 @@ drop_table(Name, Context) ->
 %% @doc Ensure that a table with the given columns exists, alter any existing table
 %% to add, modify or drop columns.  The 'id' (with type serial) column _must_ be defined
 %% when creating the table.
-ensure_table(Table, Cols, Context) when is_atom(Table) ->
-    ensure_table(atom_to_list(Table), Cols, Context);
-ensure_table(Table, Cols, Context) ->
-    case table_exists(Table, Context) of
-        false ->
-            ensure_table_create(Table, Cols, Context);
-        true ->
-            ExistingCols = lists:sort(columns(Table, Context)),
-            WantedCols = lists:sort(Cols),
-            case ensure_table_alter_cols(WantedCols, ExistingCols, []) of
-                [] -> ok;
-                Diff ->
-                    {ok, Db} = pgsql_pool:get_database(?HOST(Context)),
-                    {ok, Schema} = pgsql_pool:get_database_opt(schema, ?HOST(Context)),
-                    z_db:q("ALTER TABLE \""++Table++"\" " ++ string:join(Diff, ","), Context),
-                    z_depcache:flush({columns, Db, Schema, Table}, Context),
-                    ok
-            end
-    end.
-
-    ensure_table_create(Name, Cols, Context) ->
-        ColsSQL = ensure_table_create_cols(Cols, []),
-        z_db:q("CREATE TABLE \""++Name++"\" ("++string:join(ColsSQL, ",") ++ table_create_primary_key(Cols) ++ ")", Context),
-        ok.
-
-    table_create_primary_key([]) -> [];
-    table_create_primary_key([#column_def{name=id, type="serial"}|_]) -> ", primary key(id)";
-    table_create_primary_key([_|Cols]) -> table_create_primary_key(Cols).
-
-    ensure_table_create_cols([], Acc) ->
-        lists:reverse(Acc);
-    ensure_table_create_cols([C|Cols], Acc) ->
-        M = lists:flatten([$", atom_to_list(C#column_def.name), $", 32, column_spec(C)]),
-        ensure_table_create_cols(Cols, [M|Acc]).
+create_table(Table, Cols, Context) when is_atom(Table)->
+    create_table(atom_to_list(Table), Cols, Context);
+create_table(Table, Cols, Context) ->
+    assert_table_name(Table),
+    ColsSQL = ensure_table_create_cols(Cols, []),
+    z_db:q("CREATE TABLE \""++Table++"\" ("++string:join(ColsSQL, ",") ++ table_create_primary_key(Cols) ++ ")", Context),
+    ok.
 
 
-    ensure_table_alter_cols([], [], Acc) ->
-        lists:reverse(Acc);
-    ensure_table_alter_cols([N|Ns], [N|Es], Acc) ->
-        ensure_table_alter_cols(Ns, Es, Acc);
-    ensure_table_alter_cols([N|Ns], [E|Es], Acc) when N#column_def.name == E#column_def.name ->
-        M = lists:flatten(["ALTER COLUMN \"", atom_to_list(N#column_def.name), "\" TYPE ", column_spec(N)]),
-        M1 = case N#column_def.is_nullable of 
-                true  -> M ++ lists:flatten([", ALTER COLUMN \"", atom_to_list(N#column_def.name), "\" DROP NOT NULL"]);
-                false -> M ++ lists:flatten([", ALTER COLUMN \"", atom_to_list(N#column_def.name), "\" SET NOT NULL"])
-             end,
-        M2 = case N#column_def.default of
-                undefined -> M1 ++ lists:flatten([", ALTER COLUMN \"", atom_to_list(N#column_def.name), "\" DROP DEFAULT"]);
-                Default -> M1 ++ lists:flatten([", ALTER COLUMN \"", atom_to_list(N#column_def.name), "\" SET DEFAULT ", Default])
-             end,
-        ensure_table_alter_cols(Ns, Es, [M2|Acc]);
-    ensure_table_alter_cols([N|Ns], Es, Acc) when Es == [] orelse N < hd(Es) ->
-        M = lists:flatten(["ADD COLUMN \"", atom_to_list(N#column_def.name), "\" ", 
-                            column_spec(N), 
-                            column_spec_nullable(N#column_def.is_nullable), 
-                            column_spec_default(N#column_def.default)]),
-        ensure_table_alter_cols(Ns, Es, [M|Acc]);
-    ensure_table_alter_cols(Ns, [E|Es], Acc) when Ns == [] orelse E < hd(Ns) ->
-        M = lists:flatten(["DROP COLUMN \"", atom_to_list(E#column_def.name), "\""]),
-        ensure_table_alter_cols(Ns, Es, [M|Acc]).
+table_create_primary_key([]) -> [];
+table_create_primary_key([#column_def{name=id, type="serial"}|_]) -> ", primary key(id)";
+table_create_primary_key([#column_def{name=N, primary_key=true}|_]) -> ", primary key(" ++ z_convert:to_list(N) ++ ")";
+table_create_primary_key([_|Cols]) -> table_create_primary_key(Cols).
 
-    column_spec(#column_def{type=Type, length=undefined}) ->
-        Type;
-    column_spec(#column_def{type=Type, length=Length}) ->
-        lists:flatten([Type, $(, integer_to_list(Length), $)]).
-    
-    column_spec_nullable(true) -> "";
-    column_spec_nullable(false) -> " not null".
-    
-    column_spec_default(undefined) -> "";
-    column_spec_default(Default) -> [32, Default].
+ensure_table_create_cols([], Acc) ->
+    lists:reverse(Acc);
+ensure_table_create_cols([C|Cols], Acc) ->
+    M = lists:flatten([$", atom_to_list(C#column_def.name), $", 32, column_spec(C)]),
+    ensure_table_create_cols(Cols, [M|Acc]).
+
+column_spec(#column_def{type=Type, length=Length, is_nullable=Nullable, default=Default}) ->
+    L = case Length of
+            undefined -> [];
+            _ -> [$(, integer_to_list(Length), $)]
+        end,
+    N = column_spec_nullable(Nullable),
+    D = column_spec_default(Default),
+    lists:flatten([Type, L, N, D]).
+
+column_spec_nullable(true) -> "";
+column_spec_nullable(false) -> " not null".
+
+column_spec_default(undefined) -> "";
+column_spec_default(Default) -> [" DEFAULT ", Default].
 
 
 %% @doc Check if a name is a valid SQL table name. Crashes when invalid

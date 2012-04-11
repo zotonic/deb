@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-02-11
+%% Date: 2010-02-11
 %% @doc Backup module. Creates backup of the database and files.  Allows downloading of the backup.
 %% Support creation of periodic backups.
 
@@ -120,7 +120,6 @@ init(Args) ->
 %%                                      {noreply, State, Timeout} |
 %%                                      {stop, Reason, Reply, State} |
 %%                                      {stop, Reason, State}
-%% Description: Handling call messages
 %% @doc Start a backup
 handle_call(start_backup, _From, State) ->
     case State#state.backup_pid of
@@ -266,12 +265,12 @@ dir(Context) ->
 
 %% @doc Dump the sql database into the backup directory.  The Name is the basename of the dump.
 pg_dump(Name, Context) ->
-    Host = m_site:get(dbhost, Context),
-    Port = m_site:get(dbport, Context),
-    User = m_site:get(dbuser, Context),
-    Password = m_site:get(dbpassword, Context),
-    Database = m_site:get(dbdatabase, Context),
-    Schema = m_site:get(dbschema, Context),
+    {ok, Host} = pgsql_pool:get_database_opt(host, ?HOST(Context)),
+    {ok, Port} = pgsql_pool:get_database_opt(port, ?HOST(Context)),
+    {ok, User} = pgsql_pool:get_database_opt(username, ?HOST(Context)),
+    {ok, Password} = pgsql_pool:get_database_opt(password, ?HOST(Context)),
+    {ok, Database} = pgsql_pool:get_database_opt(database, ?HOST(Context)),
+    {ok, Schema} = pgsql_pool:get_database_opt(schema, ?HOST(Context)),
     DumpFile = filename:join([dir(Context), z_convert:to_list(Name) ++ ".sql"]),
     PgPass = filename:join([dir(Context), ".pgpass"]),
     ok = file:write_file(PgPass, z_convert:to_list(Host)

@@ -111,9 +111,9 @@ init([]) ->
                 permanent, 5000, worker, dynamic},
                 
     Processes = [
-        Ids, Config, PreviewServer, Dispatcher,
+        Ids, Config, PreviewServer,
         SmtpServer, SmtpBounceServer, 
-        SitesSup
+        SitesSup, Dispatcher | get_extensions()
                 ],
 
     % Listen to IP address and Port
@@ -202,20 +202,22 @@ init_webmachine() ->
                 webmachine_error_handler;
             EH -> EH
         end,
-    application:set_env(webmachine, error_handler, ErrorHandler),        
+    application:set_env(webzmachine, server_header, webmachine_request:server_header() ++ " Zotonic/" ++ ?ZOTONIC_VERSION),
+    application:set_env(webzmachine, error_handler, ErrorHandler),        
         
     LogDir = z_config:get_dirty(log_dir),
     
-    application:set_env(webmachine, webmachine_logger_module, webmachine_logger),
+    application:set_env(webzmachine, webmachine_logger_module, webmachine_logger),
     webmachine_sup:start_logger(LogDir),
     
     case z_config:get_dirty(enable_perf_logger) of
         true ->
-            application:set_env(webmachine, enable_perf_logger, true),
+            application:set_env(webzmachine, enable_perf_logger, true),
             webmachine_sup:start_perf_logger(LogDir);
         _ ->
             ignore
     end.
+
 
 %% @todo Exclude platforms that do not support raw ipv6 socket options
 ipv6_supported() ->
@@ -223,3 +225,16 @@ ipv6_supported() ->
         {ok, _Addr} -> true;
         {error, _} -> false
     end.
+
+
+%% @doc Scan priv/extensions for ext_ folders and add those as childs to the supervisor.
+get_extensions() ->
+    Files = filelib:wildcard(filename:join([z_utils:lib_dir(priv), "extensions", "ext_*"])),
+    [
+     begin
+         Module = list_to_atom(filename:basename(F)),
+         {Module,
+          {Module, start_link, []},
+          permanent, 5000, worker, dynamic}
+     end
+     || F <- Files].

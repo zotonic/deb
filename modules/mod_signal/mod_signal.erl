@@ -1,6 +1,6 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @copyright 2010 Maas-Maarten Zeeman
-%% @date 2010-12-03
+%% Date: 2010-12-03
 %% @doc Signal and slot mechanism for use in templates.
 
 %% Copyright 2010 Maas-Maarten Zeeman
@@ -32,7 +32,7 @@
 
 -include("zotonic.hrl").
 
--export([connect/3, disconnect/3, emit/2, slots/2, item_count/1, slot_count/1, emit_signal/3]).
+-export([connect/3, disconnect/3, emit/2, emit_script/2, emit_script/3, slots/2, item_count/1, slot_count/1, emit_signal/3]).
 
 % export for the tests
 -export([key/1, key/2]).
@@ -64,13 +64,29 @@ emit(Signal, Context) ->
     Slots = slots(Signal, Context),
     AsyncContext = z_context:prune_for_async(Context),
     lists:foreach(fun(Slot) -> 
-			  try
-			      emit_signal(Signal, Slot, AsyncContext) 
-			  catch M:E ->
-				  ?ERROR("Error emitting signal %p to slot %p. %p:%p. Disconnecting...", [Signal, Slot, M, E]),
-				  disconnect(Signal, Slot, AsyncContext)
-			  end
-		  end, Slots).
+              try
+                  emit_signal(Signal, Slot, AsyncContext) 
+              catch M:E ->
+                  ?ERROR("Error emitting signal %p to slot %p. %p:%p. Disconnecting...", [Signal, Slot, M, E]),
+                  disconnect(Signal, Slot, AsyncContext)
+              end
+          end, Slots).
+
+emit_script(Signal, Context) ->
+    {Scripts, CleanContext} = z_script:split(Context),
+    emit_script(Signal, Scripts, CleanContext).
+    
+emit_script(Signal, Script, Context) ->
+    Slots = slots(Signal, Context),
+    lists:foreach(fun(Slot) -> 
+            try
+                emit_signal_script(Script, Slot) 
+            catch M:E ->
+                ?ERROR("Error emitting signal %p to slot %p. %p:%p. Disconnecting...", [Signal, Slot, M, E]),
+                disconnect(Signal, Slot, z_context:prune_for_async(Context))
+            end
+        end, Slots).
+
 
 % @doc Emit a single signal
 %
@@ -79,6 +95,11 @@ emit_signal(Signal, Slot, Context) when is_function(Slot, 2) ->
 emit_signal(Signal, Slot, Context) when is_pid(Slot) ->
     Slot ! {signal, Signal, Context}.
 
+emit_signal_script(_Script, Slot) when is_function(Slot, 2) ->
+    nop;
+emit_signal_script(Script, Slot) when is_pid(Slot) ->
+    Slot ! {script, Script}.
+
 
 % @doc Return the slots connected to this signal
 %
@@ -86,20 +107,23 @@ slots(Signal, Context) ->
     Table = slot_table_name(Context),
     SignalType = signal_type(Signal),
 
-    % collect the tags
-    Tags = ets:lookup(Table, SignalType),
-    
-    % Get the list of keys we have to 
-    Keys = [key(Signal, Tag) || {tags, _S, Tag} <- Tags],
+    case ets:info(Table, size) of
+        undefined -> []; %% No table, no slots.
+        _ ->
+            Tags = ets:lookup(Table, SignalType),
 
-    slots1([], Table, Keys).
+            % Get the list of keys we have to 
+            Keys = [key(Signal, Tag) || {tags, _S, Tag} <- Tags],
 
-    slots1(Slots, _Table, []) ->
-        [Slot || {slot, _K, Slot} <- lists:flatten(Slots)];
-    slots1(Slots, Table, [undefined|T]) ->
-        slots1(Slots, Table, T);
-    slots1(Slots, Table, [H|T]) ->
-        slots1([ets:lookup(Table, H) | Slots], Table, T).
+            slots1([], Table, Keys)
+    end.
+
+slots1(Slots, _Table, []) ->
+    [Slot || {slot, _K, Slot} <- lists:flatten(Slots)];
+slots1(Slots, Table, [undefined|T]) ->
+    slots1(Slots, Table, T);
+slots1(Slots, Table, [H|T]) ->
+    slots1([ets:lookup(Table, H) | Slots], Table, T).
 
 % @doc Return how many items there 
 %
@@ -223,14 +247,20 @@ ensure_slot_table(Name) ->
 
 % get the type of signal
 %
+signal_type(SignalType) when is_atom(SignalType) ->
+    SignalType;
 signal_type({SignalType, Props}) when is_atom(SignalType), is_list(Props) ->
     SignalType.
 
 % Return the key used for this signal..
 %
+key(SignalType) when is_atom(SignalType) ->
+    {SignalType, []};
 key(Signal={SignalType, Props}) when is_atom(SignalType), is_list(Props) ->
     key(Signal, proplists:get_keys(Props)). 
 
+key(SignalType, []) when is_atom(SignalType) ->
+    {SignalType, []};
 key({SignalType, Props}, []) when is_atom(SignalType), is_list(Props) ->
     {SignalType, []};
 key({SignalType, Props}, Tags) when is_atom(SignalType), is_list(Props), is_list(Tags) ->

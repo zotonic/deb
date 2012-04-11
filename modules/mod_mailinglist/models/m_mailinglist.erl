@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-11-23
+%% Date: 2009-11-23
 %%
 %% @doc Mailing list access for templates.
 
@@ -56,9 +56,7 @@
     reset_log_email/3,
 
 	reset_bounced/2,
-	get_bounced_recipients/2,
-
-	init_tables/1
+	get_bounced_recipients/2
 ]).
 
 -include_lib("zotonic.hrl").
@@ -96,7 +94,7 @@ m_find_value(_Key, #m{value=undefined}, _Context) ->
    undefined.
 
 %% @doc Transform a m_config value to a list, used for template loops
-%% @spec m_to_list(Source, Context)
+%% @spec m_to_list(Source, Context) -> list()
 m_to_list(_, _Context) ->
     [].
 
@@ -107,7 +105,7 @@ m_value(#m{value=undefined}, _Context) ->
 
 
 %% @doc Get the stats for the mailing. Number of recipients and list of scheduled resources.
-%% @spec get_stats(int(), Context) -> {count::int(), [rsc_id::int()]}
+%% @spec get_stats(int(), Context) -> {Count::int(), [RscId::int()]}
 get_stats(Id, Context) ->
 	Count = z_db:q1("
 			select count(*) from mailinglist_recipient
@@ -122,7 +120,7 @@ get_stats(Id, Context) ->
 
 
 %% @doc Get the stats for all mailing lists which have been sent to a rsc (content_id)
-%% @spec get_rsc_stats(int(), Context) -> [ {mailinglist_id::int(), statlist} ]
+%% @spec get_rsc_stats(int(), Context) -> [ {ListId::int(), Statuslist} ]
 get_rsc_stats(Id, Context) ->
     F = fun() ->
                 Stats = [ {ListId, [{created, Created}, {total, Total}]} || 
@@ -181,7 +179,7 @@ recipient_delete(RecipientId, Context) ->
 		Email = proplists:get_value(email, RecipientProps),
 		case Quiet of
 			false ->
-				z_notifier:notify1({mailinglist_message, send_goodbye, ListId, Email}, Context);
+				z_notifier:notify1(#mailinglist_message{what=send_goodbye, list_id=ListId, recipient=Email}, Context);
 			_ -> nop
 		end,
 		ok.
@@ -200,7 +198,7 @@ recipient_confirm(ConfirmKey, Context) ->
 		{RecipientId, _IsEnabled, ListId} ->
 			NewConfirmKey = z_ids:id(20),
 			z_db:q("update mailinglist_recipient set confirm_key = $2, is_enabled = true where confirm_key = $1", [ConfirmKey, NewConfirmKey], Context),
-			z_notifier:notify({mailinglist_message, send_welcome, ListId, RecipientId}, Context),
+			z_notifier:notify(#mailinglist_message{what=send_welcome, list_id=ListId, recipient=RecipientId}, Context),
 			{ok, RecipientId};
 		undefined ->
 			{error, enoent}
@@ -272,7 +270,7 @@ insert_recipient(ListId, Email, Props, WelcomeMessageType, Context) ->
 	end,
 	case WelcomeMessageType1 of
 		none -> nop;
-		_ -> z_notifier:notify({mailinglist_message, WelcomeMessageType1, ListId, RecipientId}, Context)
+		_ -> z_notifier:notify(#mailinglist_message{what=WelcomeMessageType1, list_id=ListId, recipient=RecipientId}, Context)
 	end,
 	ok.
 
@@ -418,64 +416,6 @@ get_email_from(ListId, Context) ->
     z_email:combine_name_email(FromName, FromEmail).
 
 
-% Install the SQL tables to track recipients and scheduled mailings.
-init_tables(Context) ->
-	case z_db:table_exists(mailinglist_recipient, Context) of
-		true ->
-		    case z_db:column_names(mailinglist_recipient, Context) of
-		        [confirm_key,email,id,is_enabled,mailinglist_id,timestamp] ->
-		            z_db:q("alter table mailinglist_recipient
-		                        add column props bytea", Context),
-		            z_db:flush(Context),
-			    ok;
-		        [confirm_key,email,id,is_enabled,mailinglist_id,props,timestamp,user_id] ->
-		            z_db:q("alter table mailinglist_recipient
-		                        drop column user_id", Context),
-		            z_db:flush(Context),
-			    ok;
-                [confirm_key,email,id,is_enabled,mailinglist_id,props,timestamp] ->
-		            z_db:q("alter table mailinglist_recipient
-                                add column is_bounced boolean not null default false", Context),
-		            z_db:flush(Context),
-                    ok;
-                [confirm_key,email,id,is_bounced,is_enabled,mailinglist_id,props,timestamp] ->
-		            ok
-		    end;
-		false ->
-			z_db:q("
-				CREATE TABLE mailinglist_recipient (
-					id serial NOT NULL,
-					mailinglist_id INT NOT NULL,
-					email character varying (200) NOT NULL,
-					is_enabled boolean NOT NULL default true,
-                    is_bounced boolean NOT NULL default false,
-					props bytea,
-					confirm_key character varying (32) NOT NULL,
-					timestamp timestamp with time zone NOT NULL DEFAULT now(),
-
-					CONSTRAINT mailinglist_recipient_pkey PRIMARY KEY (id),
-					CONSTRAINT mailinglist_recipient_mailinglist_id_email_key UNIQUE (mailinglist_id, email),
-			        CONSTRAINT confirm_key_key UNIQUE (confirm_key),
-					CONSTRAINT fk_mailinglist_id FOREIGN KEY (mailinglist_id)
-				      REFERENCES rsc (id)
-				      ON UPDATE CASCADE ON DELETE CASCADE
-				)", Context),
-
-			z_db:q("
-				CREATE TABLE mailinglist_scheduled (
-					page_id INT NOT NULL,
-					mailinglist_id INT NOT NULL,
-
-					CONSTRAINT mailinglist_scheduled_pkey PRIMARY KEY (page_id, mailinglist_id),
-					CONSTRAINT fk_mailinglist_id FOREIGN KEY (mailinglist_id)
-				      REFERENCES rsc (id)
-				      ON UPDATE CASCADE ON DELETE CASCADE,
-					CONSTRAINT fk_page_id FOREIGN KEY (page_id)
-				      REFERENCES rsc (id)
-				      ON UPDATE CASCADE ON DELETE CASCADE
-				)", Context)
-	end.
-
 
 %% @doc Given an address, get all recipients with this email.
 get_recipients_by_email(Email, Context) ->
@@ -491,3 +431,5 @@ reset_bounced(ListId, Context) ->
 get_bounced_recipients(ListId, Context) ->
 	Emails = z_db:q("SELECT email FROM mailinglist_recipient WHERE mailinglist_id = $1 AND is_bounced = true AND is_enabled = true", [ListId], Context),
 	[ E || {E} <- Emails ].
+
+

@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-07
+%% Date: 2009-07-07
 %% @doc Delete username from an user, no confirmation.
 
 %% Copyright 2009 Marc Worrell
@@ -38,7 +38,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Delete an username from an user.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {delete_username, Id, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={delete_username, Id, OnSuccess}}, Context) ->
     case z_acl:is_allowed(delete, Id, Context) of
         true ->
             m_identity:delete_username(Id, Context),

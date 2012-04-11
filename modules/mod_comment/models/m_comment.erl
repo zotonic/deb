@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010-2011 Marc Worrell
-%% @date 2010-01-15
+%% Date: 2010-01-15
 %%
 %% @doc Model for managing the comments on a page.
 
@@ -41,7 +41,7 @@
 
 -include_lib("zotonic.hrl").
 
-%% @doc Cache time for comment listings and comment counts.
+%% Cache time for comment listings and comment counts.
 -define(MAXAGE_COMMENT, 7200).
 
 
@@ -65,7 +65,7 @@ m_find_value(_Key, #m{value=undefined}, _Context) ->
    undefined.
 
 %% @doc Transform a m_config value to a list, used for template loops
-%% @spec m_to_list(Source, Context)
+%% @spec m_to_list(Source, Context) -> []
 m_to_list(_, _Context) ->
     [].
 
@@ -85,8 +85,8 @@ list_rsc(RscId, Context) when is_integer(RscId) ->
     z_depcache:memo(F, {comment_rsc, RscId}, ?MAXAGE_COMMENT, Context).
 
 
-%% @doc List all comments of the resource.
-%% @spec list_rsc(int(), Context) -> [ PropList ]
+%% @doc Count comments of the resource.
+%% @spec count_rsc(int(), Context) -> [ PropList ]
 count_rsc(RscId, Context) when is_integer(RscId) ->
     F = fun() ->
         z_db:q1("select count(*) from comment where rsc_id = $1", [RscId], Context)
@@ -94,14 +94,14 @@ count_rsc(RscId, Context) when is_integer(RscId) ->
     z_depcache:memo(F, {comment_rsc_count, RscId}, ?MAXAGE_COMMENT, [{comment_rsc, RscId}], Context).
     
 
-%% @spec Fetch a specific comment from the database.
+%% @doc Fetch a specific comment from the database.
 %% @spec get(int(), Context) -> PropList
 get(CommentId, Context) ->
     z_db:assoc_props_row("select * from comment where id = $1", [CommentId], Context).
 
 
 %% @doc Insert a new comment. Fetches the submitter information from the Context.
-%% @spec insert(Id:int(), Name::string(), Email::string(), Message::string(), Context) -> {ok, CommentId} | {error, Reason}
+%% @spec insert(Id::int(), Name::string(), Email::string(), Message::string(), Context) -> {ok, CommentId} | {error, Reason}
 %% @todo Insert external ip address and user agent string
 insert(RscId, Name, Email, Message, Context) ->
     case z_acl:rsc_visible(RscId, Context) 
@@ -128,7 +128,7 @@ insert(RscId, Name, Email, Message, Context) ->
             case z_db:insert(comment, Props, Context) of
                 {ok, CommentId} = Result ->
                     z_depcache:flush({comment_rsc, RscId}, Context),
-                    z_notifier:notify({comment_insert, CommentId, RscId}, Context),
+                    z_notifier:notify(#comment_insert{comment_id=CommentId, id=RscId}, Context),
                     Result;
                 {error, _} = Error ->
                     Error

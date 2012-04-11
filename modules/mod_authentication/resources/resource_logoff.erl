@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-05-08
+%% Date: 2010-05-08
 %% @doc Log off an user, remove "rememberme" cookies
 
 %% Copyright 2010 Marc Worrell
@@ -34,7 +34,7 @@ service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
     Context2 = z_context:continue_session(Context1),
     ContextNoCookie = resource_logon:reset_rememberme_cookie(Context2),
     ContextLogOff = z_auth:logoff(ContextNoCookie),
-    ContextNoSession = z_session_manager:stop_session(ContextLogOff),
+    {ok, ContextNoSession} = z_session_manager:stop_session(ContextLogOff),
     ?WM_REPLY(true, ContextNoSession).
 
 charsets_provided(ReqData, Context) ->
@@ -56,13 +56,15 @@ previously_existed(ReqData, Context) ->
 
 moved_temporarily(ReqData, Context) ->
     Context1 = ?WM_REQ(ReqData, Context),
-    Location = z_context:get_q("p", Context1, "/"),
-    ?WM_REPLY({true, Location}, Context1).
+    Context2 = z_context:ensure_qs(Context1),
+    Location = z_context:get_q("p", Context2, "/"),
+    ?WM_REPLY({true, Location}, Context2).
 
 provide_content(ReqData, Context) ->
     Context1 = ?WM_REQ(ReqData, Context),
-    Context2 = z_context:set_resp_header("X-Robots-Tag", "noindex", Context1),
-    Rendered = z_template:render("logoff.tpl", z_context:get_all(Context2), Context2),
-    {Output, OutputContext} = z_context:output(Rendered, Context2),
+    Context2 = z_context:ensure_qs(Context1),
+    Context3 = z_context:set_resp_header("X-Robots-Tag", "noindex", Context2),
+    Rendered = z_template:render("logoff.tpl", z_context:get_all(Context3), Context3),
+    {Output, OutputContext} = z_context:output(Rendered, Context3),
     ?WM_REPLY(Output, OutputContext).
     

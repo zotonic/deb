@@ -1,6 +1,6 @@
 {application, zotonic,
  [{description, "zotonic"},
-  {vsn, "0.7.3"},
+  {vsn, "0.8.0"},
   {modules, [
     zotonic,
     zotonic_app,
@@ -10,4 +10,4 @@
   {registered, []},
   {mod, {zotonic_app, []}},
   {env, []},
-  {applications, [kernel, stdlib, crypto, mnesia]}]}.
+  {applications, [kernel, stdlib, crypto, lager, mnesia]}]}.

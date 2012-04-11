@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-15
+%% Date: 2009-07-15
 %% @doc Enables embedding video's as media pages.  Handles the embed information for showing video's.
 %% The embed information is stored in the medium table associated with the page. You can not have embed
 %% information and a medium file. Either one or the other.
@@ -25,6 +25,8 @@
 -mod_title("Video embed").
 -mod_description("Embed youtube, vimeo and other movies as media pages.").
 -mod_prio(600).
+-mod_depends([admin]).
+-mod_provides([video_embed]).
 
 %% interface functions
 -export([
@@ -37,12 +39,12 @@
 -include_lib("zotonic.hrl").
 
 
-%% @doc Fantasy mime type to distinguish embeddable html fragments.
+%% Fantasy mime type to distinguish embeddable html fragments.
 -define(EMBED_MIME, <<"text/html-video-embed">>).
 
 %% @doc Check if the update contains video embed information.  If so then update the attached medium item.
-%% @spec rsc_update({rsc_update, ResourceId, OldResourceProps}, {Changed, UpdateProps}, Context) -> {NewChanged, NewUpdateProps}
-observe_rsc_update({rsc_update, Id, _OldProps}, {Changed, Props}, Context) ->
+%% @spec observe_rsc_update({rsc_update, ResourceId, OldResourceProps}, {Changed, UpdateProps}, Context) -> {NewChanged, NewUpdateProps}
+observe_rsc_update(#rsc_update{id=Id}, {Changed, Props}, Context) ->
     case proplists:is_defined(video_embed_code, Props) of
         true -> 
             EmbedChanged = case proplists:get_value(video_embed_code, Props) of
@@ -100,8 +102,8 @@ observe_rsc_update({rsc_update, Id, _OldProps}, {Changed, Props}, Context) ->
 
 
 %% @doc Return the media viewer for the embedded video (that is, when it is an embedded media).
-%% @spec media_viewer(Notification, Context) -> undefined | {ok, Html}
-observe_media_viewer({media_viewer, _Id, Props, _Filename, _Options}, _Context) ->
+%% @spec observe_media_viewer(Notification, Context) -> undefined | {ok, Html}
+observe_media_viewer(#media_viewer{props=Props}, _Context) ->
     case proplists:get_value(mime, Props) of
         ?EMBED_MIME ->
             case proplists:get_value(video_embed_code, Props) of
@@ -114,8 +116,8 @@ observe_media_viewer({media_viewer, _Id, Props, _Filename, _Options}, _Context) 
 
 
 %% @doc Return the filename of a still image to be used for image tags.
-%% @spec media_stillimage(Notification, _Context) -> undefined | {ok, Filename}
-observe_media_stillimage({media_stillimage, Id, Props}, Context) ->
+%% @spec observe_media_stillimage(Notification, _Context) -> undefined | {ok, Filename}
+observe_media_stillimage(#media_stillimage{id=Id, props=Props}, Context) ->
     case proplists:get_value(mime, Props) of
         ?EMBED_MIME ->
             case m_rsc:p(Id, depiction, Context) of
@@ -143,7 +145,7 @@ observe_media_stillimage({media_stillimage, Id, Props}, Context) ->
 
 %% @doc Handle the form submit from the "new media" dialog.  The form is defined in templates/_media_upload_panel.tpl.
 %% @spec event(Event, Context1) -> Context2
-event({submit, {add_video_embed, EventProps}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={add_video_embed, EventProps}}, Context) ->
     Actions = proplists:get_value(actions, EventProps, []),
     Id = proplists:get_value(id, EventProps),
     Stay = z_convert:to_bool(proplists:get_value(stay, EventProps, false)),
@@ -235,7 +237,7 @@ preview_youtube(MediaId, InsertProps, Context) ->
             case re:run(Embed, "youtube(\-nocookie)?\\.com/v/([^\?\"'&]+)", [{capture,[2],list}]) of
                 {match, [Code]} ->
                     Url = "http://img.youtube.com/vi/"++Code++"/0.jpg",
-                    case http:request(Url) of
+                    case httpc:request(Url) of
                         {ok, {_StatusLine, _Header, Data}} ->
                             %% Received the preview image, move it to a file.
                             m_media:save_preview(MediaId, Data, "image/jpeg", Context);
@@ -258,14 +260,14 @@ preview_vimeo(MediaId, InsertProps, Context) ->
             case re:run(Embed, "clip_id=([0-9]+)", [{capture,[1],list}]) of
                 {match, [Code]} ->
                     JsonUrl = "http://vimeo.com/api/v2/video/" ++ Code ++ ".json",
-                    case http:request(JsonUrl) of
+                    case httpc:request(JsonUrl) of
                         {ok, {_StatusLine, _Header, Data}} ->
                             {array, [{struct, Props}]} = mochijson:decode(Data),
                             case proplists:get_value("thumbnail_large", Props) of
                                 undefined ->
                                     nop;
                                 ImgUrl ->
-                                    case http:request(ImgUrl) of
+                                    case httpc:request(ImgUrl) of
                                         {ok, {_StatusLine1, _Header1, ImgData}} ->
                                             %% Received the preview image, move it to a file.
                                             m_media:save_preview(MediaId, ImgData, "image/jpeg", Context);
@@ -294,7 +296,7 @@ preview_yandex(MediaId, InsertProps, Context) ->
             case re:run(Embed, "flv\\.video\\.yandex\\.ru/lite/([^/]+)/([^\"'&/]+)", [{capture, [1, 2], list}]) of
                 {match, [User, Code]} ->
                     Url = lists:flatten(["http://static.video.yandex.ru/get/", User, $/, Code, "/1.m450x334.jpg"]),
-                    case http:request(Url) of
+                    case httpc:request(Url) of
                         {ok, {_StatusLine, _Header, Data}} ->
                             %% Received the preview image, move it to a file.
                             m_media:save_preview(MediaId, Data, "image/jpeg", Context);

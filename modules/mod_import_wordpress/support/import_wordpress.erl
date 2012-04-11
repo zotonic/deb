@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2010 Arjan Scherpenisse
-%% @date 2010-09-20
+%% Date: 2010-09-20
 %% @doc Wordpress WXR import.
 
 %% Copyright 2010,2011 Arjan Scherpenisse
@@ -18,7 +18,6 @@
 %% limitations under the License.
 -module(import_wordpress).
 
-
 -export([
          wxr_import/2,
          wxr_import/3,
@@ -26,10 +25,8 @@
          test/0
         ]).
 
-
 -include_lib("xmerl/include/xmerl.hrl").
 -include("zotonic.hrl").
-
 
 -define(RSS_NS, 'http://purl.org/rss/1.0/modules/content/').
 -define(WFW_NS, 'http://wellformedweb.org/CommentAPI/').
@@ -59,7 +56,11 @@ wxr_to_datamodel(Filename, Context) ->
 
     %% Make sure we support the right version. FIXME - make more flexible.
     [Version] = xmerl_xpath:string("wp:wxr_version", Channel),
-    <<"1.0">> = get_xmltext(Version),
+    case get_xmltext(Version) of
+        <<"1.0">> -> supported;
+        <<"1.1">> -> supported;
+        V -> throw({error, {unsupported_wxr_version, binary_to_list(V)}})
+    end,
 
     [Link] = xmerl_xpath:string("link", Channel),
     Base = z_convert:to_list(get_xmltext(Link)),
@@ -232,12 +233,12 @@ get_xmltext(Element=#xmlElement{content=Content}, Strip) ->
 
 
 %% @doc Given a list of XML test, implode it into one list.
-%% @spec collapse_xmltext([#xmlText]) -> string()
+%% @spec collapse_xmltext([#xmlText{}]) -> string()
 collapse_xmltext(Content) ->
     lists:flatten([X#xmlText.value || X <- Content]).
 
 %% @doc Given an XML element, get the value of an attribute.
-%% @spec xml_attrib(atom(), #xmlElement) -> binary() | undefined
+%% @spec xml_attrib(atom(), #xmlElement{}) -> binary() | undefined
 xml_attrib(Name, #xmlElement{attributes=Attrs}) ->
     case lists:filter(fun(#xmlAttribute{name=Nm}) -> Nm =:= Name end, Attrs) of
         [] -> undefined;
@@ -250,7 +251,8 @@ xml_attrib(Name, #xmlElement{attributes=Attrs}) ->
 wp_embed_tags(B) when is_binary(B) ->
     list_to_binary(wp_embed_tags(binary_to_list(B)));
 
-wp_embed_tags(BodyText) ->
+wp_embed_tags(BodyText0) ->
+    BodyText = "<p>" ++ re:replace(BodyText0, "\r\n\r\n", "</p><p>", [{return, list}, global]) ++ "</p>",
     Re = "(<a .*?>)?<img.*?class=\"(.*?wp-image-([0-9]+).*?)\".*?/>(</a>)?",
     case re:run(BodyText, Re, [{capture, all}]) of
         nomatch ->

@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009 Arjan Scherpenisse <arjan@scherpenisse.net>
-%% @date 2009-10-01
+%% Date: 2009-10-01
 %% @doc Entrypoint for obtaining an oauth access token.
 
 %% Copyright 2009 Arjan Scherpenisse
@@ -23,9 +23,11 @@
 
 -export([
          init/1,
-         content_types_provided/2,
          resource_exists/2,
-         response/2
+         allowed_methods/2,
+         content_types_provided/2,
+         response/2,
+         process_post/2
         ]).
 
 -include_lib("webmachine_resource.hrl").
@@ -43,9 +45,16 @@ resource_exists(ReqData, _Context) ->
     {true, ReqData, Context1}.
 
 
+allowed_methods(ReqData, Context) ->
+    {['POST', 'GET', 'HEAD'], ReqData, Context}.
+
+
 content_types_provided(ReqData, Context) ->
     {[{"text/html", response}], ReqData, Context}.
 
+
+process_post(ReqData, Context) ->
+    response(ReqData, Context).
 
 response(ReqData, Context) ->
     case mod_oauth:request_is_signed(ReqData) of
@@ -57,7 +66,8 @@ response(ReqData, Context) ->
                           fun(URL, Params, Consumer, Signature) ->
                                   %Token = m_oauth_app:secrets_for_verify(none, Consumer, mod_oauth:oauth_param("oauth_token", ReqData), Context),
                                   SigMethod = mod_oauth:oauth_param("oauth_signature_method", ReqData),
-                                  case oauth:verify(Signature, "GET", URL, Params, mod_oauth:to_oauth_consumer(Consumer, SigMethod), "") of
+                                  case oauth:verify(Signature, atom_to_list(ReqData#wm_reqdata.method), URL,
+                                                    Params, mod_oauth:to_oauth_consumer(Consumer, SigMethod), "") of
                                       true ->
                                           {ok, Token} = m_oauth_app:request_token(Consumer, Context),
                                           ReqData1 = wrq:set_resp_body(oauth_uri:params_to_string(

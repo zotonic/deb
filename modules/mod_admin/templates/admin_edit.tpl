@@ -12,7 +12,7 @@
 
 			{% if not is_editable %}
 				<h2>
-					{_ You are not allowed to edit the _} {{ m.rsc[r.category_id].title|lower }} “{{ r.title|striptags }}”
+					{_ You are not allowed to edit the _} {{ m.rsc[r.category_id].title|lower }} “<span {% include "_language_attrs.tpl" %}>{{ r.title|striptags }}</span>”
 				</h2>
 			{% else %}
 				<p class="admin-chapeau">{_ editing _}:
@@ -22,8 +22,11 @@
 						{_ Created by _} {{ m.rsc[r.creator_id].title }}.<br/>
 					</span>
 				</p>
-				<h2>{{ r.title|striptags|default:"<em>untitled</em>" }}
-					<span>{{ m.rsc[r.category_id].title|lower }} <a href="#category">{_ change _}</a></span>
+				<h2 {% include "_language_attrs.tpl" %}>{{ r.title|striptags|default:_"<em>untitled</em>" }}
+                    {% if m.acl.insert[r.category.name|as_atom] and not r.is_a.meta %}
+					<span>{{ m.rsc[r.category_id].title|lower }} <a href="javascript:;" id="changecategory">{_ change _}</a></span>
+                    {% wire id="changecategory" action={dialog_open title=_"Change category" template="_action_dialog_change_category.tpl" id=id} %}
+                    {% endif %}
 				</h2>
 			{% endif %}
 
@@ -31,18 +34,18 @@
 
 			{% wire id="rscform" type="submit" postback="rscform" %}
 			<form id="rscform" method="post" action="postback">
+                <button style="display:none"></button><!-- for saving on press enter -->
 				<input type="hidden" name="id" value="{{ id }}" />
 
 				<div class="zp-67" id="poststuff">
 					<div class="padding">
 
 						{% all catinclude "_admin_edit_basics.tpl" id is_editable=is_editable languages=languages %}
-
 						{% all catinclude "_admin_edit_content.tpl" id is_editable=is_editable languages=languages %}
 
 						{% if r.is_a.media or r.medium %}
 							{% include "_admin_edit_content_media.tpl" %}
-						
+
 							{% if is_editable %}
 								{% include "_admin_edit_content_website.tpl" %}
 							{% endif %}
@@ -79,10 +82,6 @@
 
 						{# Page connections #}
 						{% include "_admin_edit_content_page_connections.tpl" %}
-
-						{% if m.acl.insert[r.category.name|as_atom] %}
-							{% include "_admin_edit_content_category.tpl" %}
-						{% endif %}
 					</div>
 				</div>
 			</form>

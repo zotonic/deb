@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-09-07
+%% Date: 2010-09-07
 %% @doc Stream template updates to the user agent
 
 
@@ -20,6 +20,6 @@ render_action(TriggerId, TargetId, _Args, Context) ->
     {PostbackMsgJS, Context}.
 
 %% @doc Flush the caches of all sites.
-event({postback, {development_templates_stream, [{target, Target}]}, _TriggerId, _TargetId}, Context) ->
-    z_notifier:notify1({debug_stream, Target, template}, Context),
+event(#postback{message={development_templates_stream, [{target, Target}]}}, Context) ->
+    z_notifier:notify1(#debug_stream{target=Target, what=template}, Context),
     Context.

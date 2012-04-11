@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-11-29
+%% Date: 2009-11-29
 %% @doc Cancel a mailing list subscription.
 
 %% Copyright 2009 Marc Worrell
@@ -36,7 +36,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 	{PostbackMsgJS, _PickledPostback} = z_render:make_postback(Postback, click, TriggerId, TargetId, ?MODULE, Context),
 	{PostbackMsgJS, Context}.
 
-event({postback, {mailinglist_unsubscribe, RecipientId, OnSuccess, OnError}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={mailinglist_unsubscribe, RecipientId, OnSuccess, OnError}}, Context) ->
 	case m_mailinglist:recipient_delete(RecipientId, Context) of
 		ok ->
 			z_render:wire(OnSuccess, Context);

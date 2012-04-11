@@ -485,19 +485,17 @@ LiveValidation.prototype =
      */
     insertMessage: function(elementToInsert){
         this.removeMessage();
-		if (this.elementType != LiveValidation.RADIO) {
-	        if( (this.displayMessageWhenEmpty && (this.elementType == LiveValidation.CHECKBOX || this.element.value == ''))
-	            || this.element.value != '' ){
-            
-	            var className = this.validationFailed ? this.invalidClass : this.validClass;
-	            elementToInsert.className += ' ' + this.messageClass + ' ' + className;
-	            if(this.insertAfterWhatNode.nextSibling){
-	              this.insertAfterWhatNode.parentNode.insertBefore(elementToInsert, this.insertAfterWhatNode.nextSibling);
-	            }else{
-	                  this.insertAfterWhatNode.parentNode.appendChild(elementToInsert);
-	            }
-			 }
-	      }
+	if( (this.displayMessageWhenEmpty && (this.elementType == LiveValidation.CHECKBOX || this.element.value == ''))
+	    || this.element.value != '' ) {
+                
+	        var className = this.validationFailed ? this.invalidClass : this.validClass;
+	        elementToInsert.className += ' ' + this.messageClass + ' ' + className;
+	        if(this.insertAfterWhatNode.nextSibling){
+	            this.insertAfterWhatNode.parentNode.insertBefore(elementToInsert, this.insertAfterWhatNode.nextSibling);
+	        }else{
+	            this.insertAfterWhatNode.parentNode.appendChild(elementToInsert);
+	        }
+	    }
     },
     
     
@@ -887,7 +885,72 @@ var Validate = {
       var paramsObj = paramsObj || {};
       var message = paramsObj.failureMessage || "Incorrect E-mail";
       value = $.trim(value);
-      Validate.Format(value, { failureMessage: message, pattern: /^([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,})$/i } );
+      // see validator_base_email.erl:43
+      var re = /^$|^(("[^"\f\n\r\t\v\b]+")|([\w\!\#\$\%\&\'\*\+\-\~\/\^\`\|\{\}]+(\.[\w\!\#\$\%\&\'\*\+\-\~\/\^\`\|\{\}]+)*))@((([A-Za-z0-9\-])+\.)+[A-Za-z\-]{2,})$/;
+      Validate.Format(value, { failureMessage: message, pattern: re } );
+      return true;
+    },
+
+    /*
+     *  validates that the field contains a valid date
+     *
+     *  @var value {mixed} - value to be checked
+     *  @var paramsObj {Object} - parameters for this particular validation, see below for details
+     *
+     *  paramsObj properties:
+     *              failureMessage {String} - the message to show when the field fails validation
+     *                            (DEFAULT: "Incorrect Date")
+     *              format {String} - l, m,b endian 
+     *                             (DEFAULT: "l")
+     *              separator {String} - a character which is not a number
+     *                             (DEFAULT: "-")
+     *
+     */
+
+    Date: function(value, paramsObj){
+      function to_integer(value) {
+          if (parseInt(value, 10) == value) {
+              return parseInt(value, 10);
+          } else {
+              return parseInt("NaN");
+          }
+      }
+
+      var paramsObj = paramsObj || {};
+      var message = paramsObj.failureMessage || "Incorrect Date";
+      var format = paramsObj.format || "l";
+      var separator = paramsObj.separator || "-";
+      value = $.trim(value);
+
+      var date_components = value.split(separator);
+      
+      if (date_components.length != 3) {
+          Validate.fail(message);
+      } else {
+          not_a_number = to_integer(separator);
+          if (!isNaN(not_a_number)) {
+              throw "Seperator cannot be a number!";
+          }
+          if (format == 'l') {
+              var day = to_integer(date_components[0]);
+              var month = to_integer(date_components[1]);
+              var year = to_integer(date_components[2]);
+          } else if (format == 'b') {
+              var day = to_integer(date_components[2]);
+              var month = to_integer(date_components[1]);
+              var year = to_integer(date_components[0]);
+          } else if (format == 'm') {
+              var day = to_integer(date_components[1]);
+              var month = to_integer(date_components[0]);
+              var year = to_integer(date_components[2]);
+          } else {
+              throw "Bad date format error!";
+          }
+          var date_object = new Date(year, month-1, day);
+          if (!((date_object.getDate() == day) && (date_object.getMonth()+1 == month) && (date_object.getFullYear() == year))) {
+              Validate.fail(message);
+          }
+      }
       return true;
     },
     

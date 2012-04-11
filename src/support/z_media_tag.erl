@@ -45,6 +45,10 @@ viewer(undefined, _Options, _Context) ->
     {ok, []};
 viewer([], _Options, _Context) ->
     {ok, []};
+viewer(#rsc_list{list=[]}, _Options, _Context) ->
+    {ok, []};
+viewer(#rsc_list{list=[Id|_]}, Options, Context) ->
+    viewer(Id, Options, Context);
 viewer(Name, Options, Context) when is_atom(Name) ->
     case m_rsc:name_to_id(Name, Context) of
         {ok, Id} -> viewer(Id, Options, Context);
@@ -80,7 +84,7 @@ viewer(Filename, Options, Context) ->
     %% @doc Try to generate Html for the media reference.  First check if a module can do this, then 
     %% check the normal image tag.
     viewer1(Id, Props, FilePath, Options, Context) ->
-        case z_notifier:first({media_viewer, Id, Props, FilePath, Options}, Context) of
+        case z_notifier:first(#media_viewer{id=Id, props=Props, filename=FilePath, options=Options}, Context) of
             {ok, Html} -> {ok, Html};
             undefined -> tag(Props, Options, Context)
         end.
@@ -97,6 +101,10 @@ tag(undefined, _Options, _Context, _Visited) ->
     {ok, []};
 tag([], _Options, _Context, _Visited) ->
     {ok, []};
+tag(#rsc_list{list=[]}, _Options, _Context, _Visited) ->
+    {ok, []};
+tag(#rsc_list{list=[Id|_]}, Options, Context, Visited) ->
+    tag(Id, Options, Context, Visited);
 tag(Name, Options, Context, Visited) when is_atom(Name) ->
     case m_rsc:name_to_id(Name, Context) of
         {ok, Id} -> tag(Id, Options, Context, Visited);
@@ -110,7 +118,7 @@ tag(Id, Options, Context, Visited) when is_integer(Id) ->
                 Filename -> tag1(Props, Filename, Options, Context)
             end;
         undefined ->
-            NewId = case z_notifier:first({media_stillimage, Id, []}, Context) of
+            NewId = case z_notifier:first(#media_stillimage{id=Id, props=[]}, Context) of
                         {ok, N} -> N;
                         _ ->
                             %% Use the first depiction edge
@@ -136,6 +144,7 @@ tag(Filename, Options, Context, _Visited) when is_list(Filename) ->
     tag1(FilePath, Filename, Options, Context);
 tag({filepath, Filename, FilePath}, Options, Context, _Visited) ->
     tag1(FilePath, Filename, Options, Context).
+
     
 
     tag1(_MediaRef, {filepath, Filename, FilePath}, Options, Context) ->
@@ -324,38 +333,42 @@ props2url([{Prop,Value}|Rest], Width, Height, Acc) ->
     props2url(Rest, Width, Height, [[atom_to_list(Prop),$-,z_convert:to_list(Value)]|Acc]).
 
 
-%% @spec url2props(Url, Context) -> {Filepath,PreviewPropList,Checksum,ChecksumBaseString}
+%% @spec url2props(Url, Context) -> {Filepath,PreviewPropList,Checksum,ChecksumBaseString} | error
 %% @doc Translate an url of the format "image.jpg(300x300)(crop-center)(checksum).jpg" to parts
 %% @todo Map the extension to the format of the preview (.jpg or .png)
 url2props(Url, Context) ->
     {Filepath,Rest} = lists:splitwith(fun(C) -> C =/= $( end, Url),
     PropsRoot = filename:rootname(Rest),
     % Take the checksum from the string
-    LastParen = string:rchr(PropsRoot, $(),
-    {Props,[$(|Check]} = lists:split(LastParen-1, PropsRoot),
-    Check1 = string:strip(Check, right, $)),
-    PropList = case Props of
-                   "()" ++ _ -> [""|string:tokens(Props, ")(")];
-                   _ -> string:tokens(Props, ")(")
-               end,
-    FileMime = z_media_identify:guess_mime(Rest),
-    {_Mime, Extension} = z_media_preview:out_mime(FileMime, PropList),
-    z_utils:checksum_assert([Filepath,Props,Extension], Check1, Context),
-    PropList1       = case PropList of
-                        [] -> [];
-                        [Size|RestProps]->
-                            {W,XH} = lists:splitwith(fun(C) -> C >= $0 andalso C =< $9 end, Size),
-                            SizeProps = case {W,XH} of
-                                            {"", "x"}            -> [];
-                                            {"", ""}             -> [];
-                                            {Width, ""}          -> [{width,list_to_integer(Width)}]; 
-                                            {Width, "x"}         -> [{width,list_to_integer(Width)}]; 
-                                            {"", [$x|Height]}    -> [{height,list_to_integer(Height)}]; 
-                                            {Width, [$x|Height]} -> [{width,list_to_integer(Width)},{height,list_to_integer(Height)}]
-                                        end,
-                            SizeProps ++ url2props1(RestProps, [])
-                      end,
-    {Filepath,PropList1,Check1,Props}.
+    case string:rchr(PropsRoot, $() of
+        0 ->
+            error;
+        LastParen ->
+            {Props,[$(|Check]} = lists:split(LastParen-1, PropsRoot),
+            Check1 = string:strip(Check, right, $)),
+            PropList = case Props of
+                           "()" ++ _ -> [""|string:tokens(Props, ")(")];
+                           _ -> string:tokens(Props, ")(")
+                       end,
+            FileMime = z_media_identify:guess_mime(Rest),
+            {_Mime, Extension} = z_media_preview:out_mime(FileMime, PropList),
+            z_utils:checksum_assert([Filepath,Props,Extension], Check1, Context),
+            PropList1       = case PropList of
+                                [] -> [];
+                                [Size|RestProps]->
+                                    {W,XH} = lists:splitwith(fun(C) -> C >= $0 andalso C =< $9 end, Size),
+                                    SizeProps = case {W,XH} of
+                                                    {"", "x"}            -> [];
+                                                    {"", ""}             -> [];
+                                                    {Width, ""}          -> [{width,list_to_integer(Width)}]; 
+                                                    {Width, "x"}         -> [{width,list_to_integer(Width)}]; 
+                                                    {"", [$x|Height]}    -> [{height,list_to_integer(Height)}]; 
+                                                    {Width, [$x|Height]} -> [{width,list_to_integer(Width)},{height,list_to_integer(Height)}]
+                                                end,
+                                    SizeProps ++ url2props1(RestProps, [])
+                              end,
+            {Filepath,PropList1,Check1,Props}
+    end.
 
 url2props1([], Acc) ->
     lists:reverse(Acc);

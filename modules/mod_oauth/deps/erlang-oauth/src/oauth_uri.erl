@@ -17,6 +17,8 @@
 
 normalize(URI) ->
   case http_uri:parse(URI) of
+    {ok, {Scheme, UserInfo, Host, Port, Path, _Query}} -> % R15B
+        normalize(Scheme, UserInfo, string:to_lower(Host), Port, [Path]);
     {Scheme, UserInfo, Host, Port, Path, _Query} ->
       normalize(Scheme, UserInfo, string:to_lower(Host), Port, [Path]);
     Else ->
@@ -83,6 +85,9 @@ encode([], Encoded) ->
   lists:flatten(lists:reverse(Encoded));
 encode([C|Etc], Encoded) when ?is_unreserved(C) ->
   encode(Etc, [C|Encoded]);
-encode([C|Etc], Encoded) ->
-  Value = io_lib:format("%~2.1.0s", [erlang:integer_to_list(C, 16)]),
+encode([C|Etc], Encoded) when C >= 16 ->
+  Value = [ $% | erlang:integer_to_list(C, 16) ],
+  encode(Etc, [Value|Encoded]);
+encode([C|Etc], Encoded) when C < 16 ->
+  Value = [ $%, $0 | erlang:integer_to_list(C, 16) ],
   encode(Etc, [Value|Encoded]).

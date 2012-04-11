@@ -1,10 +1,10 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009 Marc Worrell
+%% @copyright 2009-2012 Marc Worrell
 %% Date: 2009-04-17
 %%
 %% @doc Utility functions for html processing.  Also used for property filtering (by m_rsc_update).
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2012 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,10 +24,12 @@
 %% interface functions
 -export([
     escape_props/1,
+    escape_props/2,
     escape/1,
     unescape/1,
     strip/1,
     sanitize/1,
+    sanitize/2,
     noscript/1,
     escape_link/1,
     nl2br/1,
@@ -38,23 +40,27 @@
 -include_lib("zotonic.hrl").
 
 
-%% @doc Escape all properties used for an update statement. Only leaves the body property in tact.
+%% @doc Escape all properties used for an update statement. Only leaves the body property intact.
 %% @spec escape_props(PropertyList) -> PropertyList
 escape_props(Props) ->
-    escape_props(Props, []).
+    escape_props1(Props, [], undefined).
 
-    escape_props([], Acc) ->
+%% @spec escape_props(PropertyList, context()) -> PropertyList
+escape_props(Props, Context) ->
+    escape_props1(Props, [], Context).
+
+    escape_props1([], Acc, _OptContext) ->
         Acc;
-    escape_props([{_K,V} = Prop|T], Acc) when is_float(V); is_integer(V); is_atom(V) -> 
-        escape_props(T, [Prop|Acc]);
-    escape_props([{K, V}|T], Acc) when K =:= body orelse K =:= body_extra->
-        escape_props(T, [{K, sanitize(V)} | Acc]);
-    escape_props([{K, V}|T], Acc) ->
+    escape_props1([{_K,V} = Prop|T], Acc, OptContext) when is_float(V); is_integer(V); is_atom(V) -> 
+        escape_props1(T, [Prop|Acc], OptContext);
+    escape_props1([{K, V}|T], Acc, OptContext) when K =:= body orelse K =:= body_extra->
+        escape_props1(T, [{K, sanitize(V, OptContext)} | Acc], OptContext);
+    escape_props1([{K, V}|T], Acc, OptContext) ->
         EscapeFun = case lists:reverse(z_convert:to_list(K)) of
-                        "lmth_" ++ _ -> fun sanitize/1; %% prop ends in '_html'
+                        "lmth_" ++ _ -> fun(A) -> sanitize(A, OptContext) end; %% prop ends in '_html'
                         _ -> fun escape_value/1
                     end,
-        escape_props(T, [{K, EscapeFun(V)} | Acc]).
+        escape_props1(T, [{K, EscapeFun(V)} | Acc], OptContext).
 
     escape_value({trans, Texts}) ->
         {trans, escape_props(Texts)};
@@ -157,11 +163,23 @@ escape_link(Text) ->
         lists:reverse([escape(Text) | Acc]);
     make_links1(Offset, [{Offset, Len}|Rest], Text, Acc) ->
         {Link, Text1} = lists:split(Len, Text),
-        Link1 = escape(noscript(Link)),
-        make_links1(Offset+Len, Rest, Text1, [["<a href=\"",Link1,"\" rel=\"nofollow\">",Link1,"</a>"] | Acc]);
+        NoScript = noscript(Link),
+        Link1 = escape(NoScript),
+        Link2 = escape(ensure_protocol(NoScript)),
+        make_links1(Offset+Len, Rest, Text1, [["<a href=\"",Link2,"\" rel=\"nofollow\">",Link1,"</a>"] | Acc]);
     make_links1(Offset, [{MatchOffs,_}|_] = Matches, Text, Acc) ->
         {Text1,Text2} = lists:split(MatchOffs-Offset, Text),
         make_links1(MatchOffs, Matches, Text2, [escape(Text1)|Acc]).
+
+    ensure_protocol([]) ->
+        [];
+    ensure_protocol("#" ++ _ = Link) ->
+        Link;
+    ensure_protocol("www" ++ Rest) ->
+        ["http://www", Rest];
+    ensure_protocol(Link) ->
+        Link.
+
 
 
 %% @doc Strip all html elements from the text. Simple parsing is applied to find the elements. Does not escape the end result.
@@ -208,84 +226,106 @@ strip(<<_,T/binary>>, State, Acc) ->
 
 %% @doc Sanitize a (X)HTML string. Remove elements and attributes that might be harmful.
 %% @spec sanitize(binary()) -> binary()
-sanitize({trans, Tr}) ->
-    {trans, [{Lang, sanitize(V)} || {Lang,V} <- Tr]};
-sanitize(Html) when is_binary(Html) ->
-	sanitize1(<<"<sanitize>",Html/binary,"</sanitize>">>);
-sanitize(Html) when is_list(Html) ->
-	sanitize1(iolist_to_binary(["<sanitize>", Html, "</sanitize>"])).
+sanitize(Html) ->
+    sanitize(Html, undefined).
 
-sanitize1(Html) ->
-	Parsed = mochiweb_html:parse(ensure_escaped_amp(Html)),
-	Sanitized = sanitize(Parsed, []),
-	flatten(Sanitized).
+sanitize({trans, Tr}, OptContext) ->
+    {trans, [{Lang, sanitize(V, OptContext)} || {Lang,V} <- Tr]};
+sanitize(Html, OptContext) when is_binary(Html) ->
+    sanitize_opts(<<"<sanitize>",Html/binary,"</sanitize>">>, OptContext);
+sanitize(Html, OptContext) when is_list(Html) ->
+    sanitize_opts(iolist_to_binary(["<sanitize>", Html, "</sanitize>"]), OptContext).
 
-	sanitize(B, _Stack) when is_binary(B) ->
-		escape(B);
-	sanitize({comment, Text}, _Stack) ->
-		{comment, Text};
-	sanitize({pi, _Raw}, _Stack) ->
-		<<>>;
-	sanitize({pi, _Tag, _Attrs}, _Stack) ->
-		<<>>;
-	sanitize({Elt,Attrs,Enclosed}, Stack) ->
-		Lower = list_to_binary(z_string:to_lower(Elt)),
-		case allow_elt(Lower) orelse (not lists:member(Lower, Stack) andalso allow_once(Lower))	of
-			true ->
-				Attrs1 = lists:filter(fun({A,_}) -> allow_attr(A) end, Attrs),
-				Attrs2 = [ {list_to_binary(z_string:to_lower(A)), V} || {A,V} <- Attrs1 ],
-				Stack1 = [Lower|Stack],
-				{	Lower, 
-					Attrs2,
-					[ sanitize(Encl, Stack1) || Encl <- Enclosed ]};
-			false ->
-				case skip_contents(Lower) of
-					false ->
-						{nop, [ sanitize(Encl, Stack) || Encl <- Enclosed ]};
-					true ->
-						{nop, []}
-				end
-		end.
+    sanitize_opts(Html, OptContext) ->
+        ExtraAttrs = case OptContext of
+                        #context{} -> 
+                            binstr:split(m_config:get_value(site, html_attr_extra, <<>>, OptContext), <<",">>);
+                        undefined ->
+                            []
+                     end,
+        ExtraElts =  case OptContext of
+                        #context{} -> 
+                             binstr:split(m_config:get_value(site, html_elt_extra, <<>>, OptContext), <<",">>);
+                        undefined ->
+                             []
+                     end,
+        sanitize1(Html, ExtraElts, ExtraAttrs, OptContext).
 
-	%% @doc Flatten the sanitized html tree to 
-	flatten(B) when is_binary(B) ->
-		escape_html_text(B, <<>>);
-	flatten({nop, Enclosed}) ->
-		flatten(Enclosed);
-	flatten({comment, Text}) ->
-		Comment = escape_html_comment(Text, <<>>),
-		<<"<!--", Comment/binary, "-->">>;
-	flatten({Elt, Attrs, Enclosed}) ->
-		EncBin = flatten(Enclosed),
-		Attrs1 = [flatten_attr(Attr) || Attr <- Attrs ],
-		Attrs2 = iolist_to_binary(z_utils:prefix(32, Attrs1)),
-		case is_selfclosing(Elt) andalso EncBin == <<>> of
-			true ->  <<$<, Elt/binary, Attrs2/binary, 32, $/, $>>>;
-			false -> <<$<, Elt/binary, Attrs2/binary, $>, EncBin/binary, $<, $/, Elt/binary, $>>>
-		end;
-	flatten(L) when is_list(L) -> 
-		iolist_to_binary([ flatten(A) || A <- L ]).
-	
-	%% @doc Flatten an attribute to a binary
-	%% @todo Filter javascript from the value (when there is a ':' then only allow http/https)
-	%% @todo Strip scripting and text css attributes
-	%% css: anything within () should be removed
-	flatten_attr({<<"style">>,Value}) ->
-		Value1 = escape(filter_css(Value), <<>>),
-		<<"style=\"", Value1/binary, $">>;
-	flatten_attr({<<"class">>,Value}) ->
-	    % Remove all do_xxxx widget manager classes
-		Value1 = escape(filter_widget_class(Value)),
-		<<"class=\"", Value1/binary, $">>;
-	flatten_attr({Attr,Value}) ->
-		Value1 = case is_url_attr(Attr) of
-					true -> noscript(Value);
-					false -> Value
-				end,
-		Value2 = escape(Value1, <<>>),
-		<<Attr/binary, $=, $", Value2/binary, $">>.
+sanitize1(Html, ExtraElts, ExtraAttrs, OptContext) ->
+    Parsed = mochiweb_html:parse(ensure_escaped_amp(Html)),
+    Sanitized = sanitize(Parsed, [], ExtraElts, ExtraAttrs, OptContext),
+    flatten(Sanitized).
 
-	%% @doc Escape smaller-than, greater-than, single and double quotes in texts (&amp; is already removed or escaped).
+    sanitize(B, _Stack, _ExtraElts, _ExtraAttrs, _OptContext) when is_binary(B) ->
+        escape(B);
+    sanitize({comment, Text}, _Stack, _ExtraElts, _ExtraAttrs, _OptContext) ->
+        {comment, Text};
+    sanitize({pi, _Raw}, _Stack, _ExtraElts, _ExtraAttrs, _OptContext) ->
+        <<>>;
+    sanitize({pi, _Tag, _Attrs}, _Stack, _ExtraElts, _ExtraAttrs, _OptContext) ->
+        <<>>;
+    sanitize({Elt,Attrs,Enclosed}, Stack, ExtraElts, ExtraAttrs, OptContext) ->
+        Lower = list_to_binary(z_string:to_lower(Elt)),
+        case allow_elt(Lower, ExtraElts) orelse (not lists:member(Lower, Stack) andalso allow_once(Lower)) of
+            true ->
+                Attrs1 = lists:filter(fun({A,_}) -> allow_attr(A, ExtraAttrs) end, Attrs),
+                Attrs2 = [ {list_to_binary(z_string:to_lower(A)), V} || {A,V} <- Attrs1 ],
+                Stack1 = [Lower|Stack],
+                Tag = { Lower, 
+                        Attrs2,
+                        [ sanitize(Encl, Stack1, ExtraElts, ExtraAttrs, OptContext) || Encl <- Enclosed ]},
+                case OptContext of
+                    #context{} -> z_notifier:foldl(sanitize_element, Tag, OptContext);
+                    undefined -> Tag
+                end;
+            false ->
+                case skip_contents(Lower) of
+                    false ->
+                        {nop, [ sanitize(Encl, Stack, ExtraElts, ExtraAttrs, OptContext) || Encl <- Enclosed ]};
+                    true ->
+                        {nop, []}
+                end
+        end.
+
+    %% @doc Flatten the sanitized html tree to 
+    flatten(B) when is_binary(B) ->
+        escape_html_text(B, <<>>);
+    flatten({nop, Enclosed}) ->
+        flatten(Enclosed);
+    flatten({comment, Text}) ->
+        Comment = escape_html_comment(Text, <<>>),
+        <<"<!--", Comment/binary, "-->">>;
+    flatten({Elt, Attrs, Enclosed}) ->
+        EncBin = flatten(Enclosed),
+        Attrs1 = [flatten_attr(Attr) || Attr <- Attrs ],
+        Attrs2 = iolist_to_binary(z_utils:prefix(32, Attrs1)),
+        case is_selfclosing(Elt) andalso EncBin == <<>> of
+            true ->  <<$<, Elt/binary, Attrs2/binary, 32, $/, $>>>;
+            false -> <<$<, Elt/binary, Attrs2/binary, $>, EncBin/binary, $<, $/, Elt/binary, $>>>
+        end;
+    flatten(L) when is_list(L) -> 
+        iolist_to_binary([ flatten(A) || A <- L ]).
+    
+    %% @doc Flatten an attribute to a binary
+    %% @todo Filter javascript from the value (when there is a ':' then only allow http/https)
+    %% @todo Strip scripting and text css attributes
+    %% css: anything within () should be removed
+    flatten_attr({<<"style">>,Value}) ->
+        Value1 = escape(filter_css(Value), <<>>),
+        <<"style=\"", Value1/binary, $">>;
+    flatten_attr({<<"class">>,Value}) ->
+        % Remove all do_xxxx widget manager classes
+        Value1 = escape(filter_widget_class(Value)),
+        <<"class=\"", Value1/binary, $">>;
+    flatten_attr({Attr,Value}) ->
+        Value1 = case is_url_attr(Attr) of
+                    true -> noscript(Value);
+                    false -> Value
+                end,
+        Value2 = escape(Value1, <<>>),
+        <<Attr/binary, $=, $", Value2/binary, $">>.
+
+    %% @doc Escape smaller-than, greater-than, single and double quotes in texts (&amp; is already removed or escaped).
     escape_html_text(<<>>, Acc) -> 
         Acc;
     escape_html_text(<<$<, T/binary>>, Acc) ->
@@ -299,7 +339,7 @@ sanitize1(Html) ->
     escape_html_text(<<C, T/binary>>, Acc) ->
         escape_html_text(T, <<Acc/binary, C>>).
 
-	%% @doc Escape smaller-than, greater-than (for in comments)
+    %% @doc Escape smaller-than, greater-than (for in comments)
     escape_html_comment(<<>>, Acc) -> 
         Acc;
     escape_html_comment(<<$<, T/binary>>, Acc) ->
@@ -309,12 +349,13 @@ sanitize1(Html) ->
     escape_html_comment(<<C, T/binary>>, Acc) ->
         escape_html_comment(T, <<Acc/binary, C>>).
 
-	
+    
 %% @doc Elements that can only occur once in a nesting.
 %% Used for cleaning up code from html editors.
 allow_once(<<"a">>) -> true;
 allow_once(<<"abbr">>) -> true;
 allow_once(<<"area">>) -> true;
+allow_once(<<"article">>) -> true;
 allow_once(<<"b">>) -> true;
 allow_once(<<"bdo">>) -> true;
 allow_once(<<"big">>) -> true;
@@ -326,6 +367,7 @@ allow_once(<<"em">>) -> true;
 allow_once(<<"hr">>) -> true;
 allow_once(<<"i">>) -> true;
 allow_once(<<"ins">>) -> true;
+allow_once(<<"nav">>) -> true;
 allow_once(<<"p">>) -> true;
 allow_once(<<"pre">>) -> true;
 allow_once(<<"q">>) -> true;
@@ -341,8 +383,12 @@ allow_once(<<"var">>) -> true;
 allow_once(_) -> false.
 
 %% @doc Allowed elements (see also allow_once/1 above)
+allow_elt(Elt, Extra) ->
+    allow_elt(Elt) orelse lists:member(Elt, Extra).
+
 allow_elt(<<"audio">>) -> true;
 allow_elt(<<"address">>) -> true;
+allow_elt(<<"bdo">>) -> true;
 allow_elt(<<"blockquote">>) -> true;
 allow_elt(<<"caption">>) -> true;
 allow_elt(<<"col">>) -> true;
@@ -357,12 +403,14 @@ allow_elt(<<"h3">>) -> true;
 allow_elt(<<"h4">>) -> true;
 allow_elt(<<"h5">>) -> true;
 allow_elt(<<"h6">>) -> true;
+allow_elt(<<"header">>) -> true;
 allow_elt(<<"img">>) -> true;
 allow_elt(<<"li">>) -> true;
 allow_elt(<<"legend">>) -> true;
 allow_elt(<<"map">>) -> true;
 allow_elt(<<"ol">>) -> true;
 allow_elt(<<"samp">>) -> true;
+allow_elt(<<"section">>) -> true;
 allow_elt(<<"source">>) -> true;
 allow_elt(<<"span">>) -> true;
 allow_elt(<<"table">>) -> true;
@@ -377,6 +425,9 @@ allow_elt(<<"video">>) -> true;
 allow_elt(_) -> false.
 
 %% @doc Allowed attributes
+allow_attr(Attr, Extra) ->
+    allow_attr(Attr) orelse lists:member(Attr, Extra).
+
 allow_attr(<<"align">>) -> true;
 allow_attr(<<"alt">>) -> true;
 allow_attr(<<"autoplay">>) -> true;
@@ -473,18 +524,18 @@ filter_widget_class(Class) ->
 
 %% @doc Filter a url, remove any javascript.
 noscript(Url) -> 
-	case nows(z_convert:to_list(Url), []) of
-		"script:" ++ _ -> <<"#script-removed">>;
-		_ -> Url
-	end.
+    case nows(z_convert:to_list(Url), []) of
+        "script:" ++ _ -> <<"#script-removed">>;
+        _ -> Url
+    end.
 
-	%% @doc Remove whitespace and make lowercase till we find a colon or slash.
-	nows([], Acc) -> lists:reverse(Acc);
-	nows([C|_] = L, Acc) when C =:= $:; C =:= $/ -> lists:reverse(Acc, L);
-	nows([C|T], Acc) when C =< 32 -> nows(T,Acc);
-	nows([C|T], Acc) when C >= $A, C =< $Z -> nows(T, [C+32|Acc]);
-	nows([$\\|T], Acc) -> nows(T, Acc);
-	nows([C|T], Acc) -> nows(T, [C|Acc]).
+    %% @doc Remove whitespace and make lowercase till we find a colon or slash.
+    nows([], Acc) -> lists:reverse(Acc);
+    nows([C|_] = L, Acc) when C =:= $:; C =:= $/ -> lists:reverse(Acc, L);
+    nows([C|T], Acc) when C =< 32 -> nows(T,Acc);
+    nows([C|T], Acc) when C >= $A, C =< $Z -> nows(T, [C+32|Acc]);
+    nows([$\\|T], Acc) -> nows(T, Acc);
+    nows([C|T], Acc) -> nows(T, [C|Acc]).
 
 
 %% @doc Translate any newlines to html br entities.

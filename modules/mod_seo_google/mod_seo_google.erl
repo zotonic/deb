@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-08-16
+%% Date: 2009-08-16
 %% @doc Search engine optimization for Google. Support for Google Analytics and Webmaster tools.
 
 %% Copyright 2009 Marc Worrell
@@ -23,3 +23,5 @@
 -mod_title("SEO Google").
 -mod_description("Support for Google Analytics and Webmaster tools.").
 -mod_prio(600).
+-mod_depends([seo]).
+-mod_provides([seo_google]).

@@ -1,6 +1,6 @@
 %% @doc Import tab separated files.  There must be an import definition for the file to be accepted.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @date 2010-06-26
+%% Date: 2010-06-26
 
 %% Copyright 2010-2011 Marc Worrell
 %%
@@ -34,7 +34,7 @@
 -include_lib("include/import_csv.hrl").
 
 %% @doc Handle a dropbox file when it is a tsv file we know.
-observe_dropbox_file({dropbox_file, F}, Context) ->
+observe_dropbox_file(#dropbox_file{filename=F}, Context) ->
     case filename:extension(F) of
         ".csv" ->
             %% Correct file type, see if we can handle the file.
@@ -49,7 +49,7 @@ observe_dropbox_file({dropbox_file, F}, Context) ->
 
 
 %% @doc Uploading a CSV file through the web interface.
-event({submit, {csv_upload, []}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={csv_upload, []}}, Context) ->
     #upload{filename=OriginalFilename, tmpfile=TmpFile} = z_context:get_q_validated("upload_file", Context),
 
     %% Move temporary file to processing directory
@@ -99,7 +99,7 @@ to_importing_dir(Def, Context) ->
 can_handle(Filename, Context) ->
     %% @todo Add here a notify to the modules to see if they have an import definition for basename(Filename)
     FSize = filelib:file_size(Filename),
-    case z_notifier:first({import_csv_definition, filename:basename(Filename), Filename}, Context) of
+    case z_notifier:first(#import_csv_definition{basename=filename:basename(Filename), filename=Filename}, Context) of
         {ok, #import_data_def{colsep=ColSep, skip_first_row=SkipFirstRow, record=Record, importdef=ImportDef}} ->
             {ok, #filedef{
                         filename=Filename, 
@@ -224,6 +224,8 @@ unique([C|Cs], Acc) ->
 cols2importdef_map('') -> undefined;
 cols2importdef_map(name) -> undefined;
 cols2importdef_map(name_prefix) -> undefined;
-cols2importdef_map(date_start) ->  {date_start, {datetime, date_start, <<"00:00:00">>}};
-cols2importdef_map(date_end) ->  {date_end, {datetime, date_end, <<"23:59:59">>}};
+cols2importdef_map(date_start) ->  {date_start, {datetime, date_start}};
+cols2importdef_map(date_end) ->  {date_end, {datetime, date_end}};
+cols2importdef_map(publication_start) ->  {publication_start, {datetime, publication_start}};
+cols2importdef_map(publication_end) ->  {publication_end, {datetime, publication_end}};
 cols2importdef_map(X) -> {X, X}.

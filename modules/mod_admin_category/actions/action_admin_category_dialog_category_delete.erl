@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-10
+%% Date: 2009-07-10
 %% @doc Open a dialog that asks confirmation to delete a category. Optionaly move pages to another category.
 
 %% Copyright 2009 Marc Worrell
@@ -38,7 +38,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the delete confirmation template. The next step will ask to delete the category.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {delete_category_dialog, Id, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={delete_category_dialog, Id, OnSuccess}}, Context) ->
     case z_acl:is_allowed(delete, Id, Context) of
         true ->
             Count = m_category:get_page_count(Id, Context),
@@ -49,7 +49,7 @@ event({postback, {delete_category_dialog, Id, OnSuccess}, _TriggerId, _TargetId}
     end;
 
 %% @doc Handle the form postback. Optionally renaming existing categories.
-event({submit, {delete_category, _Props}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={delete_category, _Props}}, Context) ->
     Id = z_convert:to_integer(z_context:get_q("id", Context)),
     case z_acl:is_allowed(delete, Id, Context) of
         true ->

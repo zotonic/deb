@@ -1,7 +1,7 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @author Bryan Fink <bryan@basho.com>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-11-01
+%% Date: 2009-11-01
 %% @doc Development server.  Periodically performs a "make" and loads new files.
 %% When new files are loaded the caches are emptied.
 
@@ -10,9 +10,9 @@
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
 %% You may obtain a copy of the License at
-%% 
+%%
 %%     http://www.apache.org/licenses/LICENSE-2.0
-%% 
+%%
 %% Unless required by applicable law or agreed to in writing, software
 %% distributed under the License is distributed on an "AS IS" BASIS,
 %% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -39,7 +39,8 @@
     observe_debug_stream/2,
     pid_observe_development_reload/3,
     pid_observe_development_make/3,
-    
+    file_changed/2,
+
     % internal (for spawn)
     page_debug_stream/3,
     page_debug_stream_loop/3
@@ -51,6 +52,10 @@
 
 % Interval for checking for new and/or changed files.
 -define(DEV_POLL_INTERVAL, 10000).
+
+
+%% Which files do we not consider at all in the file_changed handler
+-define(FILENAME_BLACKLIST_RE, "_flymake|\.#").
 
 
 %%====================================================================
@@ -71,10 +76,10 @@ make(Context) ->
 
 %% @doc Stream specific debug information to an area on the current page.
 debug_stream(TargetId, What, Context) ->
-    z_notifier:notify1({debug_stream, TargetId, What}, Context).
+    z_notifier:notify1(#debug_stream{target=TargetId, what=What}, Context).
 
 %% @doc Stream all debug information of a certain kind to the target id on the user agent.
-observe_debug_stream({debug_stream, TargetId, What}, Context) ->
+observe_debug_stream(#debug_stream{target=TargetId, what=What}, Context) ->
     start_debug_stream(TargetId, What, Context).
 
 pid_observe_development_reload(Pid, development_reload, _Context) ->
@@ -82,6 +87,111 @@ pid_observe_development_reload(Pid, development_reload, _Context) ->
 
 pid_observe_development_make(Pid, development_make, _Context) ->
      gen_server:cast(Pid, development_make).
+
+%% @doc Called when a file is changed on disk. Decides what to do.
+%% @spec file_changed(modify | create, string()) -> ok
+file_changed(Verb, F) ->
+    case file_blacklisted(F) of
+        true -> nop;
+        false ->
+            case handle_file(Verb, filename:extension(F), F) of
+                undefined -> ok;
+                Message -> send_message(os:type(), z_string:trim(Message))
+            end
+    end,
+    ok.
+
+
+file_blacklisted(F) ->
+    case re:run(F, ?FILENAME_BLACKLIST_RE) of
+        {match, _} ->
+             true;
+        nomatch ->
+            false
+    end.
+
+
+%% @doc Recompile Erlang files on the fly
+handle_file(_Verb, ".erl", F) ->
+    spawn(fun() ->
+                  make:files([F], [load,
+                                   {i, "include"},
+                                   {i, "src/dbdrivers/postgresql/include"},
+                                   {i, "deps/webzmachine/include"}, {outdir, "ebin"}])
+          end),
+    "Recompile " ++ F;
+
+%% @doc SCSS / SASS files from lib/scss -> lib/css
+handle_file(_Verb, ".sass", F) ->
+    handle_file(_Verb, ".scss", F);
+handle_file(_Verb, ".scss", F) ->
+    InPath = filename:dirname(F),
+    OutPath = filename:join(filename:dirname(InPath), "css"),
+    case filelib:is_dir(OutPath) of
+        true ->
+            os:cmd("sass -C --update " ++ z_utils:os_escape(InPath) ++ ":" ++ z_utils:os_escape(OutPath));
+        false ->
+            undefined
+    end;
+
+%% @doc LESS from lib/less -> lib/css
+handle_file(_Verb, ".less", F) ->
+    InPath = filename:dirname(F),
+    OutPath = filename:join(filename:dirname(InPath), "css"),
+    case filelib:is_dir(OutPath) of
+        true ->
+            OutFile = filename:join(OutPath, filename:basename(F, ".less")++".css"),
+            os:cmd("lessc " ++ z_utils:os_escape(F) ++ " > " ++ z_utils:os_escape(OutFile)),
+            "Compiled " ++ OutFile;
+        false ->
+            undefined
+    end;
+
+%% @doc Coffeescript from lib/coffee -> lib/js
+handle_file(_Verb, ".coffee", F) ->
+    InPath = filename:dirname(F),
+    OutPath = filename:join(filename:dirname(InPath), "js"),
+    case filelib:is_dir(OutPath) of
+        true ->
+            os:cmd("coffee -o " ++ z_utils:os_escape(OutPath) ++ " -c " ++ z_utils:os_escape(InPath)),
+            "Compiled " ++ OutPath;
+        false ->
+            undefined
+    end;
+
+%% @doc Flush the cache when a new .tpl file is used
+handle_file(_Verb, ".tpl", F) ->
+    case re:run(F, "^.*/(.*?)/templates/(.*)", [{capture, all_but_first, list}]) of
+        nomatch -> 
+            undefined;
+        {match, [Site, TemplateFile]} ->
+            C = z_context:new(list_to_atom(Site)),
+            case z_template:find_template(TemplateFile, C) of
+                {ok, _} -> undefined;
+                {error, _} ->
+                    z:flush(),
+                    "Flushed cache due to new template."
+            end
+    end;
+
+%% @doc Unknown files
+handle_file(_, _, F) -> %% unknown filename
+    case re:run(F, "^.*/dispatch/(.*)") of
+        nomatch ->
+            undefined;
+        {match, _} ->
+            z:flush(),
+            "Flushed cache due to dispatch rule change."
+    end.
+
+
+%% @doc send message to the user
+send_message(_, []) ->
+    undefined;
+send_message({unix, linux}, Msg) ->
+    os:cmd("which notify-send && notify-send \"Zotonic\" " ++ z_utils:os_escape(Msg));
+send_message(_, _) ->
+    undefined.
 
 
 %%====================================================================
@@ -94,9 +204,18 @@ pid_observe_development_make(Pid, development_make, _Context) ->
 %%                     {stop, Reason}
 %% @doc Initiates the server.
 init(Args) ->
-    process_flag(trap_exit, true),
     {context, Context} = proplists:lookup(context, Args),
-    timer:send_interval(?DEV_POLL_INTERVAL, ensure_server),
+    NeedPeriodic = case os:type() of
+                       {unix, linux} ->
+                           case z_filewatcher_inotify:start_link(Context) of
+                               {ok, _} -> false;
+                               {error, _} -> true
+                           end;
+                       _ ->
+                           true
+                   end,
+    z_code_reloader:start_link(NeedPeriodic),
+
     {ok, #state{
         context  = z_context:new(Context)
     }}.
@@ -108,7 +227,6 @@ init(Args) ->
 %%                                      {noreply, State, Timeout} |
 %%                                      {stop, Reason, Reply, State} |
 %%                                      {stop, Reason, State}
-%% Description: Handling call messages
 %% @doc Trap unknown calls
 handle_call(Message, _From, State) ->
     {stop, {unknown_call, Message}, State}.
@@ -118,13 +236,11 @@ handle_call(Message, _From, State) ->
 %%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
 handle_cast(development_reload, State) ->
-    ensure_dev_server(),
-    z_development_server:reload(),
+    z_code_reloader:reload(),
     {noreply, State};
 
 handle_cast(development_make, State) ->
-    ensure_dev_server(),
-    z_development_server:make(),
+    z_code_reloader:make(),
     {noreply, State};
 
 %% @doc Trap unknown casts
@@ -135,12 +251,6 @@ handle_cast(Message, State) ->
 %% @spec handle_info(Info, State) -> {noreply, State} |
 %%                                       {noreply, State, Timeout} |
 %%                                       {stop, Reason, State}
-%% @doc Periodic check if the dev server is still running.
-handle_info(ensure_server, State) ->
-    ensure_dev_server(),
-    z_utils:flush_message(ensure_server), 
-    {noreply, State};
-
 %% @doc Handling all non call/cast messages
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -164,15 +274,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%====================================================================
 
 
-%% @doc Ensure that a dev server is running.  If it is not running then the server is started and
-%% this module process is linked to the server.
-ensure_dev_server() ->
-	case erlang:whereis(z_development_server) of
-		undefined -> z_development_server:start_link();
-		_Pid -> ok
-	end.
-
-
 %% @doc Start a listener for a certain kind of debug information, echo it to the target id on the current page.
 start_debug_stream(TargetId, What, Context) ->
     Context1 = z_context:prune_for_async(Context),
@@ -183,18 +284,18 @@ page_debug_stream(TargetId, What, Context) ->
     process_flag(trap_exit, true),
     z_notifier:observe(debug, self(), Context),
     ?MODULE:page_debug_stream_loop(TargetId, What, Context).
-    
+
     page_debug_stream_loop(TargetId, What, Context) ->
         receive
             {'EXIT', _} ->
                 z_notifier:detach(debug, self(), Context),
                 done;
-            {'$gen_cast', {{debug, What, Args}, _Context}} ->
+            {'$gen_cast', {#debug{what=What, arg=Arg}, _Context}} ->
                 %% Update the target id with a dump of this debug message
-                S = io_lib:format("~p: ~p~n", [What, Args]),
+                S = io_lib:format("~p: ~p~n", [What, Arg]),
                 z_session_page:add_script(z_render:insert_top(TargetId, S, Context)),
                 ?MODULE:page_debug_stream_loop(TargetId, What, Context);
-            {'$gen_cast', {{debug, _Other, _Args}, _Context}} ->
+            {'$gen_cast', {#debug{what=_Other}, _Context}} ->
                 ?MODULE:page_debug_stream_loop(TargetId, What, Context)
         end.
-        
+

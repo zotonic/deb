@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-05-07
+%% Date: 2010-05-07
 %% @doc Authentication and identification of users.
 
 %% Copyright 2010 Marc Worrell
@@ -23,6 +23,8 @@
 -mod_title("Authentication").
 -mod_description("Handles authentication and identification of users.").
 -mod_prio(500).
+-mod_depends([base, acl]).
+-mod_provides([authentication]).
 
 %% gen_server exports
 -export([
@@ -35,7 +37,7 @@
 -include("zotonic.hrl").
 
 %% @doc Check the logon event for the Zotonic native username/password registration.
-observe_logon_submit({logon_submit, Args}, Context) ->
+observe_logon_submit(#logon_submit{query_args=Args}, Context) ->
     Username = proplists:get_value("username", Args),
     Password = proplists:get_value("password", Args),
     case Username /= undefined andalso Password /= undefined of

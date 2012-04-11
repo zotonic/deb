@@ -73,11 +73,11 @@
 m_find_value(Id, #m{value=undefined} = M, Context) ->
     case rid(Id, Context) of
         undefined -> undefined;
-        RId -> 
+        RId ->
             case z_acl:rsc_visible(RId, Context) of
                 true ->
                     M#m{value=RId};
-                false -> 
+                false ->
                     fun(is_a, C) -> is_a(RId, C);
                        (_, _C) -> undefined
                     end
@@ -88,7 +88,12 @@ m_find_value(is_cat, #m{value=Id} = M, _Context) when is_integer(Id) ->
 m_find_value(Key, #m{value={is_cat, Id}}, Context) -> 
     is_cat(Id, Key, Context);
 m_find_value(Key, #m{value=Id}, Context) when is_integer(Id) ->
-    p_no_acl(Id, Key, Context).
+    case z_acl:rsc_prop_visible(Id, Key, Context) of
+        true ->
+            p_no_acl(Id, Key, Context);
+        false ->
+            undefined
+    end.
 
 %% @doc Transform a m_config value to a list, used for template loops
 %% @spec m_to_list(Source, Context) -> List
@@ -175,7 +180,11 @@ get_raw(Id, Context) when is_integer(Id) ->
             Memo ->
                 Memo
           end,
-    z_db:assoc_props_row(SQL, [Id], Context).
+    case z_db:assoc_props_row(SQL, [Id], Context) of
+        undefined -> [];
+        Raw -> Raw
+    end.
+             
 
 
 %% @doc Get the ACL fields for the resource with the id. The id must be an integer
@@ -252,16 +261,9 @@ exists(Name, Context) when is_binary(Name) ->
 exists(Id, Context) -> 
     case rid(Id, Context) of
         Rid when is_integer(Rid) ->
-            case z_depcache:get({exists, Rid}, Context) of
-                {ok, Exists} ->
-                    Exists;
-                undefined -> 
-                    Exists = case z_db:q1("select id from rsc where id = $1", [Rid], Context) of
-                        undefined -> false;
-                        _ -> true
-                    end,
-                    z_depcache:set({exists, Rid}, Exists, ?DAY, [Rid], Context),
-                    Exists
+            case m_rsc:p_no_acl(Rid, id, Context) of
+                Rid -> true;
+                undefined -> false
             end;
         undefined -> false
     end.
@@ -311,6 +313,8 @@ p(Id, Property, Context)
     orelse Property =:= is_a 
     orelse Property =:= uri 
     orelse Property =:= is_authoritative
+    orelse Property =:= is_published
+    orelse Property =:= visible_for
     orelse Property =:= default_page_url ->
         p_no_acl(rid(Id, Context), Property, Context);
 p(Id, Property, Context) ->
@@ -347,7 +351,7 @@ p_no_acl(Id, exists, Context) -> exists(Id, Context);
 p_no_acl(Id, page_url, Context) -> 
     case p_no_acl(Id, page_path, Context) of
         undefined -> page_url(Id, Context);
-        PagePath -> PagePath
+        PagePath -> z_notifier:foldl(#url_rewrite{args=[{id,Id}]}, PagePath, Context)
     end;
 p_no_acl(Id, translation, Context) ->
     fun(Code) ->
@@ -389,6 +393,13 @@ p_no_acl(Id, day_end, Context) ->
         {{_,_,_} = Date, _} -> Date;
         _Other -> undefined
     end;
+% p_no_acl(Id, title, Context) ->
+%     Title = p_cached(Id, title, Context),
+%     Title1 = case z_utils:is_empty(Title) of true -> undefined; false -> Title end,
+%     case z_notifier:first(#rsc_property{id=Id, property=title, value=Title1}, Context) of
+%         undefined -> Title;
+%         OtherTitle -> OtherTitle
+%     end;
 
 % Check if the requested predicate is a readily available property or an edge
 p_no_acl(Id, Predicate, Context) when is_integer(Id) -> 
@@ -594,7 +605,7 @@ page_url(Id, Context) ->
     case rid(Id, Context) of
         RscId when is_integer(RscId) ->
             CatPath = lists:reverse(is_a(Id, Context)),
-            case z_notifier:first({page_url, RscId, CatPath}, Context) of
+            case z_notifier:first(#page_url{id=RscId, is_a=CatPath}, Context) of
                 {ok, Url} -> 
                     Url;
                 undefined ->

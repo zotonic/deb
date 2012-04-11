@@ -1,7 +1,7 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009 Arjan Scherpenisse
-%% @date 2009-12-10
-%% @doc Follow users on Twitter using the streaming HTTP API.
+%% Date: 2009-12-10
+%% @doc Use Twitter for logon and/or follow users on Twitter using the streaming HTTP API.
 %%
 %% Setup instructions:
 %% * Enable the mod_twitter module
@@ -31,8 +31,11 @@
 -behaviour(gen_server).
 
 -mod_title("Twitter").
--mod_description("Follow persons from Zotonic on Twitter using the streaming API.").
+-mod_description("Use Twitter for logon, and/or follow users on Twitter using the streaming HTTP API.").
 -mod_prio(200).
+-mod_schema(1).
+-mod_depends([admin]).
+-mod_provides([twitter]).
 
 %% gen_server exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -40,7 +43,7 @@
 
 %% interface functions
 -export([
-         datamodel/0,
+         manage_schema/2,
          fetch/4, 
          observe_rsc_update_done/2,
          receive_chunk/2
@@ -51,7 +54,7 @@
 -record(state, {context, twitter_pid=undefined}).
 
 
-observe_rsc_update_done({rsc_update_done, _Type, Id, _, _}, Context) ->
+observe_rsc_update_done(#rsc_update_done{id=Id}, Context) ->
     case m_rsc:p(Id, twitter_id, Context) of
         undefined ->
             ok;
@@ -88,7 +91,7 @@ observe_rsc_update_done({rsc_update_done, _Type, Id, _, _}, Context) ->
 %%====================================================================
 %% API
 %%====================================================================
-%% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
+%% @spec start_link(Args) -> {ok,Pid} | ignore | {error,Error}
 %% @doc Starts the server
 start_link(Args) when is_list(Args) ->
     gen_server:start_link(?MODULE, Args, []).
@@ -117,7 +120,7 @@ init(Args) ->
             {ok, #state{context=z_context:new(Context)}};
         not_configured ->
             z_session_manager:broadcast(#broadcast{type="error", message="No configuration (mod_twitter.api_login / mod_twitter.api_password) found, not starting.", title="Twitter", stay=true}, z_acl:sudo(Context)),
-            ignore
+            {ok, #state{context=z_context:new(Context)}}
     end.
 
 
@@ -127,11 +130,7 @@ init(Args) ->
 %%                                      {noreply, State, Timeout} |
 %%                                      {stop, Reason, Reply, State} |
 %%                                      {stop, Reason, State}
-%% Description: Handling call messages
 %% @doc Trap unknown calls
-
-
-
 handle_call(Message, _From, State) ->
     {stop, {unknown_call, Message}, State}.
 
@@ -192,6 +191,7 @@ code_change(_OldVsn, State, _Extra) ->
 %%====================================================================
 
 start_following(Context) ->
+
     Login = case m_config:get_value(?MODULE, api_login, false, Context) of
                 LB when is_binary(LB) ->
                     binary_to_list(LB);
@@ -202,6 +202,8 @@ start_following(Context) ->
                     binary_to_list(LP);
                 P -> P
             end,
+    error_logger:info_msg("~p: Username = ~p. ~n", [z_context:site(Context), Login]),
+
     case Login of
         false ->
             error_logger:info_msg("No username/password configuration for mod_twitter. ~n"),
@@ -215,7 +217,7 @@ start_following(Context) ->
                     error_logger:info_msg("No follow configuration for mod_twitter. ~n"),
                     undefined;
                 _ ->
-                    URL = "http://" ++ Login ++ ":" ++ Pass ++ "@stream.twitter.com/1/statuses/filter.json",
+                    URL = "https://" ++ Login ++ ":" ++ Pass ++ "@stream.twitter.com/1/statuses/filter.json",
                     Follow = z_utils:combine(",", Follow1),
                     Body = lists:flatten("follow=" ++ Follow),
                     z_session_manager:broadcast(#broadcast{type="notice", message="Now waiting for tweets to arrive...", title="Twitter", stay=false}, Context),
@@ -228,7 +230,7 @@ start_following(Context) ->
 %% Main fetch process
 %%
 fetch(URL, Body, Sleep, Context) ->
-    case http:request(post,
+    case httpc:request(post,
                       {URL, [], "application/x-www-form-urlencoded", Body},
                       [],
                       [{sync, false},
@@ -273,8 +275,9 @@ process_data(Data, Context) ->
                             Row ->
                                 UserId = proplists:get_value(rsc_id, Row),
                                 CategoryId = m_category:name_to_id_check(tweet, AsyncContext),
+                                Body = z_convert:unicode_to_utf8(proplists:get_value("text", Tweet)),
                                 Props = [{title, proplists:get_value("screen_name", User) ++ " tweeted on " ++ proplists:get_value("created_at", Tweet)},
-                                         {body, proplists:get_value("text", Tweet)},
+                                         {body, Body},
                                          {source, proplists:get_value("source", Tweet)},
                                          {category_id, CategoryId},
                                          {tweet, Tweet},
@@ -293,7 +296,7 @@ process_data(Data, Context) ->
                                 %% Create edges
                                 [{ok, _} = m_edge:insert(TweetId, depiction, PictureId, Context) || PictureId <- Ids],
 
-                                Message = proplists:get_value("screen_name", User) ++ ": " ++ proplists:get_value("text", Tweet),
+                                Message = proplists:get_value("screen_name", User) ++ ": " ++ Body,
                                 z_session_manager:broadcast(#broadcast{type="notice", message=Message, title="New tweet!", stay=false}, AdminContext),
                                 TweetId
                         end
@@ -340,26 +343,23 @@ receive_chunk(RequestId, Context) ->
     end.
 
 
-
 %%
-%% @doc The datamodel that is used in this module, installed before the module is started.
+%% @doc The datamodel that is used in this module, installed the first time the module is started.
 %%
-datamodel() ->
-    [{categories,
-      [
-       {tweet,
-        text,
-        [{title, <<"Tweet">>}]}
-      ]
-     },
-    {resources,
-      [
-       {from_twitter,
-        keyword,
-        [{title, <<"From Twitter">>}]}
-      ]
-     }].
-
+manage_schema(install, _Context) ->
+    #datamodel{categories=
+               [
+                {tweet,
+                 text,
+                 [{title, <<"Tweet">>}]}
+               ],
+               resources=
+               [
+                {from_twitter,
+                 keyword,
+                 [{title, <<"From Twitter">>}]}
+               ]
+              }.
 
 
 %% handle_author_edges_upgrade(Context)
@@ -391,7 +391,7 @@ check_import_pictures(Urls, Context) ->
     %% Get oEmbed info on all Urls
     EmbedlyUrl = "http://api.embed.ly/1/oembed?urls=" ++ string:join([z_utils:url_encode(Url) || Url <- Urls], ","),
     {ok, {{_Version, 200, _ReasonPhrase}, _Headers, Body}} =
-        http:request(EmbedlyUrl),
+        httpc:request(EmbedlyUrl),
     {array, Pictures} = mochijson:decode(Body),
 
     Props = [P || {struct, P} <- Pictures],
@@ -406,7 +406,7 @@ check_import_pictures(Urls, Context) ->
 
 
 %% @doc Import oEmbed-compatible proplist as a rsc.
-%% @spec import_oembed(Props, Context) -> undefined | Id::integer.
+%% @spec import_oembed(Url, Props, Context) -> undefined | int()
 import_oembed(OriginalUrl, Props, Context) ->
     case oembed_category(proplists:get_value("type", Props)) of
         undefined ->

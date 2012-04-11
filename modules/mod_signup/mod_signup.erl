@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-05-12
+%% Date: 2010-05-12
 %% @doc Let new members register themselves.
 %% @todo Check person props before sign up
 %% @todo Add verification and verification e-mails (check for _Verified, add to m_identity)
@@ -25,9 +25,13 @@
 -mod_title("Sign up users").
 -mod_description("Implements public sign up to register as member of this site.").
 -mod_prio(500).
+-mod_schema(1).
+-mod_depends([base, authentication]).
+-mod_provides([signup]).
+
 
 -export([
-    datamodel/0,
+    manage_schema/2,
 
     observe_signup_url/2,
     observe_identity_verification/2,
@@ -39,32 +43,33 @@
 
 
 %% @doc Check if a module wants to redirect to the signup form.  Returns either {ok, Location} or undefined.
-observe_signup_url({signup_url, Props, SignupProps}, Context) ->
+observe_signup_url(#signup_url{props=Props, signup_props=SignupProps}, Context) ->
     CheckId = z_ids:id(),
     z_session:set(signup_xs, {CheckId, Props, SignupProps}, Context),
-    {ok, lists:flatten(z_dispatcher:url_for(signup, [{xs, CheckId}], Context))}.
+    {ok, z_dispatcher:url_for(signup, [{xs, CheckId}], Context)}.
 
-observe_identity_verification({identity_verification, UserId, Ident}, Context) ->
+
+observe_identity_verification(#identity_verification{user_id=UserId, identity=undefined}, Context) ->
+    request_verification(UserId, Context);
+observe_identity_verification(#identity_verification{user_id=UserId, identity=Ident}, Context) ->
     case proplists:get_value(type, Ident) of
         <<"email">> -> send_verify_email(UserId, Ident, Context);
         _ -> false
-    end;
-observe_identity_verification({identity_verification, UserId}, Context) ->
-    request_verification(UserId, Context).
+    end.
 
 
 %% @doc Return the url to redirect to when the user logged on, defaults to the user's personal page.
-observe_logon_ready_page({logon_ready_page, []}, Context) ->
+observe_logon_ready_page(#logon_ready_page{request_page=[]}, Context) ->
     case z_auth:is_auth(Context) of
         true -> m_rsc:p(z_acl:user(Context), page_url, Context);
         false -> []
     end;
-observe_logon_ready_page({logon_ready_page, Url}, _Context) ->
+observe_logon_ready_page(#logon_ready_page{request_page=Url}, _Context) ->
     Url.
 
 
 %% @doc Sign up a new user.
-%% @spec signup(proplist(), proplist(), Context) -> {ok, UserId} | {error, Reason}
+%% @spec signup(proplist(), proplist(), RequestConfirm, Context) -> {ok, UserId} | {error, Reason}
 signup(Props, SignupProps, RequestConfirm, Context) ->
     ContextSudo = z_acl:sudo(Context),
     case check_signup(Props, SignupProps, ContextSudo) of
@@ -85,7 +90,7 @@ request_verification(UserId, Context) ->
     request_verification(_, [], true, _Context) ->
         ok;
     request_verification(UserId, [Ident|Rest], Requested, Context) ->
-        case z_notifier:first({identity_verification, UserId, Ident}, Context) of
+        case z_notifier:first(#identity_verification{user_id=UserId, identity=Ident}, Context) of
             ok -> request_verification(UserId, Rest, true, Context);
             _ -> request_verification(UserId, Rest, Requested, Context)
         end.
@@ -144,9 +149,9 @@ do_signup(Props, SignupProps, RequestConfirm, Context) ->
     case m_rsc:insert(props_to_rsc(Props, IsVerified, Context), Context) of
         {ok, Id} ->
             [ insert_identity(Id, Ident, Context) || {K,Ident} <- SignupProps, K == identity ],
-            z_notifier:map({signup_done, Id, IsVerified, Props, SignupProps}, Context),
+            z_notifier:map(#signup_done{id=Id, is_verified=IsVerified, props=Props, signup_props=SignupProps}, Context),
             case IsVerified of
-                true -> z_notifier:map({signup_confirm, Id}, Context);
+                true -> z_notifier:map(#signup_confirm{id=Id}, Context);
                 false -> nop
             end,    
             {ok, Id};
@@ -184,12 +189,17 @@ props_to_rsc(Props, IsVerified, Context) ->
         | Props
     ],
     case proplists:is_defined(title, Props1) of
-        true -> Props1;
+        true -> 
+            Props1;
         false ->
-            [ {title, z_convert:to_list(proplists:get_value(name_first, Props1))
-                        ++ " "
-                        ++ z_convert:to_list(proplists:get_value(name_surname, Props1))}
-                | Props1 ]
+            Name = [
+                z_convert:to_list(proplists:get_value(name_first, Props1)),
+                z_convert:to_list(proplists:get_value(name_surname_prefix, Props1)),
+                z_convert:to_list(proplists:get_value(name_surname, Props1))
+            ],
+            Name1 = lists:filter(fun(S) -> not z_utils:is_empty(S) end, Name),
+            Name2 = string:join(Name1, " "),
+            [ {title, Name2} | Props1 ]
     end.
 
 
@@ -221,24 +231,24 @@ send_verify_email(UserId, Ident, Context) ->
     ok.
 
 
-datamodel() ->
-[
-    {resources, [
-		{signup_tos, text, [
-                        {is_published, true},
-						{visible_for, 0},
-						{page_path, "/terms"},
-						{title, "Terms of Service"},
-						{summary, "These Terms of Service (“Terms”) govern your access to and use of the services and COMPANY’s web sites (the “Services”), and any information, text, graphics, or other materials uploaded, downloaded or appearing on the Services (collectively referred to as “Content”). Your access to and use of the Services is conditioned on your acceptance of and compliance with these Terms. By accessing or using the Services you agree to be bound by these Terms."},
-					    {body, "<h2>INSERT YOUR TERMS OF SERVICE HERE</h2>"}
-					]},
-		{signup_privacy, text, [
-		                {is_published, true},
-                		{visible_for, 0},
-                		{page_path, "/privacy"},
-                		{title, "Privacy Policy"},
-                		{summary, "This Privacy Policy describes COMPANY’s policies and procedures on the collection, use and disclosure of your information. COMPANY receives your information through our various web sites, SMS, APIs, services and third-parties (“Services”). When using any of our Services you consent to the collection, transfer, manipulation, storage, disclosure and other uses of your information as described in this Privacy Policy. Irrespective of which country that you reside in or create information from, your information may be used by COMPANY in any country where COMPANY operates."},
-                		{body, "<h2>INSERT YOUR PRIVACY POLICY HERE</h2>"}
-		            ]}
-	]}
-].
+manage_schema(install, _Context) ->
+    #datamodel{
+        resources=[
+            {signup_tos, text, [
+                            {is_published, true},
+                            {visible_for, 0},
+                            {page_path, "/terms"},
+                            {title, "Terms of Service"},
+                            {summary, "These Terms of Service (“Terms”) govern your access to and use of the services and COMPANY’s web sites (the “Services”), and any information, text, graphics, or other materials uploaded, downloaded or appearing on the Services (collectively referred to as “Content”). Your access to and use of the Services is conditioned on your acceptance of and compliance with these Terms. By accessing or using the Services you agree to be bound by these Terms."},
+                            {body, "<h2>INSERT YOUR TERMS OF SERVICE HERE</h2>"}
+                        ]},
+            {signup_privacy, text, [
+                            {is_published, true},
+                            {visible_for, 0},
+                            {page_path, "/privacy"},
+                            {title, "Privacy Policy"},
+                            {summary, "This Privacy Policy describes COMPANY’s policies and procedures on the collection, use and disclosure of your information. COMPANY receives your information through our various web sites, SMS, APIs, services and third-parties (“Services”). When using any of our Services you consent to the collection, transfer, manipulation, storage, disclosure and other uses of your information as described in this Privacy Policy. Irrespective of which country that you reside in or create information from, your information may be used by COMPANY in any country where COMPANY operates."},
+                            {body, "<h2>INSERT YOUR PRIVACY POLICY HERE</h2>"}
+                        ]}
+        ]
+    }.

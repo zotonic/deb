@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-21
+%% Date: 2009-07-21
 %% @doc Duplicate a resource, replace the title with the one entered in a dialog.
 
 %% Copyright 2009 Marc Worrell
@@ -37,7 +37,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the duplicate page form. The form will be posted back to this module.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {duplicate_rsc_dialog, Id}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={duplicate_rsc_dialog, Id}}, Context) ->
     Vars = [
         {delegate, atom_to_list(?MODULE)},
         {id, Id}
@@ -45,7 +45,7 @@ event({postback, {duplicate_rsc_dialog, Id}, _TriggerId, _TargetId}, Context) ->
     z_render:dialog("Duplicate page.", "_action_dialog_duplicate_rsc.tpl", Vars, Context);
 
 
-event({submit, {duplicate_page, ActionProps}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={duplicate_page, ActionProps}}, Context) ->
     Id = proplists:get_value(id, ActionProps),
     Title   = z_context:get_q("new_rsc_title", Context),
     IsPublished = z_context:get_q("is_published", Context),
