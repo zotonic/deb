@@ -1,3 +1,9 @@
+zotonic (0.8.0-1) oneiric; urgency=low
+
+  * Imported new release 0.8.0
+
+ -- Arjan Scherpenisse <arjan@scherpenisse.net>  Wed, 11 Apr 2012 19:03:03 +0200
+
 zotonic (0.7.3-3) oneiric; urgency=low
 
   * Override unused dh_clean build stage to avoid erlang build dep
