@@ -9,7 +9,7 @@ Vcs-Git: git://github.com/zotonic/zotonic.git
 
 Package: zotonic
 Architecture: all
-Depends: bash, adduser, ${erlang:Depends}, ${erlang-abi:Depends}, ${misc:Depends}, ${shlibs:Depends}, imagemagick, erlang, postgresql-8.4, python, erlang-base, openssl
+Depends: build-essential, bash, adduser, ${erlang:Depends}, ${erlang-abi:Depends}, ${misc:Depends}, ${shlibs:Depends}, imagemagick, erlang, postgresql-8.4, python, erlang-base, openssl
 Description: distributed, fault-tolerant CMS and web framework
  This package contains Zotonic, an Erlang-based web development 
  framework and content management system.
