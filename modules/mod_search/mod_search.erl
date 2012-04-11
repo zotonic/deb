@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-06-09
+%% Date: 2009-06-09
 %% @doc Defines PostgreSQL queries for basic content searches in Zotonic.
 %% This module needs to be split in specific PostgreSQL queries and standard SQL queries when you want to 
 %% support other databases (like MySQL).
@@ -46,7 +46,7 @@
 observe_search_query({search_query, Req, OffsetLimit}, Context) ->
     search(Req, OffsetLimit, Context).
 
-observe_module_activate({module_activate, ?MODULE, Pid}, _Context) ->
+observe_module_activate(#module_activate{module=?MODULE, pid=Pid}, _Context) ->
     gen_server:cast(Pid, init_query_watches);
 observe_module_activate(_, _Context) ->
     ok.
@@ -55,7 +55,7 @@ observe_module_activate(_, _Context) ->
 %%====================================================================
 %% API
 %%====================================================================
-%% @spec start_link() -> {ok,Pid} | ignore | {error,Error}
+%% @spec start_link(Args) -> {ok,Pid} | ignore | {error,Error}
 %% @doc Starts the server
 start_link(Args) when is_list(Args) ->
     gen_server:start_link(?MODULE, Args, []).
@@ -84,7 +84,6 @@ init(Args) ->
 %%                                      {noreply, State, Timeout} |
 %%                                      {stop, Reason, Reply, State} |
 %%                                      {stop, Reason, State}
-%% Description: Handling call messages
 %% @doc Trap unknown calls
 handle_call(Message, _From, State) ->
     {stop, {unknown_call, Message}, State}.
@@ -104,9 +103,9 @@ handle_cast(init_query_watches, State) ->
     Watches = search_query_notify:init(State#state.context),
     {noreply, State#state{query_watches=Watches}};
 
-handle_cast({{rsc_update_done, delete, _Id, _, _}, _Ctx}, State) ->
+handle_cast({#rsc_update_done{action=delete}, _Ctx}, State) ->
     {noreply, State};
-handle_cast({{rsc_update_done, _, Id, Cats, Cats}, _Ctx}, State=#state{query_watches=Watches,context=Context}) ->
+handle_cast({#rsc_update_done{id=Id, pre_is_a=Cats, post_is_a=Cats}, _Ctx}, State=#state{query_watches=Watches,context=Context}) ->
     %% Update; categories have not changed.
     Watches1 = case lists:member('query', Cats) of
                    false -> Watches;
@@ -116,7 +115,7 @@ handle_cast({{rsc_update_done, _, Id, Cats, Cats}, _Ctx}, State=#state{query_wat
     search_query_notify:send_notifications(Id, search_query_notify:check_rsc(Id, Watches1, Context), Context),
     {noreply, State#state{query_watches=Watches1}};
 
-handle_cast({{rsc_update_done, _, Id, CatsOld, CatsNew}, _Ctx}, State=#state{query_watches=Watches,context=Context}) ->
+handle_cast({#rsc_update_done{id=Id, pre_is_a=CatsOld, post_is_a=CatsNew}, _Ctx}, State=#state{query_watches=Watches,context=Context}) ->
     %% Update; categories *have* changed.
     Watches1 = case lists:member('query', CatsOld) of
                    true ->
@@ -176,32 +175,35 @@ code_change(_OldVsn, State, _Extra) ->
 %% support functions
 %%====================================================================
 
-%% Retrieve the previous id (on publication date) 
-search({previous, [{cat, Cat}, {id, Id}]}, _OffsetLimit, Context) ->
-    PubStart = m_rsc:p(Id, publication_start, Context),
-    Modified = m_rsc:p(Id, modified, Context),
+search_prevnext(Type, Args, Context) ->
+    Order = fun(next) -> "ASC"; (previous) -> "DESC" end,
+    Operator = fun(next) -> " > "; (previous) -> " < " end,
+    MapField = fun("date_start") -> "pivot_date_start";
+                  ("date_end") -> "pivot_date_end";
+                  ("title") -> "pivot_title";
+                  (X) -> X end,
+    Field = z_convert:to_list(proplists:get_value(sort, Args, publication_start)),
+    Limit = z_convert:to_integer(proplists:get_value(limit, Args, 1)),
+    {id, Id} = proplists:lookup(id, Args),
+    {cat, Cat} = proplists:lookup(cat, Args),
+    FieldValue = m_rsc:p(Id, z_convert:to_atom(Field), Context),
     #search_sql{
-        select="r.id",
-        from="rsc r",
-        where="((publication_start < $1 OR (publication_start = $1 AND modified < $2)) AND id <> $3)",
-        tables=[{rsc, "r"}],
-        cats=[{"r", Cat}],
-        args=[PubStart, Modified, Id],
-        order="publication_start DESC, modified DESC, id DESC"
-       };
-search({next, [{cat, Cat}, {id, Id}]}, _OffsetLimit, Context) ->
-    PubStart = m_rsc:p(Id, publication_start, Context),
-    Modified = m_rsc:p(Id, modified, Context),
-    #search_sql{
-        select="r.id",
-        from="rsc r",
-        where="((publication_start > $1 OR (publication_start = $1 AND modified > $2)) AND id <> $3)",
-        tables=[{rsc, "r"}],
-        cats=[{"r", Cat}],
-        args=[PubStart, Modified, Id],
-        order="publication_start, modified, id"
-       };
+                 select="r.id",
+                 from="rsc r",
+                 where="(" ++ MapField(Field) ++ " " ++ Operator(Type) ++ " $1) and r.id <> $2",
+                 tables=[{rsc, "r"}],
+                 cats=[{"r", Cat}],
+                 args=[FieldValue, Id, Limit],
+                 order=MapField(Field) ++ " " ++ Order(Type) ++ ", id " ++ Order(Type),
+                 limit="limit $3"
+               }.
 
+
+%% Retrieve the previous/next id(s) (on sort field, defaults to publication date) 
+search({previous, Args}, _OffsetLimit, Context) ->
+    search_prevnext(previous, Args, Context);
+search({next, Args}, _OffsetLimit, Context) ->
+    search_prevnext(next, Args, Context);
 
 search({keyword_cloud, [{cat, Cat}]}, _OffsetLimit, Context) ->
     Subject = m_predicate:name_to_id_check(subject, Context),
@@ -299,8 +301,8 @@ search({match_objects_cats, [{cat,Cat},{id,Id}]}, OffsetLimit, Context) ->
 
 %% @doc Return a list of resource ids, featured ones first
 %% @spec search(SearchSpec, Range, Context) -> #search_sql{}
-search({featured, []}, OffsetLimit, Context) ->
-    search({'query', [{sort, '-rsc.is_featured'}]}, OffsetLimit, Context);
+search({featured, []}, OffsetLimit, Context) -> 
+   search({'query', [{sort, '-rsc.is_featured'}]}, OffsetLimit, Context);
 
 %% @doc Return a list of resource ids inside a category, featured ones first
 %% @spec search(SearchSpec, Range, Context) -> IdList | {error, Reason}
@@ -501,7 +503,7 @@ search(_, _, _) ->
 
 
 
-%% @doc Expand a search string like "hello wor" to "'hello' & 'wor:*'"
+%% @doc Expand a search string like "hello wor" to a posgres search query.
 to_tsquery(undefined, _Context) ->
     [];
 to_tsquery(Text, Context) when is_binary(Text) ->

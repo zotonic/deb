@@ -1,8 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-05-11
+%% Date: 2010-05-11
 %% @doc Redirect to the authorize uri of Facebook
-%% @see http://developers.facebook.com/docs/authentication/
+%% See: http://developers.facebook.com/docs/authentication/
 
 %% Copyright 2010 Marc Worrell
 %%
@@ -54,9 +54,9 @@ moved_temporarily(ReqData, Context) ->
     Page = get_page(Context1),
     RedirectUrl = lists:flatten(
                         z_context:abs_url(
-                            lists:flatten(z_dispatcher:url_for(facebook_redirect, [{p,Page}], Context1)), 
+                            z_dispatcher:url_for(facebook_redirect, [{p,Page}], Context1),
                             Context1)),
-    Location = "https://graph.facebook.com/oauth/authorize?client_id="
+    Location = "https://www.facebook.com/dialog/oauth?client_id="
                 ++ z_utils:url_encode(AppId)
                 ++ "&redirect_uri=" ++ z_utils:url_encode(RedirectUrl)
                 ++ "&scope=" ++ Scope,

@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-11-27
+%% Date: 2009-11-27
 %% @doc Open a dialog for sending an e-mail to a mailing list.
 
 %% Copyright 2009,2011 Marc Worrell, Arjan Scherpenisse
@@ -36,28 +36,28 @@ render_action(TriggerId, TargetId, Args, Context) ->
 	{PostbackMsgJS, _PickledPostback} = z_render:make_postback(Postback, click, TriggerId, TargetId, ?MODULE, Context),
 	{PostbackMsgJS, Context}.
 
-event({postback, {dialog_mailing_page, Id, ListId, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={dialog_mailing_page, Id, ListId, OnSuccess}}, Context) ->
 	Vars = [
             {id, Id},
             {list_id, ListId},
             {on_success, OnSuccess}
 	],
-	z_render:dialog("Confirm sending to mailinglist.", "_dialog_mailing_page.tpl", Vars, Context);
+	z_render:dialog(?__("Confirm sending to mailinglist", Context), "_dialog_mailing_page.tpl", Vars, Context);
 
 %% When the page is not yet visible and the user did not choose the
 %% "now" button, the mailing is queued.
-event({submit, {mailing_page, Args}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={mailing_page, Args}}, Context) ->
 	PageId = proplists:get_value(id, Args),
 	OnSuccess = proplists:get_all_values(on_success, Args),
 	ListId = z_convert:to_integer(z_context:get_q("list_id", Context)),
     When = z_context:get_q("mail_when", Context),
 	Context1 = case z_acl:rsc_visible(PageId, z_acl:anondo(Context)) orelse When =:= "now" of
 		true -> 
-			z_notifier:notify({mailinglist_mailing, ListId, PageId}, Context),
-			z_render:growl("The e-mails are being sent...", Context);
+			z_notifier:notify(#mailinglist_mailing{list_id=ListId, page_id=PageId}, Context),
+			z_render:growl(?__("The e-mails are being sent...", Context), Context);
 		false -> 
 			m_mailinglist:insert_scheduled(ListId, PageId, Context),
             mod_signal:emit({update_mailinglist_scheduled, [{id, PageId}]}, Context),
-			z_render:growl("The mailing will be send when the page becomes visible.", Context)
+			z_render:growl(?__("The mailing will be send when the page becomes visible.", Context), Context)
 	end,
 	z_render:wire(OnSuccess, Context1).

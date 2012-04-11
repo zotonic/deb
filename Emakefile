@@ -9,6 +9,8 @@
 	"modules/*/*/*",
 	"priv/modules/*/*",
 	"priv/modules/*/*/*",
+	"priv/extensions/ext_*/*",
+	"priv/extensions/ext_*/*/*",
 	"priv/sites/*/*",
 	"priv/sites/*/*/*",
 	"priv/sites/*/support/*/*",
@@ -17,7 +19,7 @@
  ], 
  [	{i, "include"},
 	{i, "src/dbdrivers/postgresql/include"},
-	{i, "deps/webmachine/include"},
+	{i, "deps/webzmachine/include"},
   	{outdir, "ebin"},
   	debug_info
  ]

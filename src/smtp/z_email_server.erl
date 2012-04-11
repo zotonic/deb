@@ -41,13 +41,13 @@
 
 % Maximum times we retry to send a message before we mark it as failed.
 -define(MAX_RETRY, 7).
-% The time in minutes how long sent email should be kept in the queue.
--define(DELETE_AFTER, 240).
 % Timeout value for the connection of the spamassassin daemon
 -define(SPAMD_TIMEOUT, 10000).
 
 -record(state, {smtp_relay, smtp_relay_opts, smtp_no_mx_lookups,
-                smtp_verp_as_from, smtp_bcc, override, smtp_spamd_ip, smtp_spamd_port, sending=[]}).
+                smtp_verp_as_from, smtp_bcc, override, 
+                smtp_spamd_ip, smtp_spamd_port, sending=[],
+                delete_sent_after}).
 -record(email_queue, {id, retry_on=inc_timestamp(now(), 10), retry=0, 
                       recipient, email, created=now(), sent, 
                       pickled_context}).
@@ -166,7 +166,7 @@ handle_cast({bounced, Peer, BounceEmail}, State) ->
                                         to_id = z_acl:user(Context),
                                         props = []
                                     }}, Context),
-            z_notifier:first({email_bounced, MsgId, Recipient}, Context);
+            z_notifier:first(#email_bounced{message_nr=MsgId, recipient=Recipient}, Context);
         _ ->
             % We got a bounce, but we don't have the message anymore.
             % Custom bounce domains make this difficult to process.
@@ -183,7 +183,7 @@ handle_cast({bounced, Peer, BounceEmail}, State) ->
                                                 envelop_from = "<>",
                                                 props = []
                                             }}, Context),
-                    z_notifier:first({email_bounced, MsgId, undefined}, Context);
+                    z_notifier:first(#email_bounced{message_nr=MsgId, recipient=undefined}, Context);
                 undefined ->
                     ignore
             end
@@ -235,9 +235,9 @@ update_config(State) ->
     SmtpRelayOpts = 
         case SmtpRelay of 
             true ->
-                [{relay, z_config:get(smtp_host)},
-                 {port, z_config:get(smtp_port)},
-                 {ssl, z_config:get(smtp_ssl)}]
+                [{relay, z_config:get(smtp_host, "localhost")},
+                 {port, z_config:get(smtp_port, 25)},
+                 {ssl, z_config:get(smtp_ssl, false)}]
                 ++ case {z_config:get(smtp_username),
                          z_config:get(smtp_password)} of
                         {undefined, undefined} ->
@@ -256,6 +256,7 @@ update_config(State) ->
     Override = z_config:get(email_override),
     SmtpSpamdIp = z_config:get(smtp_spamd_ip),
     SmtpSpamdPort = z_config:get(smtp_spamd_port),
+    DeleteSentAfter = z_config:get(smtp_delete_sent_after),
     State#state{smtp_relay=SmtpRelay,
                 smtp_relay_opts=SmtpRelayOpts,
                 smtp_no_mx_lookups=SmtpNoMxLookups,
@@ -263,14 +264,20 @@ update_config(State) ->
                 smtp_bcc=SmtpBcc,
                 override=Override,
                 smtp_spamd_ip=SmtpSpamdIp,
-                smtp_spamd_port=SmtpSpamdPort}.
+                smtp_spamd_port=SmtpSpamdPort,
+                delete_sent_after=DeleteSentAfter}.
 
 
 %% @doc Get the bounce email address. Can be overridden per site in config setting site.bounce_email_override.
 bounce_email(MessageId, Context) ->
     case m_config:get_value(site, bounce_email_override, Context) of
-        undefined -> "noreply+"++MessageId;
-        VERP      -> z_convert:to_list(VERP)
+        undefined -> 
+            case z_config:get(smtp_bounce_email_override) of
+                undefined -> "noreply+"++MessageId;
+                VERP -> z_convert:to_list(VERP)
+            end;
+        VERP ->
+            z_convert:to_list(VERP)
     end.
 
 reply_email(MessageId, Context) ->
@@ -462,8 +469,9 @@ encode_email(_Id, #email{raw=Raw}, _MessageId, _From, _Context) when is_list(Raw
 encode_email(Id, #email{body=undefined} = Email, MessageId, From, Context) ->
     %% Optionally render the text and html body
     Vars = [{email_to, Email#email.to}, {email_from, From} | Email#email.vars],
-    Text = optional_render(Email#email.text, Email#email.text_tpl, Vars, Context),
-    Html = optional_render(Email#email.html, Email#email.html_tpl, Vars, Context),
+    ContextRender = set_render_language(Vars, Context),
+    Text = optional_render(Email#email.text, Email#email.text_tpl, Vars, ContextRender),
+    Html = optional_render(Email#email.html, Email#email.html_tpl, Vars, ContextRender),
 
     %% Fetch the subject from the title of the HTML part or from the Email record
     Subject = case {Html, Email#email.subject} of
@@ -715,6 +723,19 @@ optional_render(Text, undefined, _Vars, _Context) ->
 optional_render(undefined, Template, Vars, Context) ->
     {Output, _Context} = z_template:render_to_iolist(Template, Vars, Context),
     binary_to_list(iolist_to_binary(Output)).
+
+set_render_language(Vars, Context) ->
+    case proplists:get_value(recipient_id, Vars) of
+        UserId when is_integer(UserId) ->
+            case m_rsc:p_no_acl(UserId, pref_language, Context) of
+                Code when is_atom(Code), Code /= undefined -> 
+                    z_context:set_language(Code, Context);
+                _ ->
+                    Context
+            end;
+        _Other ->
+            Context
+   end.
     
 
 %% @doc Mark email as sent by adding the 'sent' timestamp. 
@@ -749,7 +770,7 @@ poll_queued(State) ->
                           DelQuery = qlc:q([QEmail || QEmail <- mnesia:table(email_queue),
                                                       QEmail#email_queue.sent /= undefined andalso
                                                         timer:now_diff(
-                                                            inc_timestamp(QEmail#email_queue.sent, ?DELETE_AFTER),
+                                                            inc_timestamp(QEmail#email_queue.sent, State#state.delete_sent_after),
                                                             now()) < 0
                                             ]),
                           DelQueryRes = qlc:e(DelQuery),
@@ -762,7 +783,7 @@ poll_queued(State) ->
                   end,
     {atomic, NotifyList1} = mnesia:transaction(DelTransFun),
     %% notify the system that these emails were sucessfuly sent and (probably) received
-    [ z_notifier:first({email_sent, Id, Recipient}, z_context:depickle(PickledContext)) 
+    [ z_notifier:first(#email_sent{message_nr=Id, recipient=Recipient}, z_context:depickle(PickledContext)) 
      || {Id, Recipient, PickledContext} <- NotifyList1 ],
 
     %% delete all messages with too high retry count
@@ -780,7 +801,7 @@ poll_queued(State) ->
                       end,
     {atomic, NotifyList2} = mnesia:transaction(SetFailTransFun),
     %% notify the system that these emails were failed to be sent
-    [ z_notifier:first({email_failed, Id, Recipient}, z_context:depickle(PickledContext)) 
+    [ z_notifier:first(#email_failed{message_nr=Id, recipient=Recipient}, z_context:depickle(PickledContext)) 
      || {Id, Recipient, PickledContext} <- NotifyList2 ],
 
     %% fetch a batch of messages for sending
@@ -835,7 +856,7 @@ period(_) -> 7 * 24 * 60.       % Retry every week for extreme cases
 
 %% @doc Increases a timestamp (as returned by now/0) with a value provided in minutes
 inc_timestamp({MegaSec, Sec, MicroSec}, MinToAdd) ->
-    Sec2 = Sec + MinToAdd, %%!!! * 60,
+    Sec2 = Sec + (MinToAdd * 60),
     Sec3 = Sec2 rem 1000000,
     MegaSec2 = MegaSec + Sec2 div 1000000,
     {MegaSec2, Sec3, MicroSec}.

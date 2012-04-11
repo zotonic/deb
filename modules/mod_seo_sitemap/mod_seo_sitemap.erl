@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-08-14
+%% Date: 2009-08-14
 %% @doc Generates a sitemap.  For now rather crude version that will only work with smaller sites.
 
 %% Copyright 2009 Marc Worrell
@@ -23,3 +23,5 @@
 -mod_title("SEO Sitemap").
 -mod_description("Generates sitemap for crawlers, enables better indexing of your site.").
 -mod_prio(600).
+-mod_depends([seo]).
+-mod_provides([seo_sitemap]).

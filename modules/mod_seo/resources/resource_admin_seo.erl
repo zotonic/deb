@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-08-07
+%% Date: 2009-08-07
 %% @doc Page with all SEO settings.
 
 %% Copyright 2009 Marc Worrell
@@ -39,7 +39,7 @@ html(Context) ->
 	z_context:output(Html, Context).
 
 
-event({submit, admin_seo, _TriggerId, _TargetId}, Context) ->
+event(#submit{message=admin_seo}, Context) ->
     case z_acl:is_allowed(use, mod_seo, Context) of
         true ->
             save_settings(z_context:get_q_all(Context), Context),

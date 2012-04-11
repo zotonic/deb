@@ -60,7 +60,7 @@ identify(File, OriginalFilename, Context) ->
 identify_file(File, Context) ->
 	identify_file(File, File, Context).
 identify_file(File, OriginalFilename, Context) ->
-    case z_notifier:first({media_identify_file, File}, Context) of
+    case z_notifier:first(#media_identify_file{filename=File}, Context) of
         {ok, Props} ->
 			{ok, Props};
         undefined -> 
@@ -157,41 +157,52 @@ identify_file_os(unix, File, OriginalFilename) ->
     end.
 
 
-%% @spec identify_file_imagemagick(ImageFile) -> {ok, PropList} | {error, Reason}
+%% @spec identify_file_imagemagick(OsFamily, ImageFile) -> {ok, PropList} | {error, Reason}
 %% @doc Try to identify the file using image magick
 identify_file_imagemagick(OsFamily, ImageFile) ->
     CleanedImageFile = z_utils:os_filename(ImageFile ++ "[0]"),
     Result    = os:cmd("identify -quiet " ++ CleanedImageFile ++ " 2> " ++ devnull(OsFamily)),
-    % ["test/a.jpg","JPEG","3440x2285","3440x2285+0+0","8-bit","DirectClass","2.899mb"]
-    % sometimes:
-    % test.jpg[0]=>test.jpg JPEG 2126x1484 2126x1484+0+0 DirectClass 8-bit 836.701kb 0.130u 0:02
-    Line1 = hd(string:tokens(Result, "\r\n")),
-    Words = string:tokens(Line1, " "),
-    WordCount = length(Words),
-    Words1 = if
-        WordCount > 4 -> 
-            {A,_B} = lists:split(4, Words),
-            A;
-        true -> 
-            Words
-    end,
-    try 
-        [_Path, Type, Dim, _Dim2] = Words1,
-        Mime = mime(Type),
-        [Width,Height] = string:tokens(Dim, "x"),
-        Props1 = [{width, list_to_integer(Width)},
-                  {height, list_to_integer(Height)},
-                  {mime, Mime}],
-        Props2 = case Mime of
-                     "image/" ++ _ ->
-                         [{orientation, exif_orientation(ImageFile)} | Props1];
-                     _ -> Props1
-                 end,
-        {ok, Props2}
-    catch
-        _:_ ->
-            ?LOG("identify of ~p failed - ~p", [CleanedImageFile, Line1]),
-            {error, "unknown result from 'identify': '"++Line1++"'"}
+    case Result of
+        [] ->
+            Err = os:cmd("identify -quiet 2>&1" ++ CleanedImageFile),
+            ?LOG("identify of ~s failed:~n~s", [CleanedImageFile, Err]),
+            {error, "identify error: " ++ Err};
+        _ ->
+            %% ["test/a.jpg","JPEG","3440x2285","3440x2285+0+0","8-bit","DirectClass","2.899mb"]
+            %% sometimes:
+            %% test.jpg[0]=>test.jpg JPEG 2126x1484 2126x1484+0+0 DirectClass 8-bit 836.701kb 0.130u 0:02
+
+            %% "/tmp/ztmp-zotonic008prod@miffy.local-1321.452998.868252[0]=>/tmp/ztmp-zotonic008prod@miffy.local-1321.452998.868252 JPEG 1824x1824 1824x1824+0+0 8-bit DirectClass 1.245MB 0.000u 0:00.000"
+
+            Line1 = hd(string:tokens(Result, "\r\n")),
+            try
+                Words = string:tokens(Line1, " "),
+                WordCount = length(Words),
+                Words1 = if
+                             WordCount > 4 -> 
+                                 {A,_B} = lists:split(4, Words),
+                                 A;
+                             true -> 
+                                 Words
+                         end,
+
+                [_Path, Type, Dim, _Dim2] = Words1,
+                Mime = mime(Type),
+                [Width,Height] = string:tokens(Dim, "x"),
+                Props1 = [{width, list_to_integer(Width)},
+                          {height, list_to_integer(Height)},
+                          {mime, Mime}],
+                Props2 = case Mime of
+                             "image/" ++ _ ->
+                                 [{orientation, exif_orientation(ImageFile)} | Props1];
+                             _ -> Props1
+                         end,
+                {ok, Props2}
+            catch
+                _:_ ->
+                    ?LOG("identify of ~p failed - ~p", [CleanedImageFile, Line1]),
+                    {error, "unknown result from 'identify': '"++Line1++"'"}
+            end
     end.
 
 devnull(win32) -> "nul";
@@ -301,6 +312,7 @@ extension_mime() ->
 		{".pdf", "application/pdf"},
 		{".php", "text/x-php"},
 		{".png", "image/png"},
+		{".ppsx", "application/vnd.openxmlformats-officedocument.presentationml.slideshow"},
 		{".ppt", "application/vnd.ms-powerpoint"},
 		{".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
 		{".ps", "application/postscript"},
@@ -317,6 +329,7 @@ extension_mime() ->
 		{".tpl", "text/html"},
 		{".txt", "text/plain"},
 		{".wav", "audio/x-wav"},
+		{".webm", "video/webm"},
 		{".woff", "application/x-font-woff"},
 		{".wmf", "application/x-msmetafile"},
 		{".xhtml", "application/xhtml+xml"},
@@ -352,17 +365,22 @@ extension_mime() ->
 %% Detect the exif rotation in an image and swaps width/height accordingly.
 exif_orientation(InFile) ->
     %% FIXME - don't depend on external command
-    FirstLine = z_string:to_lower(hd(string:tokens(os:cmd("exif -m -t Orientation " ++ z_utils:os_filename(InFile)), "\n"))),
-    case [z_string:trim(X) || X <- string:tokens(FirstLine, "-")] of
-        ["top", "left"] -> 1;
-        ["top", "right"] -> 2;
-        ["bottom", "right"] -> 3;
-        ["bottom", "left"] -> 4;
-        ["left", "top"] -> 5;
-        ["right", "top"] -> 6;
-        ["right", "bottom"] -> 7;
-        ["left", "bottom"] -> 8;
-        _ -> 1
+    case string:tokens(os:cmd("exif -m -t Orientation " ++ z_utils:os_filename(InFile)), "\n") of
+        [] -> 
+            1;
+        [Line|_] -> 
+            FirstLine = z_string:to_lower(Line),
+            case [z_string:trim(X) || X <- string:tokens(FirstLine, "-")] of
+                ["top", "left"] -> 1;
+                ["top", "right"] -> 2;
+                ["bottom", "right"] -> 3;
+                ["bottom", "left"] -> 4;
+                ["left", "top"] -> 5;
+                ["right", "top"] -> 6;
+                ["right", "bottom"] -> 7;
+                ["left", "bottom"] -> 8;
+                _ -> 1
+            end
     end.
 
 

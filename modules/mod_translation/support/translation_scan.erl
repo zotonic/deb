@@ -1,7 +1,7 @@
 % @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010,2011 Marc Worrell
-%% @date 2010-05-19
-%% @doc @doc Parse templates / erlang files in modules, extract all translations.
+%% Date: 2010-05-19
+%% @doc Parse templates / erlang files in modules, extract all translations.
 
 %% Copyright 2010,2011 Marc Worrell
 %%

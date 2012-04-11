@@ -115,15 +115,12 @@ encodings_provided(ReqData, Context) ->
                     true ->
                         [{"identity", fun(Data) -> Data end}];
                     _ ->
-                        case z_context:get(mime, Context) of
-                            "image/" ++ _ ->  [{"identity", fun(Data) -> Data end}];
-                            "video/" ++ _ ->  [{"identity", fun(Data) -> Data end}];
-                            "audio/" ++ _ ->  [{"identity", fun(Data) -> Data end}];
-                            "application/x-gzip" ++ _ -> [{"identity", fun(Data) -> Data end}];
-                            "applicationzip" ++ _ -> [{"identity", fun(Data) -> Data end}];
-                            _ -> 
-                                [{"identity", fun(Data) -> decode_data(identity, Data) end},
-                                 {"gzip",     fun(Data) -> decode_data(gzip, Data) end}]
+                        Mime = z_context:get(mime, Context),
+                        case z_media_identify:is_mime_compressed(Mime) of
+                            true -> [{"identity", fun(Data) -> Data end}];
+
+                            _    -> [{"identity", fun(Data) -> decode_data(identity, Data) end},
+                                     {"gzip",     fun(Data) -> decode_data(gzip, Data) end}]
                         end
                 end,
     {Encodings, ReqData, z_context:set(encode_data, length(Encodings) > 1, Context)}.
@@ -380,49 +377,53 @@ is_text("application/xml") -> true;
 is_text(_Mime) -> false.
 
 
-%% @spec ensure_preview(ReqData, Path, Context) -> {Boolean, NewContext}
+%% @spec ensure_preview(Path, Context) -> {Boolean, NewContext}
 %% @doc Generate the file on the path from an archived media file.
 %% The path is like: 2007/03/31/wedding.jpg(300x300)(crop-center)(709a-a3ab6605e5c8ce801ac77eb76289ac12).jpg
 %% The original media should be in State#media_path (or z_path:media_archive)
 %% The generated image should be created in State#root (or z_path:media_preview)
 ensure_preview(Path, Context) ->
-    {Filepath, PreviewPropList, _Checksum, _ChecksumBaseString} = 
-                    case z_context:get(media_tag_url2props,Context) of
-                        undefined -> z_media_tag:url2props(Path, Context);
-                        MediaInfo -> MediaInfo
-                    end,
-    case mochiweb_util:safe_relative_path(Filepath) of
-        undefined ->
+    UrlProps = case z_context:get(media_tag_url2props,Context) of
+                    undefined -> z_media_tag:url2props(Path, Context);
+                    MediaInfo -> MediaInfo
+                end,
+    case UrlProps of
+        error -> 
             {false, Context};
-        Safepath  ->
-            MediaPath = case z_context:get(media_path, Context) of
-                            undefined -> z_path:media_archive(Context);
-                            ConfMediaPath -> ConfMediaPath
-                        end,
+        {Filepath, PreviewPropList, _Checksum, _ChecksumBaseString} ->
+            case mochiweb_util:safe_relative_path(Filepath) of
+                undefined ->
+                    {false, Context};
+                Safepath  ->
+                    MediaPath = case z_context:get(media_path, Context) of
+                                    undefined -> z_path:media_archive(Context);
+                                    ConfMediaPath -> ConfMediaPath
+                                end,
             
-            MediaFile = case Safepath of 
-                            "lib/" ++ LibPath ->  
-                                case z_module_indexer:find(lib, LibPath, Context) of 
-                                    {ok, ModuleFilename} -> ModuleFilename; 
-                                    {error, _} -> filename:join(MediaPath, Safepath) 
-                                end; 
-                            _ -> 
-                                filename:join(MediaPath, Safepath) 
-                        end,
-            case filelib:is_regular(MediaFile) of
-                true ->
-                    % Media file exists, perform the resize
-                    Root = case z_context:get(root, Context) of
-                               [ConfRoot|_] -> ConfRoot;
-                               _ -> z_path:media_preview(Context)
-                           end,
-                    PreviewFile = filename:join(Root, Path),
-                    case z_media_preview:convert(MediaFile, PreviewFile, PreviewPropList, Context) of
-                        ok -> {true, z_context:set(fullpath, PreviewFile, Context)};
-                        {error, Reason} -> throw(Reason)
-                    end;
-                false ->
-                    {false, Context}
+                    MediaFile = case Safepath of 
+                                    "lib/" ++ LibPath ->  
+                                        case z_module_indexer:find(lib, LibPath, Context) of 
+                                            {ok, ModuleFilename} -> ModuleFilename; 
+                                            {error, _} -> filename:join(MediaPath, Safepath) 
+                                        end; 
+                                    _ -> 
+                                        filename:join(MediaPath, Safepath) 
+                                end,
+                    case filelib:is_regular(MediaFile) of
+                        true ->
+                            % Media file exists, perform the resize
+                            Root = case z_context:get(root, Context) of
+                                       [ConfRoot|_] -> ConfRoot;
+                                       _ -> z_path:media_preview(Context)
+                                   end,
+                            PreviewFile = filename:join(Root, Path),
+                            case z_media_preview:convert(MediaFile, PreviewFile, PreviewPropList, Context) of
+                                ok -> {true, z_context:set(fullpath, PreviewFile, Context)};
+                                {error, Reason} -> throw(Reason)
+                            end;
+                        false ->
+                            {false, Context}
+                    end
             end
     end.
 

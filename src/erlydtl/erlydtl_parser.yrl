@@ -3,6 +3,7 @@
 %%% @author    Roberto Saccon <rsaccon@gmail.com> [http://rsaccon.com]
 %%% @author    Evan Miller <emmiller@gmail.com>
 %%% @copyright 2008 Roberto Saccon, Evan Miller
+%%% @copyright 2009-2011 Marc Worrell
 %%% @doc Template language grammar
 %%% @reference  See <a href="http://erlydtl.googlecode.com" target="_top">http://erlydtl.googlecode.com</a> for more information
 %%% @changes Marc Worrell - added print/image/scomp, more args options etc.
@@ -11,6 +12,7 @@
 %%% The MIT License
 %%%
 %%% Copyright (c) 2007 Roberto Saccon, Evan Miller
+%%% Copyright (c) 2009-2011 Marc Worrell
 %%%
 %%% Permission is hereby granted, free of charge, to any person obtaining a copy
 %%% of this software and associated documentation files (the "Software"), to deal
@@ -42,6 +44,7 @@ Nonterminals
     Literal
 
     ValueBraced
+    OptWith
 
     ExtendsTag
     OverrulesTag
@@ -63,15 +66,23 @@ Nonterminals
     CycleNames
     CycleNamesCompat
 
+    FilterBlock
+    FilterBraced
+    EndFilterBraced
+    Filters
+
     ForBlock
     ForBraced
-	EmptyBraced
+    EmptyBraced
     EndForBraced
     ForExpression
     ForGroup
 
     IfBlock
     IfBraced
+    ElsePart
+    ElseIfList
+    ElseIfBraced
     ElseBraced
     EndIfBraced
 
@@ -108,6 +119,7 @@ Nonterminals
     
     CustomTag
     Args
+    SpacelessBlock
 	TransArgs
 
     CallTag
@@ -153,18 +165,22 @@ Terminals
     cycle_keyword
     dot
     else_keyword
-	empty_keyword
+    elseif_keyword
+    empty_keyword
     endautoescape_keyword
     endblock_keyword
 	endcache_keyword
     endcomment_keyword
+    endfilter_keyword
     endfor_keyword
     endif_keyword
     endifequal_keyword
     endifnotequal_keyword
+    endspaceless_keyword
 	endwith_keyword
     equal
     extends_keyword
+    filter_keyword
     for_keyword
     identifier
     if_keyword
@@ -186,6 +202,7 @@ Terminals
     overrules_keyword
     pipe
     print_keyword
+    spaceless_keyword
     string_literal
     text
 	url_keyword
@@ -234,10 +251,12 @@ Elements -> Elements InheritTag : '$1' ++ ['$2'].
 Elements -> Elements IncludeTag : '$1' ++ ['$2'].
 Elements -> Elements CatIncludeTag : '$1' ++ ['$2'].
 Elements -> Elements NowTag : '$1' ++ ['$2'].
+Elements -> Elements SpacelessBlock : '$1' ++ ['$2'].
 Elements -> Elements LibTag : '$1' ++ ['$2'].
 Elements -> Elements LoadTag : '$1' ++ ['$2'].
 Elements -> Elements CycleTag : '$1' ++ ['$2'].
 Elements -> Elements BlockBlock : '$1' ++ ['$2'].
+Elements -> Elements FilterBlock : '$1' ++ ['$2'].
 Elements -> Elements ForBlock : '$1' ++ ['$2'].
 Elements -> Elements IfBlock : '$1' ++ ['$2'].
 Elements -> Elements IfEqualBlock : '$1' ++ ['$2'].
@@ -256,7 +275,10 @@ Elements -> Elements WithBlock : '$1' ++ ['$2'].
 Elements -> Elements CacheBlock : '$1' ++ ['$2'].
 
 
-ValueBraced -> open_var E close_var : '$2'.
+ValueBraced -> open_var E OptWith close_var : {value, '$2', '$3'}.
+
+OptWith -> '$empty' : [].
+OptWith -> with_keyword Args : '$2'.
 
 ExtendsTag -> open_tag extends_keyword string_literal close_tag : {extends, '$3'}.
 OverrulesTag -> open_tag overrules_keyword close_tag : overrules.
@@ -264,8 +286,8 @@ InheritTag -> open_tag inherit_keyword close_tag : inherit.
 
 TransTag -> open_trans trans_text close_trans : {trans, '$2'}.
 TransExtTag -> open_tag __keyword string_literal TransArgs close_tag : {trans_ext, '$3', '$4'}.
-IncludeTag -> open_tag OptionalAll include_keyword string_literal Args close_tag : {include, '$4', '$5', '$2'}.
-CatIncludeTag -> open_tag OptionalAll catinclude_keyword string_literal E Args close_tag : {catinclude, '$4', '$5', '$6', '$2'}.
+IncludeTag -> open_tag OptionalAll include_keyword E Args close_tag : {include, '$4', '$5', '$2'}.
+CatIncludeTag -> open_tag OptionalAll catinclude_keyword E E Args close_tag : {catinclude, '$4', '$5', '$6', '$2'}.
 NowTag -> open_tag now_keyword string_literal close_tag : {date, now, '$3'}.
 
 OptionalAll -> all_keyword : true.
@@ -297,6 +319,13 @@ CycleNamesCompat -> identifier comma : ['$1'].
 CycleNamesCompat -> CycleNamesCompat identifier comma : '$1' ++ ['$2'].
 CycleNamesCompat -> CycleNamesCompat identifier : '$1' ++ ['$2'].
 
+FilterBlock -> FilterBraced Elements EndFilterBraced : {filter, '$1', '$2'}.
+FilterBraced -> open_tag filter_keyword Filters close_tag : '$3'.
+EndFilterBraced -> open_tag endfilter_keyword close_tag.
+
+Filters -> Filter : ['$1'].
+Filters -> Filters pipe Filter : '$1' ++ ['$3'].
+
 ForBlock -> ForBraced Elements EndForBraced : {for, '$1', '$2'}.
 ForBlock -> ForBraced Elements EmptyBraced Elements EndForBraced : {for, '$1', '$2', '$4'}.
 EmptyBraced -> open_tag empty_keyword close_tag.
@@ -306,10 +335,16 @@ ForExpression -> ForGroup in_keyword E : {'in', '$1', '$3'}.
 ForGroup -> identifier : ['$1'].
 ForGroup -> ForGroup comma identifier : '$1' ++ ['$3'].
 
-IfBlock -> IfBraced Elements ElseBraced Elements EndIfBraced : {ifelse, '$1', '$2', '$4'}.
-IfBlock -> IfBraced Elements EndIfBraced : {'if', '$1', '$2'}.
-IfBraced -> open_tag if_keyword E close_tag : '$3'.
+IfBlock -> IfBraced Elements ElsePart : {'if', '$1', '$2', '$3'}.
 
+ElsePart -> EndIfBraced : [].
+ElsePart -> ElseBraced Elements EndIfBraced : [{'else', '$2'}].
+ElsePart -> ElseIfList : '$1'.
+
+ElseIfList -> ElseIfBraced Elements ElsePart : [{'elseif', '$1', '$2'}] ++ '$3'.
+
+IfBraced -> open_tag if_keyword E close_tag : '$3'.
+ElseIfBraced -> open_tag elseif_keyword E close_tag : '$3'.
 ElseBraced -> open_tag else_keyword close_tag.
 EndIfBraced -> open_tag endif_keyword close_tag.
 
@@ -324,6 +359,8 @@ IfNotEqualBlock -> IfNotEqualBraced Elements EndIfNotEqualBraced : {ifnotequal, 
 IfNotEqualBraced -> open_tag ifnotequal_keyword IfNotEqualExpression E close_tag : ['$3', '$4'].
 IfNotEqualExpression -> E : '$1'.
 EndIfNotEqualBraced -> open_tag endifnotequal_keyword close_tag.
+
+SpacelessBlock -> open_tag spaceless_keyword close_tag Elements open_tag endspaceless_keyword close_tag : {spaceless, '$4'}.
 
 AutoEscapeBlock -> AutoEscapeBraced Elements EndAutoEscapeBraced : {autoescape, '$1', '$2'}.
 AutoEscapeBraced -> open_tag autoescape_keyword identifier close_tag : '$3'.

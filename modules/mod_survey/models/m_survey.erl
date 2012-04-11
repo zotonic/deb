@@ -30,9 +30,11 @@
     
     is_allowed_results_download/2,
     insert_survey_submission/3,
+    insert_survey_submission/5,
     survey_stats/2,
     survey_results/2,
-    install/1
+	single_result/4,
+	delete_result/4
 ]).
 
 -include_lib("zotonic.hrl").
@@ -44,6 +46,8 @@ m_find_value(questions, #m{value=undefined} = M, _Context) ->
     M#m{value=questions};
 m_find_value(results, #m{value=undefined} = M, _Context) ->
     M#m{value=results};
+m_find_value(all_results, #m{value=undefined} = M, _Context) ->
+    M#m{value=all_results};
 m_find_value(did_survey, #m{value=undefined} = M, _Context) ->
     M#m{value=did_survey};
 m_find_value(is_allowed_results_download, #m{value=undefined} = M, _Context) ->
@@ -58,6 +62,8 @@ m_find_value(Id, #m{value=questions}, Context) ->
     end;
 m_find_value(Id, #m{value=results}, Context) ->
     prepare_results(Id, Context);
+m_find_value(Id, #m{value=all_results}, Context) ->
+    survey_results(Id, Context);
 m_find_value(Id, #m{value=did_survey}, Context) ->
     did_survey(Id, Context);
 m_find_value(Id, #m{value=is_allowed_results_download}, Context) ->
@@ -65,7 +71,7 @@ m_find_value(Id, #m{value=is_allowed_results_download}, Context) ->
 
 
 %% @doc Transform a m_config value to a list, used for template loops
-%% @spec m_to_list(Source, Context)
+%% @spec m_to_list(Source, Context) -> list()
 m_to_list(#m{value=undefined}, _Context) ->
 	[].
 
@@ -77,7 +83,7 @@ m_value(#m{value=undefined}, _Context) ->
 
 is_allowed_results_download(Id, Context) ->
     z_acl:rsc_editable(Id, Context)
-    orelse z_notifier:first({survey_is_allowed_results_download, Id}, Context) == true.
+    orelse z_notifier:first(#survey_is_allowed_results_download{id=Id}, Context) == true.
 
 
 %% @doc Transform a list of survey questions to admin template friendly proplists
@@ -118,16 +124,27 @@ did_survey(SurveyId, Context) ->
 
 %% @doc Save a survey, connect to the current user (if any)
 insert_survey_submission(SurveyId, Answers, Context) ->
-    UserId = z_acl:user(Context),
-    %% Delete previous answers of this user, if any
-    PersistentId = case UserId of
+    {UserId, PersistentId} = case z_convert:to_bool(m_rsc:p(SurveyId, survey_multiple, Context)) of
+                                 true ->
+                                     {undefined, z_ids:id(30)};
+                                 false ->
+                                     case z_acl:user(Context) of
+                                         undefined ->
+                                             {undefined, z_context:persistent_id(Context)};
+                                         U ->
+                                             {U, undefined}
+                                     end
+                             end,
+    insert_survey_submission(SurveyId, UserId, PersistentId, Answers, Context).
+
+%% @doc Save or replace a survey for the given userid/persistent_id combination
+insert_survey_submission(SurveyId, UserId, PersistentId, Answers, Context) ->
+    case UserId of
         undefined ->
             PId = z_context:persistent_id(Context),
-            z_db:q("delete from survey_answer where survey_id = $1 and persistent = $2", [SurveyId, PId], Context),
-            PId;
+            z_db:q("delete from survey_answer where survey_id = $1 and persistent = $2", [SurveyId, PId], Context);
         _Other ->
-            z_db:q("delete from survey_answer where survey_id = $1 and user_id = $2", [SurveyId, UserId], Context),
-            undefined
+            z_db:q("delete from survey_answer where survey_id = $1 and user_id = $2", [SurveyId, UserId], Context)
     end,
     insert_questions(SurveyId, UserId, PersistentId, Answers, Context).
 
@@ -144,8 +161,8 @@ insert_survey_submission(SurveyId, Answers, Context) ->
             {text, Text} -> [SurveyId, UserId, PersistentId, QuestionId, Name, undefined, Text];
             Value -> [SurveyId, UserId, PersistentId, QuestionId, Name, z_convert:to_list(Value), undefined]
         end,
-        z_db:q("insert into survey_answer (survey_id, user_id, persistent, question, name, value, text) 
-                values ($1, $2, $3, $4, $5, $6, $7)", 
+        z_db:q("insert into survey_answer (survey_id, user_id, persistent, question, name, value, text, created) 
+                values ($1, $2, $3, $4, $5, $6, $7, now())", 
                Args,
                Context),
         insert_answers(SurveyId, UserId, PersistentId, QuestionId, As, Context).
@@ -213,16 +230,19 @@ survey_stats(SurveyId, Context) ->
 survey_results(SurveyId, Context) ->
     case m_rsc:p(SurveyId, survey, Context) of
         {survey, QuestionIds, Questions} ->
-             Rows = z_db:q("select user_id, persistent, question, name, value, text 
+             Rows = z_db:q("select user_id, persistent, question, name, value, text, created
                             from survey_answer 
                             where survey_id = $1", [SurveyId], Context),
             Grouped = group_users(Rows),
             QIds = [ z_convert:to_binary(QId) || QId <- QuestionIds ],
             QsB = [ {z_convert:to_binary(QId), Q} || {QId, Q} <- Questions ],
+            UnSorted = [ user_answer_row(User, Created, Answers, QIds, QsB, Context) || {User, Created, Answers} <- Grouped ],
+            Sorted = lists:sort(fun([_,_,A|_], [_,_,B|_]) -> A < B end, UnSorted), %% sort by created date
             [
-                lists:flatten([ <<"user_id">>, <<"anonymous">> | [ answer_header(proplists:get_value(QId, Questions)) || QId <- QuestionIds ]])
-                | [ user_answer_row(User, Answers, QIds, QsB) || {User, Answers} <- Grouped ]
-            ];
+             lists:flatten([ <<"user_id">>, <<"anonymous">>, <<"created">>
+                             | [ answer_header(proplists:get_value(QId, Questions)) || QId <- QuestionIds ]
+                           ])
+             | Sorted];
         undefined ->
             []
     end.
@@ -230,30 +250,35 @@ survey_results(SurveyId, Context) ->
     group_users([]) ->
         [];
     group_users([R|Rs]) ->
-        {User, Q} = unpack_user_row(R),
-        group_users(User, Rs, [Q], []).
+        {User, Q, Created} = unpack_user_row(R),
+        group_users(User, Created, Rs, [Q], []).
         
-    group_users(User, [], UserAcc, Acc) ->
-        [{User,UserAcc} | Acc];
-    group_users(User, [R|Rs], UserAcc, Acc) ->
-        {U, Q} = unpack_user_row(R),
+    group_users(User, Created, [], UserAcc, Acc) ->
+        [{User, Created, UserAcc} | Acc];
+    group_users(User, Created, [R|Rs], UserAcc, Acc) ->
+        {U, Q, Crtd} = unpack_user_row(R),
         case User of
-            U -> group_users(User, Rs, [Q|UserAcc], Acc);
-            _ -> group_users(U, Rs, [Q], [{User,UserAcc}|Acc])
+            U -> group_users(User, Created, Rs, [Q|UserAcc], Acc);
+            _ -> group_users(U, Crtd, Rs, [Q], [{User,Created,UserAcc}|Acc])
         end.
 
 
-    unpack_user_row({UserId, Persistent, Question, Name, Value, Text}) ->
+    unpack_user_row({UserId, Persistent, Question, Name, Value, Text, Created}) ->
         {
             {user, UserId, Persistent},
-            {Question, {Name, {Value, Text}}}
+            {Question, {Name, {Value, Text}}},
+            Created
         }.
 
 
-    user_answer_row({user, User, Persistent}, Answers, QuestionIds, Questions) ->
+    user_answer_row({user, User, Persistent}, Created, Answers, QuestionIds, Questions, Context) ->
         [
             User,
-            Persistent
+            Persistent,
+            case Created of 
+                undefined -> <<>>;
+                _ -> erlydtl_dateformat:format(Created, "Y-m-d H:i", Context)
+            end
             | answer_row(Answers, QuestionIds, Questions)
         ].
         
@@ -277,35 +302,27 @@ survey_results(SurveyId, Context) ->
         M:prep_answer_header(Q).
 
 
-%% @doc Install tables used for storing survey results
-install(Context) ->
-    z_db:ensure_table(survey_answer, [
-                #column_def{name=id, type="serial", is_nullable=false},
-                #column_def{name=survey_id, type="integer", is_nullable=false},
-                #column_def{name=user_id, type="integer", is_nullable=true},
-                #column_def{name=persistent, type="character varying", length=32, is_nullable=true},
-                #column_def{name=question, type="character varying", length=32, is_nullable=false},
-                #column_def{name=name, type="character varying", length=32, is_nullable=false},
-                #column_def{name=value, type="character varying", length=80, is_nullable=true},
-                #column_def{name=text, type="bytea", is_nullable=true}
-            ], Context),
-            
-    % Add some indices and foreign keys, ignore errors
-    z_db:equery("create index fki_survey_answer_survey_id on survey_answer(survey_id)", Context),
-    z_db:equery("alter table survey_answer add 
-                constraint fk_survey_answer_survey_id foreign key (survey_id) references rsc(id) 
-                on update cascade on delete cascade", Context),
+single_result(SurveyId, UserId, PersistentId, Context) ->
+    {Clause, Args} = case z_utils:is_empty(UserId) of
+                         true -> {"persistent = $1", [PersistentId]};
+                         false -> {"user_id = $1", [UserId]}
+                     end,
+    Rows = z_db:q("SELECT question, name, value, text FROM survey_answer WHERE " ++ Clause ++ "AND survey_id = $2", Args ++ [SurveyId], Context),
+    lists:foldr(fun({Q, N, Numeric, Text}, R) ->
+                        QId = z_convert:to_list(Q),
+                        Name = z_convert:to_list(N),
+                        Value = case z_utils:is_empty(Text) of
+                                    true -> Numeric; false -> {text, z_convert:to_list(Text)}
+                                end,
+                        z_utils:prop_replace(QId, z_utils:prop_replace(Name, Value, proplists:get_value(QId, R, [])), R)
+                end,
+                [],
+                Rows).
 
-    z_db:equery("create index fki_survey_answer_user_id on survey_answer(user_id)", Context),
-    z_db:equery("alter table survey_answer add 
-                constraint fk_survey_answer_user_id foreign key (user_id) references rsc(id) 
-                on update cascade on delete cascade", Context),
 
-    %% For aggregating answers to survey questions (group by name)
-    z_db:equery("create index survey_answer_survey_name_key on survey_answer(survey_id, name)", Context),
-    z_db:equery("create index survey_answer_survey_question_key on survey_answer(survey_id, question)", Context),
-    z_db:equery("create index survey_answer_survey_user_key on survey_answer(survey_id, user_id)", Context),
-    z_db:equery("create index survey_answer_survey_persistent_key on survey_answer(survey_id, persistent)", Context),
-
-    ok.
-
+delete_result(SurveyId, UserId, PersistentId, Context) ->
+    {Clause, Args} = case z_utils:is_empty(UserId) of
+                         true -> {"persistent = $1", [PersistentId]};
+                         false -> {"user_id = $1", [UserId]}
+                     end,
+    z_db:q("DELETE FROM survey_answer WHERE " ++ Clause ++ " and survey_id = $2", Args ++ [SurveyId], Context).

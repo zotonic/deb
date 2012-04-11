@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-06-11
+%% Date: 2009-06-11
 %% @doc Activate/dactivate a module
 
 %% Copyright 2009 Marc Worrell
@@ -38,7 +38,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Delete a media.  After the deletion the user is redirected, and/or some items on the page are faded out.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {module_toggle, Module, StatusId}, TriggerId, _TargetId}, Context) ->
+event(#postback{message={module_toggle, Module, StatusId}, trigger=TriggerId}, Context) ->
     case z_acl:is_allowed(use, mod_admin_modules, Context) of
         true ->
             Active = z_module_manager:active(Context),

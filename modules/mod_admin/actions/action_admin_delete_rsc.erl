@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-04-28
+%% Date: 2009-04-28
 %% @doc Delete a resource, no confirmation.
 
 %% Copyright 2009 Marc Worrell
@@ -38,7 +38,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Delete a resource.  After the deletion the user is redirected, and/or some items on the page are faded out.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {delete_rsc, Id, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={delete_rsc, Id, OnSuccess}}, Context) ->
     case z_acl:rsc_deletable(Id, Context) of
         true ->
             ok = m_rsc:delete(Id, Context),

@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009 Arjan Scherpenisse
-%% @date 2009-10-02
+%% Date: 2009-10-02
 %% @doc OAuth.
 
 %% Copyright 2009 Arjan Scherpenisse
@@ -75,7 +75,6 @@ init(Args) ->
 %%                                      {noreply, State, Timeout} |
 %%                                      {stop, Reason, Reply, State} |
 %%                                      {stop, Reason, State}
-%% Description: Handling call messages
 %% @doc Trap unknown calls
 handle_call(Message, _From, State) ->
     {stop, {unknown_call, Message}, State}.
@@ -143,7 +142,8 @@ check_request_logon(ReqData, Context) ->
                                                 {false, authenticate(Reason, ReqData, Context)};
                                             true ->
                                                 SigMethod = oauth_param("oauth_signature_method", ReqData),
-                                                case oauth:verify(Signature, "GET", URL, Params, to_oauth_consumer(Consumer, SigMethod), str_value(token_secret, Token)) of
+                                                case oauth:verify(Signature, atom_to_list(ReqData#wm_reqdata.method), URL,
+                                                                  Params, to_oauth_consumer(Consumer, SigMethod), str_value(token_secret, Token)) of
                                                     true ->
                                                         UID = int_value(user_id, Token),
                                                         Context1 = z_acl:logon(UID, Context),
@@ -295,6 +295,7 @@ test() ->
 %% Whether consumer with this Id is allowed to execute Service.
 %%
 is_allowed(Id, Service, Context) ->
-    lists:member(Service, m_oauth_perms:all_services_for(Id, Context)).
+    not(z_service:needauth(Service)) orelse
+        lists:member(Service, [proplists:get_value(service, S)
+                               || S <- m_oauth_perms:all_services_for(Id, Context)]).
 
-    

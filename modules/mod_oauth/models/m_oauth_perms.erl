@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009 Arjan Scherpenisse
-%% @date 2009-10-04
+%% Date: 2009-10-04
 %% @doc OAuth; API permission entry store.
 
 %% Copyright 2009 Arjan Scherpenisse
@@ -30,6 +30,7 @@
          m_to_list/2,
          m_value/2,
          get/2,
+         get_all/2,
          set/3,
          
          all_services_for/2,
@@ -53,7 +54,7 @@ m_find_value(Id, #m{value=humanreadable}, Context) ->
 
 
 %% @doc Transform a m_config value to a list, used for template loops
-%% @spec m_to_list(Source, Context)
+%% @spec m_to_list(Source, Context) -> list()
 m_to_list(#m{value=undefined}, Context) ->
     [ [{value, Val}, {title, Title}] || {Val, Title} <- z_service:all(authvalues, Context)].
 
@@ -75,7 +76,7 @@ get(Id, Context) ->
 %% *All* applicable permissions
 %%
 get_all(Id, Context) ->
-    [ z_service:serviceinfo(S) || S <- all_services_for(Id, Context)].
+    all_services_for(Id, Context).
 
 
 insert_all([], _Id, _Context) ->
@@ -99,10 +100,11 @@ set(Id, Perms, Context) ->
 %%
 %% Give all services which apply for this consumer
 %%
+%% TODO: Refactor: Should be done via z_notifier
 all_services_for(Id, Context) ->
     F = fun() ->
                 All = [ binary_to_list(z_db:get(perm, R)) || R <- get(Id, Context)],
-                lists:filter(fun(S) -> z_service:applies(All, S) end, z_service:all(Context))
+                lists:filter(fun(S) -> z_service:applies(All, proplists:get_value(method, S)) end, z_service:all(info, Context))
         end,
     z_depcache:memo(F, {z_services_for, Id}, ?WEEK, [z_services, {oauth_consumer, Id}], Context).
 
@@ -114,7 +116,7 @@ all_services_for(Id, Context) ->
 %% collapsed with respect to "*" syntax notation.
 %%
 humanreadable(Id, Context) ->
-    X = [[{desc, D}] || D <- human([string:tokens(binary_to_list(proplists:get_value(perm, R)), "/") || R <- get(Id, Context)])].
+    [[{desc, D}] || D <- human([string:tokens(binary_to_list(proplists:get_value(perm, R)), "/") || R <- get(Id, Context)])].
 
 
 human([]) ->
@@ -123,6 +125,6 @@ human([["*"]|_Rest]) ->
     ["Access to every aspect of your account"];
 human([[Module, "*"]|Rest]) ->
     Rest2 = lists:filter(fun([M,_]) -> not(M == Module) end, Rest),
-    [ "Access to the " ++ z_module_manager:title(list_to_atom("mod_" ++ Module)) ++ " module" | human(Rest2)];
+    [ "Access to the " ++ z_module_manager:title(z_service:api_prefix_to_module(Module)) ++ " module" | human(Rest2)];
 human([[Module, Part]|Rest]) ->
     [z_service:title(list_to_atom("service_" ++ Module ++ "_" ++ Part)) | human(Rest)].

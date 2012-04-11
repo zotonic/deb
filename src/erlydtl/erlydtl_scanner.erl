@@ -65,12 +65,12 @@ identifier_to_keyword({identifier, Pos, String}, {PrevToken, Acc}) when PrevToke
     %% At the start of a {% .... %} tag we accept all keywords
     RevString = lists:reverse(String),
     Keywords = ["for", "empty", "endfor", "in", "include", "catinclude", "block", "endblock",
-        "extends", "overrules", "inherit", "autoescape", "endautoescape", "if", "else", "endif",
+        "extends", "overrules", "inherit", "autoescape", "endautoescape", "if", "else", "elseif", "endif",
         "not", "or", "and", "xor", "comment", "endcomment", "cycle", "firstof",
         "ifchanged", "ifequal", "endifequal", "ifnotequal", "endifnotequal",
         "now", "regroup", "rsc", "spaceless", "endspaceless", "ssi", "templatetag",
         "load", "call", "with", "url", "print", "image", "image_url", "media", "_", "with", "endwith", 
-        "all", "lib", "cache", "endcache" ], 
+        "all", "lib", "cache", "endcache", "filter", "endfilter" ], 
     Type = case lists:member(RevString, Keywords) of
         true -> list_to_atom(RevString ++ "_keyword");
         _ ->    identifier
@@ -184,6 +184,12 @@ scan("#}-->" ++ T, Scanned, {SourceRef, Row, Column}, {in_comment, "#}-->"}) ->
 
 scan("#}" ++ T, Scanned, {SourceRef, Row, Column}, {in_comment, "#}"}) ->
     scan(T, Scanned, {SourceRef, Row, Column + 2}, in_text);
+
+scan("\r\n" ++ T, Scanned, {SourceRef, Row, _Column}, {in_comment, Closer}) ->
+    scan(T, Scanned, {SourceRef, Row+1, 1}, {in_comment, Closer});
+
+scan("\n" ++ T, Scanned, {SourceRef, Row, _Column}, {in_comment, Closer}) ->
+    scan(T, Scanned, {SourceRef, Row+1, 1}, {in_comment, Closer});
 
 scan([_ | T], Scanned, {SourceRef, Row, Column}, {in_comment, Closer}) ->
     scan(T, Scanned, {SourceRef, Row, Column + 1}, {in_comment, Closer});

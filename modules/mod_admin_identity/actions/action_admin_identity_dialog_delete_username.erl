@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-04-28
+%% Date: 2009-04-28
 %% @doc Open a dialog that asks confirmation to delete user credentials.
 
 %% Copyright 2009 Marc Worrell
@@ -38,7 +38,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the delete confirmation template. The next step will ask to delete the username from the user id.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {dialog_delete_username, Id, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={dialog_delete_username, Id, OnSuccess}}, Context) ->
     case z_acl:is_allowed(delete, Id, Context) of
         true ->
             case m_identity:get_username(Id, Context) of

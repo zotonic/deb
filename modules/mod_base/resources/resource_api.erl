@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009 Arjan Scherpenisse <arjan@scherpenisse.net>
-%% @date 2009-09-27
+%% Date: 2009-09-27
 %% @doc Entrypoint for API requests.
 
 %% Copyright 2009 Arjan Scherpenisse
@@ -45,51 +45,62 @@ service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
 
 allowed_methods(ReqData, Context) ->
     Context0 = ?WM_REQ(ReqData, Context),
-    Context1 = z_context:ensure_qs(Context0),
-    %% 'ping' the service to ensure we loaded all the existing services.
-    z_service:all(Context1),
-    TheMod   = z_context:get_q("module", Context1),
-    Method = case z_context:get(method_is_module, Context1) of
-                 true -> TheMod;
-                 _ -> z_context:get_q("method", Context1)
+    Context1 = z_context:ensure_qs(z_context:continue_session(Context0)),
+
+    TheMod = case z_context:get_q("module", Context1) of
+                 undefined -> z_convert:to_list(z_context:get(module, Context1));
+                 M -> M
              end,
+
+    Method = case z_context:get_q("method", Context1) of
+                 undefined ->
+                     case z_convert:to_list(z_context:get(method, Context1)) of
+                         [] -> 
+                             TheMod; %% method == module name
+                         M2 -> M2
+                     end;
+                 M3 -> M3
+             end,
+
     try
-        Module  = list_to_existing_atom("service_" ++ TheMod ++ "_" ++ Method),
+        {ok, Module}  = z_utils:ensure_existing_module("service_" ++ TheMod ++ "_" ++ Method),
         Context2 = z_context:set("module", Module, Context1),
-        Context3 = z_context:set("partial_method", Method, Context2),
         try
-            {z_service:http_methods(Module), ReqData, Context3}
+            {z_service:http_methods(Module), ReqData, Context2}
         catch
             _X:_Y ->
-                {['GET', 'HEAD', 'POST'], ReqData, Context3}
+                {['GET', 'HEAD', 'POST'], ReqData, Context2}
         end
     catch
         error: badarg ->
-            %% Not exists
+            %% The atom (service module) does not exist, return default methods.
             {['GET', 'HEAD', 'POST'], ReqData, Context1}
     end.
 
 
+%% TODO: refactor via z_notifier.
 is_authorized(ReqData, Context) ->
     %% Check if we are authorized via a regular session.
-    Context2 = z_context:ensure_all(?WM_REQ(ReqData, Context)),
+    Context0 = ?WM_REQ(ReqData, Context),
+    Context2 = z_context:ensure_qs(z_context:continue_session(Context0)),
+    
     case z_auth:is_auth(Context2) of
         true ->
             %% Yep; use these credentials.
             ?WM_REPLY(true, Context2);
-
         false ->
             %% No; see if we can use OAuth.
-            Module = z_context:get("module", Context),
-            case mod_oauth:check_request_logon(ReqData, Context) of
-                {none, Context} ->
+            Module = z_context:get("module", Context2),
+            case mod_oauth:check_request_logon(ReqData, Context2) of
+                {none, Context2} ->
                     case z_service:needauth(Module) of
                         false ->
                             %% No auth needed; so we're authorized.
                             {true, ReqData, Context2};
                         true ->
+			    ServiceInfo = z_service:serviceinfo(Module, Context2),			    
                             %% Authentication is required for this module...
-                            mod_oauth:authenticate(z_service:method(Module) ++ ": " ++ z_service:title(Module) ++ "\n\nThis API call requires authentication.", ReqData, Context2)
+                            mod_oauth:authenticate(proplists:get_value(method, ServiceInfo) ++ ": " ++ z_service:title(Module) ++ "\n\nThis API call requires authentication.", ReqData, Context2)
                     end;
 
                 {true, AuthorizedContext} ->
@@ -110,12 +121,20 @@ is_authorized(ReqData, Context) ->
 
 
 resource_exists(ReqData, Context) ->
-    Module = z_context:get("module", Context),
-    {lists:member(Module, z_service:all(Context)), ReqData, Context}.
+    Exists = case z_context:get("module", Context) of
+		 undefined -> false;
+		 ServiceModule ->
+		     case z_service:serviceinfo(ServiceModule, Context) of
+			 undefined -> false;
+			 _ -> true
+		     end
+	     end,
+    {Exists, ReqData, Context}.
 
 
 content_types_provided(ReqData, Context) ->
     {[{"application/json", to_json},
+      {"application/javascript", to_json},
       {"text/javascript", to_json}
      ], ReqData, Context}.
 
@@ -147,10 +166,14 @@ api_result(ReqData, Context, Result) ->
 
         Result2 ->
             try
-                {{halt, 200}, wrq:set_resp_body(mochijson:encode(Result2), ReqData), Context}
+                JSON = iolist_to_binary(mochijson:encode(Result2)),
+                Body = case get_callback(Context) of
+                           undefined -> JSON;
+                           Callback -> [ Callback, $(, JSON, $), $; ]
+                       end,
+                {{halt, 200}, wrq:set_resp_body(Body, ReqData), Context}
             catch
-                _E: R ->
-                    ?DEBUG(R),
+                _E:_R ->
                     ReqData1 = wrq:set_resp_body("Internal JSON encoding error.\n", ReqData),
                     {{halt, 500}, ReqData1, Context}
             end
@@ -170,3 +193,23 @@ process_post(ReqData, Context) ->
         Result ->
             api_result(ReqData, Context, Result)
     end.
+
+
+get_callback(Context) ->
+    case z_context:get_q("callback", Context) of
+        undefined -> 
+            filter(z_context:get_q("jsonp", Context));
+        Callback ->
+            filter(Callback)
+    end.
+
+filter(undefined) ->
+    undefined;
+filter(F) ->
+    [ C || C <- F,      (C >= $0 andalso C =< $9) 
+                 orelse (C >= $a andalso C =< $z)
+                 orelse (C >= $A andalso C =< $Z)
+                 orelse C =:= $_
+                 orelse C =:= $$
+    ].
+

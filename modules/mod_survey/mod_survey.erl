@@ -21,16 +21,18 @@
 
 -mod_title("Survey").
 -mod_description("Create and publish questionnaires.").
-
--export([init/1]).
+-mod_schema(1).
+-mod_depends([admin]).
+-mod_provides([survey, poll]).
 
 %% interface functions
 -export([
+	manage_schema/2,
     event/2,
     redraw_questions/2,
     new_question/1,
     delete_question/3,
-    
+
     render_next_page/6,
     question_to_props/1,
     module_name/1
@@ -39,27 +41,28 @@
 -include_lib("zotonic.hrl").
 -include("survey.hrl").
 
-%% @doc Initilize the data model.
-init(Context) ->
-    m_survey:install(Context),
-    z_datamodel:manage(?MODULE, datamodel(), Context).
+
+%% @doc Schema for mod_survey lives in separate module
+manage_schema(What, Context) ->
+    mod_survey_schema:manage_schema(What, Context).
+
 
 %% @doc Handle drag/drop events from the survey admin
-event({sort, Items, {dragdrop, {survey, [{id,Id}]}, _Delegate, "survey"}}, Context) ->
+event(#sort{items=Items, drop={dragdrop, {survey, [{id,Id}]}, _Delegate, "survey"}}, Context) ->
     event_sort(Id, Items, Context);
 
-event({postback, {survey_start, Args}, _, _}, Context) ->
+event(#postback{message={survey_start, Args}}, Context) ->
     {id, SurveyId} = proplists:lookup(id, Args),
     render_update(render_next_page(SurveyId, 1, exact, [], [], Context), Args, Context);
 
-event({submit, {survey_next, Args}, _, _}, Context) ->
+event(#submit{message={survey_next, Args}}, Context) ->
     {id, SurveyId} = proplists:lookup(id, Args),
     {page_nr, PageNr} = proplists:lookup(page_nr, Args),
     {answers, Answers} = proplists:lookup(answers, Args),
     {history, History} = proplists:lookup(history, Args),
     render_update(render_next_page(SurveyId, PageNr+1, forward, Answers, History, Context), Args, Context);
 
-event({postback, {survey_back, Args}, _, _}, Context) ->
+event(#postback{message={survey_back, Args}}, Context) ->
     {id, SurveyId} = proplists:lookup(id, Args),
     % {page_nr, PageNr} = proplists:lookup(page_nr, Args),
     {answers, Answers} = proplists:lookup(answers, Args),
@@ -69,7 +72,16 @@ event({postback, {survey_back, Args}, _, _}, Context) ->
             render_update(render_next_page(SurveyId, PageNr, exact, Answers, History1, Context), Args, Context);
         _History ->
             render_update(render_next_page(SurveyId, 0, exact, Answers, [], Context), Args, Context)
-    end.
+    end;
+
+event(#postback{message={survey_remove_result, [{id, SurveyId}, {persistent_id, PersistentId}, {user_id, UserId}]}}, Context) ->
+    m_survey:delete_result(SurveyId, UserId, PersistentId, Context),
+    Target = "survey-result-"++z_convert:to_list(UserId)++"-"++z_convert:to_list(PersistentId),
+	z_render:wire([ {growl, [{text, ?__("Survey result deleted.", Context)}]},
+					{slide_fade_out, [{target, Target}]}
+				], Context).
+
+
 
 
 
@@ -184,36 +196,42 @@ render_next_page(Id, PageNr, Direction, Answers, History, Context) ->
     Answers2 = Answers1 ++ As,
     case m_rsc:p(Id, survey, Context) of
         {survey, QuestionIds, Questions} ->
-            Qs = [ proplists:get_value(QId, Questions) || QId <- QuestionIds ],
-            Qs1 = [ Q || Q <- Qs, Q /= undefined ],
+            Qs1 = [ Q || {_, Question}=Q <- Questions, Question /= undefined ],
 
             case go_page(PageNr, Qs1, Answers2, Direction, Context) of
                 {L,NewPageNr} when is_list(L) ->
                     % A new list of questions, PageNr might be another than expected
                     Vars = [ {id, Id},
+                             {q, As},
                              {page_nr, NewPageNr},
-                             {questions, [ question_to_props(Q) || Q <- L ]},
+                             {question_ids, QuestionIds},
+                             {questions, [ {QId, [{id, QId} | question_to_props(Q)]} || {QId, Q} <- L ]},
                              {pages, count_pages(Qs1)},
                              {answers, Answers2},
                              {history, [NewPageNr|History]}],
                     #render{template="_survey_question_page.tpl", vars=Vars};
                 last ->
-                    % That was the last page. Show a thank you and save the result.
-                    case do_submit(Id, QuestionIds, Questions, Answers2, Context) of
-                        ok ->
-                            case z_convert:to_bool(m_rsc:p(Id, survey_show_results, Context)) of
-                                true ->
-                                    #render{template="_survey_results.tpl", vars=[{id,Id}, {inline, true}, {history,History}]};
-                                false ->
-                                    #render{template="_survey_end.tpl", vars=[{id,Id}, {history,History}]}
-                            end;
-                        {error, _Reason} ->
-                            #render{template="_survey_error.tpl", vars=[{id,Id}, {history,History}]}
+                    case z_session:get(mod_survey_editing, Context) of
+                        {U, P} -> 
+                            admin_edit_survey_result(Id, U, P, QuestionIds, Questions, Answers2, Context);
+                        _ ->
+                            %% That was the last page. Show a thank you and save the result.
+                            case do_submit(Id, QuestionIds, Questions, Answers2, Context) of
+                                ok ->
+                                    case z_convert:to_bool(m_rsc:p(Id, survey_show_results, Context)) of
+                                        true ->
+                                            #render{template="_survey_results.tpl", vars=[{id,Id}, {inline, true}, {history,History}, {q, As}]};
+                                        false ->
+                                            #render{template="_survey_end.tpl", vars=[{id,Id}, {history,History}, {q, As}]}
+                                    end;
+                                {error, _Reason} ->
+                                    #render{template="_survey_error.tpl", vars=[{id,Id}, {history,History}, {q, As}]}
+                            end
                     end
             end;
         _NoSurvey ->
             % No survey defined, show an error page.
-            #render{template="_survey_empty.tpl", vars=[{id,Id}]}
+            #render{template="_survey_empty.tpl", vars=[{id,Id}, {q, As}]}
     end.
 
 
@@ -245,7 +263,7 @@ render_next_page(Id, PageNr, Direction, Answers, History, Context) ->
         eval_page_jumps(fetch_page(Nr, Qs), Answers, Context).
 
 
-    eval_page_jumps({[#survey_question{type=pagebreak} = Q|L],Nr}, Answers, Context) ->
+    eval_page_jumps({[{_Id, #survey_question{type=pagebreak} = Q}|L],Nr}, Answers, Context) ->
         case survey_q_pagebreak:test(Q, Answers, Context) of
             ok -> 
                 eval_page_jumps({L,Nr}, Answers, Context);
@@ -264,11 +282,11 @@ render_next_page(Id, PageNr, Direction, Answers, History, Context) ->
 
     fetch_question_name([], _Name, Nr, _State) ->
         {[], Nr};
-    fetch_question_name([#survey_question{name=Name}|_] = Qs, Name, Nr, _State) ->
+    fetch_question_name([{_, #survey_question{name=Name}}|_] = Qs, Name, Nr, _State) ->
         {Qs, Nr};
-    fetch_question_name([#survey_question{type=pagebreak}|Qs], Name, Nr, in_q) ->
+    fetch_question_name([{_, #survey_question{type=pagebreak}}|Qs], Name, Nr, in_q) ->
         fetch_question_name(Qs, Name, Nr+1, in_pagebreak);
-    fetch_question_name([#survey_question{type=pagebreak}|Qs], Name, Nr, in_pagebreak) ->
+    fetch_question_name([{_, #survey_question{type=pagebreak}}|Qs], Name, Nr, in_pagebreak) ->
         fetch_question_name(Qs, Name, Nr, in_pagebreak);
     fetch_question_name([_|Qs], Name, Nr, _State) ->
         fetch_question_name(Qs, Name, Nr, in_q).
@@ -286,9 +304,9 @@ render_next_page(Id, PageNr, Direction, Answers, History, Context) ->
         last;
     fetch_page(N, Nr, L) when N >= Nr ->
         {L, N};
-    fetch_page(N, Nr, [#survey_question{type=pagebreak}|_] = L) when N == Nr - 1 ->
+    fetch_page(N, Nr, [{_Id, #survey_question{type=pagebreak}}|_] = L) when N == Nr - 1 ->
         {L, Nr};
-    fetch_page(N, Nr, [#survey_question{type=pagebreak}|L]) when N < Nr ->
+    fetch_page(N, Nr, [{_Id, #survey_question{type=pagebreak}}|L]) when N < Nr ->
         L1 = lists:dropwhile(fun(#survey_question{type=pagebreak}) -> true; (_) -> false end, L),
         fetch_page(N+1, Nr, L1);
     fetch_page(N, Nr, [_|L]) ->
@@ -314,7 +332,7 @@ do_submit(SurveyId, QuestionIds, Questions, Answers, Context) ->
     case Missing of
         [] ->
             m_survey:insert_survey_submission(SurveyId, FoundAnswers, Context),
-            z_notifier:notify({survey_submit, SurveyId, FoundAnswers}, Context),
+            z_notifier:notify(#survey_submit{id=SurveyId, answers=FoundAnswers}, Context),
             ok;
         _ -> 
             {error, notfound}
@@ -322,7 +340,7 @@ do_submit(SurveyId, QuestionIds, Questions, Answers, Context) ->
 
 
 %% @doc Collect all answers, report any missing answers.
-%% @type collect_answers(proplist(), Context) -> {AnswerList, MissingIdsList}
+%% @spec collect_answers(list(), proplist(), Context) -> {AnswerList, MissingIdsList}
 collect_answers(QIds, Qs, Answers) ->
     collect_answers(QIds, Qs, Answers, [], []).
 
@@ -333,10 +351,27 @@ collect_answers([QId|QIds], Qs, Answers, FoundAnswers, Missing) ->
     Q = proplists:get_value(QId, Qs),
     Module = module_name(Q),
     case Module:answer(Q, Answers) of
-        {ok, none} -> collect_answers(QIds, Qs, Answers, FoundAnswers, Missing);
-        {ok, AnswerList} -> collect_answers(QIds, Qs, Answers, [{QId, AnswerList}|FoundAnswers], Missing);
-        {error, missing} -> collect_answers(QIds, Qs, Answers, FoundAnswers, [QId|Missing])
+        {ok, none} ->
+            collect_answers(QIds, Qs, Answers, FoundAnswers, Missing);
+        {ok, AnswerList} -> 
+            collect_answers(QIds, Qs, Answers, [{QId, AnswerList}|FoundAnswers], Missing);
+        {error, missing} -> 
+            case Q#survey_question.is_required of
+                true ->
+                    collect_answers(QIds, Qs, Answers, FoundAnswers, [QId|Missing]);
+                false ->
+                    collect_answers(QIds, Qs, Answers, FoundAnswers, Missing)
+            end
     end.
+
+%% @doc Save the modified survey results
+admin_edit_survey_result(Id, U, P, QuestionIds, Questions, Answers, Context) ->
+    z_session:set(mod_survey_editing, undefined, Context),
+    {FoundAnswers, _Missing} = collect_answers(QuestionIds, Questions, Answers),
+    m_survey:insert_survey_submission(Id, U, P, FoundAnswers, Context),
+    Context1 = z_render:dialog_close(Context),
+    z_render:update("survey-results", z_template:render("_admin_survey_editor_results.tpl", [{id, Id}], Context), Context1).
+
 
 module_name(L) when is_list(L) ->
     module_name(list_to_atom(L));
@@ -344,15 +379,3 @@ module_name(Type) when is_atom(Type) ->
     module_name(#survey_question{type=Type});
 module_name(#survey_question{type=Type}) ->
     list_to_atom("survey_q_"++atom_to_list(Type)).
-
-
-
-datamodel() ->
-    [
-        {categories, [
-                {survey, undefined, [{title, "Survey"}]},
-                {poll, survey, [{title, "Poll"}]}
-            ]}
-    ].
-
-

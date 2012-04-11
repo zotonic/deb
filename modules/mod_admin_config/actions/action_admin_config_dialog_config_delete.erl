@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-08-07
+%% Date: 2009-08-07
 %% @doc Open a dialog that asks confirmation to delete a configuration.
 
 %% Copyright 2009 Marc Worrell
@@ -39,7 +39,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the delete confirmation template. The next step will ask to delete the config.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {delete_config_dialog, Module, Key, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={delete_config_dialog, Module, Key, OnSuccess}}, Context) ->
     case z_acl:is_allowed(use, mod_admin_config, Context) of
         true ->
             Vars = [ {on_success, OnSuccess}, {module, Module}, {key, Key} ],

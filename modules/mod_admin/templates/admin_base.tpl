@@ -15,6 +15,7 @@
 		"css/zp-growl.css"
 		"css/zp-datepicker.css"
 		"css/zp-icon-status.css"
+		"css/zp-menuedit.css"
 		"css/jquery.loadmask.css"
 	%}
 
@@ -24,8 +25,10 @@
 			"css/zp-ie.css"
 		%}
 	<![endif]-->
+    {% block head_extra %}
+    {% endblock %}
 </head>
-<body class="zp-wide">
+<body class="zp-wide" {#{% include "_language_attrs.tpl" language=z_language %}#}>
 	<div class="skip">
 		<a href="#content" title="Go directly to page content">Go to page content</a>
 	</div>

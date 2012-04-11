@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2010 Marc Worrell
-%% @date 2010-05-12
+%% Date: 2010-05-12
 %% @doc Display a form to sign up.
 
 %% Copyright 2010 Marc Worrell
@@ -61,7 +61,7 @@ provide_content(ReqData, Context) ->
 
 
 %% @doc Handle the submit of the signup form.
-event({submit, {signup, [{xs_props,Xs}]}, "signup_form", _Target}, Context) ->
+event(#submit{message={signup, [{xs_props,Xs}]}, form="signup_form"}, Context) ->
     {XsProps0,XsSignupProps} = case Xs of
         {A,B} -> {A,B};
         undefined -> {undefined, undefined}
@@ -109,13 +109,13 @@ event({submit, {signup, [{xs_props,Xs}]}, "signup_form", _Target}, Context) ->
             undefined ->
                 V = case Validated of
                     true -> z_context:get_q_validated(Prop, Context);
-                    false -> z_context:get_q(Prop, Context, "")
+                    false -> z_context:get_q(Prop, Context)
                 end,
                 V1 = case {V,Prop} of
-                    {undefined, name_surname_prefix} -> z_context:get_q("surprefix", Context, "");
+                    {undefined, name_surname_prefix} -> z_context:get_q("surprefix", Context);
                     _ -> V
                 end,
-                z_string:trim(V1);
+                z_string:trim(z_convert:to_list(V1));
             V -> V
         end.
     
@@ -139,7 +139,7 @@ signup(Props, SignupProps, RequestConfirm, Context) ->
                     {ok, ContextUser} = z_auth:logon(UserId, Context),
                     Location = case z_convert:to_list(proplists:get_value(ready_page, SignupProps, [])) of
                         [] -> 
-                            case z_notifier:first({signup_confirm_redirect, UserId}, ContextUser) of
+                            case z_notifier:first(#signup_confirm_redirect{id=UserId}, ContextUser) of
                                 undefined -> m_rsc:p(UserId, page_url, ContextUser);
                                 Loc -> Loc
                             end;

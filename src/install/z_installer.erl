@@ -99,6 +99,8 @@ upgrade(Name, Database, Schema) ->
 	ok = install_persist(Name, Database, Schema),
 	ok = drop_visitor(Name, Database, Schema),
 	ok = extent_mime(Name, Database, Schema),
+    ok = install_task_due(Name, Database, Schema),
+    ok = install_module_schema_version(Name, Database, Schema),
     ok.
 
 
@@ -203,6 +205,37 @@ install_identity_verify_key(Name, Database, Schema) ->
             pgsql:squery(C, "alter table identity "
                             "add column verify_key character varying(32), "
                             "add constraint identity_verify_key_unique UNIQUE (verify_key)"),
+            {ok, [], []} = pgsql:squery(C, "COMMIT"),
+            pgsql_pool:return_connection(Name, C),
+            ok
+    end.
+
+
+install_task_due(Name, Database, Schema) ->
+    case has_column("pivot_task_queue", "due", Name, Database, Schema) of
+        true -> 
+            ok;
+        false ->
+            {ok, C}  = pgsql_pool:get_connection(Name),
+            {ok, [], []} = pgsql:squery(C, "BEGIN"),
+            pgsql:squery(C, "alter table pivot_task_queue "
+                            "add column due timestamp "),
+            {ok, [], []} = pgsql:squery(C, "COMMIT"),
+            pgsql_pool:return_connection(Name, C),
+            ok
+    end.
+
+
+install_module_schema_version(Name, Database, Schema) ->
+    case has_column("module", "schema_version", Name, Database, Schema) of
+        true -> 
+            ok;
+        false ->
+            {ok, C}  = pgsql_pool:get_connection(Name),
+            {ok, [], []} = pgsql:squery(C, "BEGIN"),
+            pgsql:squery(C, "alter table module add column schema_version int "),
+            Predefined = ["mod_twitter", "mod_mailinglist", "mod_menu", "mod_survey", "mod_acl_simple_roles", "mod_contact"],
+            [{ok, _} = pgsql:equery(C, "UPDATE module SET schema_version=1 WHERE name=$1 AND is_active=true", [M]) || M <- Predefined],
             {ok, [], []} = pgsql:squery(C, "COMMIT"),
             pgsql_pool:return_connection(Name, C),
             ok

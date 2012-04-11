@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-11-23
+%% Date: 2009-11-23
 %% @doc Mailinglist implementation. Enables to send pages to a list of recipients.
 
 %% Copyright 2009-2011 Marc Worrell
@@ -24,6 +24,9 @@
 -mod_title("Mailing list").
 -mod_description("Mailing lists. Send a page to a list of recipients.").
 -mod_prio(600).
+-mod_schema(1).
+-mod_depends([admin]).
+-mod_provides([mailinglist]).
 
 %% gen_server exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -31,11 +34,11 @@
 
 %% interface functions
 -export([
+	manage_schema/2,
 	observe_search_query/2,
 	observe_mailinglist_message/2,
 	observe_email_bounced/2,
 	event/2,
-	datamodel/1,
 	page_attachments/2
 ]).
 
@@ -43,36 +46,9 @@
 
 -record(state, {context}).
 
-
 %% @doc Install the tables needed for the mailinglist and return the rsc datamodel.
-datamodel(Context) ->
-    m_mailinglist:init_tables(Context),
-    [
-        {categories, [
-            {mailinglist, undefined, [
-                            {title, "Mailing list"},
-                            {summary, "Mailing lists are used to send pages to groups of people."}
-                        ]}
-        ]},
-
-        % Any resource with an e-mail address can be a subscriber of a mailinglist
-        {predicates, [
-            {subscriberof,
-                 [{title, <<"Subscriber of">>}],
-                 [{person, mailinglist}, {location, mailinglist}]},
-             {exsubscriberof,
-                  [{title, <<"Ex-subscriber of">>}],
-                  [{person, mailinglist}, {location, mailinglist}]}
-        ]},
-
-        {resources, [
-            {mailinglist_test, mailinglist, [
-                            {visible_for, 1},
-                            {title, "Test mailing list"},
-                            {summary, "This list is used for testing. Anyone who can see this mailing list can post to it. It should not be visible for the world."}
-                        ]}
-        ]}
-    ].
+manage_schema(What, Context) ->
+    mod_mailinglist_schema:manage_schema(What, Context).
 
 
 observe_search_query({search_query, {mailinglist_recipients, [{id,Id}]}, _OffsetLimit}, _Context) ->
@@ -98,12 +74,12 @@ observe_search_query(_, _) ->
 
 
 %% @doc Send status messages to a recipient.
-observe_mailinglist_message({mailinglist_message, silent, _ListId, _Email}, _Context) ->
+observe_mailinglist_message(#mailinglist_message{what=silent}, _Context) ->
 	ok;
-observe_mailinglist_message({mailinglist_message, send_goodbye, ListId, Email}, Context) ->
+observe_mailinglist_message(#mailinglist_message{what=send_goodbye, list_id=ListId, recipient=Email}, Context) ->
 	z_email:send_render(Email, "email_mailinglist_goodbye.tpl", [{list_id, ListId}, {email, Email}], Context),
 	ok;
-observe_mailinglist_message({mailinglist_message, Message, ListId, RecipientId}, Context) ->
+observe_mailinglist_message(#mailinglist_message{what=Message, list_id=ListId, recipient=RecipientId}, Context) ->
 	Template = case Message of
 		send_welcome -> "email_mailinglist_welcome.tpl";
 		send_confirm -> "email_mailinglist_confirm.tpl"
@@ -114,14 +90,14 @@ observe_mailinglist_message({mailinglist_message, Message, ListId, RecipientId},
 
 
 %% @doc When an e-mail bounces, disable the corresponding recipients and mark them as bounced.
-observe_email_bounced({email_bounced, _MsgId, Email}, Context) ->
-    Recipients = m_mailinglist:get_recipients_by_email(Email, Context),
+observe_email_bounced(B=#email_bounced{}, Context) ->
+    Recipients = m_mailinglist:get_recipients_by_email(B#email_bounced.recipient, Context),
     lists:foreach(fun(Id) -> m_mailinglist:update_recipient(Id, [{is_enabled, false}, {is_bounced, true}, {bounce_time, calendar:local_time()}], Context) end, Recipients),
     undefined. %% Let other bounce handlers do their thing
 
 
 %% @doc Request confirmation of canceling this mailing.
-event({postback, {dialog_mailing_cancel_confirm, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={dialog_mailing_cancel_confirm, Args}}, Context) ->
 	MailingId = proplists:get_value(list_id, Args),
 	case z_acl:rsc_editable(MailingId, Context) of
 		true ->
@@ -129,7 +105,7 @@ event({postback, {dialog_mailing_cancel_confirm, Args}, _TriggerId, _TargetId}, 
 		false ->
 			z_render:growl_error("You are not allowed to cancel this mailing.", Context)
 	end;
-event({postback, {mailing_cancel, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={mailing_cancel, Args}}, Context) ->
 	MailingId = proplists:get_value(list_id, Args),
 	PageId = proplists:get_value(page_id, Args),
 	case z_acl:rsc_editable(MailingId, Context) of
@@ -140,7 +116,7 @@ event({postback, {mailing_cancel, Args}, _TriggerId, _TargetId}, Context) ->
 		false ->
 			z_render:growl_error("You are not allowed to cancel this mailing.", Context)
 	end;
-event({postback, {mailinglist_reset, Args}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={mailinglist_reset, Args}}, Context) ->
 	MailingId = proplists:get_value(list_id, Args),
 	PageId = proplists:get_value(page_id, Args),
 	case z_acl:rsc_editable(MailingId, Context) of
@@ -153,7 +129,7 @@ event({postback, {mailinglist_reset, Args}, _TriggerId, _TargetId}, Context) ->
 	end;
 
 %% @doc Handle upload of a new recipients list
-event({submit, {mailinglist_upload,[{id,Id}]}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={mailinglist_upload,[{id,Id}]}}, Context) ->
     #upload{tmpfile=TmpFile} = z_context:get_q_validated("file", Context),
     case import_file(TmpFile, Id, Context) of
         ok ->
@@ -163,15 +139,16 @@ event({submit, {mailinglist_upload,[{id,Id}]}, _TriggerId, _TargetId}, Context) 
     end;
 
 %% @doc Handle the test-sending of a page to a single address.
-event({submit, {mailing_testaddress, [{id, PageId}]}, _, _}, Context) ->
+event(#submit{message={mailing_testaddress, [{id, PageId}]}}, Context) ->
     Email = z_context:get_q_validated("email", Context),
-    z_notifier:notify({mailinglist_mailing, {single_test_address, Email}, PageId}, Context),
-    Context1 = z_render:growl("Sending the page to " ++ Email ++ "...", Context),
+    z_notifier:notify(#mailinglist_mailing{list_id={single_test_address, Email}, page_id=PageId}, Context),
+    Context1 = z_render:growl(?__("Sending the page to ", Context) ++ Email ++ "...", Context),
     z_render:wire([{dialog_close, []}], Context1);
 
+
 %% @doc Handle the test-sending of a page to a single address.
-event({postback, {resend_bounced, [{list_id, ListId}, {id, PageId}]}, _, _}, Context) ->
-    z_notifier:notify({mailinglist_mailing, {resend_bounced, ListId}, PageId}, Context),
+event(#postback{message={resend_bounced, [{list_id, ListId}, {id, PageId}]}}, Context) ->
+    z_notifier:notify(#mailinglist_mailing{list_id={resend_bounced, ListId}, page_id=PageId}, Context),
     case length(m_mailinglist:get_bounced_recipients(ListId, Context)) of
         0 ->
             z_render:growl_error(?__("No addresses selected", Context), Context);
@@ -214,7 +191,6 @@ init(Args) ->
 %%                                      {noreply, State, Timeout} |
 %%                                      {stop, Reason, Reply, State} |
 %%                                      {stop, Reason, State}
-%% Description: Handling call messages
 %% @doc Handle a dropbox file with recipients.
 handle_call({{dropbox_file, File}, _SenderContext}, _From, State) ->
 	GetFiles = fun() ->
@@ -250,7 +226,7 @@ handle_call(Message, _From, State) ->
 %%                                  {noreply, State, Timeout} |
 %%                                  {stop, Reason, State}
 %% @doc Send a mailing.
-handle_cast({{mailinglist_mailing, ListId, PageId}, SenderContext}, State) ->
+handle_cast({#mailinglist_mailing{list_id=ListId, page_id=PageId}, SenderContext}, State) ->
 	send_mailing(ListId, PageId, SenderContext),
 	{noreply, State};
 	
@@ -332,17 +308,16 @@ send_mailing_process({resend_bounced, ListId}, PageId, Context) ->
     send_mailing_process(ListId, m_mailinglist:get_bounced_recipients(ListId, Context), PageId, Context);
 
 send_mailing_process(ListId, PageId, Context) ->
-    send_mailing_process(ListId, m_mailinglist:get_enabled_recipients(ListId, Context), PageId, Context).
+    Recipients = m_mailinglist:get_enabled_recipients(ListId, Context) ++ m_edge:subjects(ListId, subscriberof, Context),
+    send_mailing_process(ListId, Recipients, PageId, Context).
 
 send_mailing_process(ListId, Recipients, PageId, Context) ->
     m_mailinglist:reset_bounced(ListId, Context),
-    SubscribersOf = m_edge:subjects(ListId, subscriberof, Context),
-    {Direct,Queued} = split_list(20, Recipients ++ SubscribersOf),
+    {Direct,Queued} = split_list(20, Recipients),
     From = m_mailinglist:get_email_from(ListId, Context),
     Options = [
         {id,PageId}, {list_id, ListId}, {email_from, From}
     ],
-    
     [ send(true, Email, From, Options, Context) || Email <- Direct ],
     [ send(false, Email, From, Options, Context) || Email <- Queued ],
     ok.

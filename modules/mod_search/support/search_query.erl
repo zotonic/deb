@@ -1,6 +1,6 @@
 %% @author Arjan Scherpenisse <arjan@scherpenisse.net>
 %% @copyright 2009-2010 Arjan Scherpenisse
-%% @date 2009-04-12
+%% Date: 2009-04-12
 %% @doc Handler for m.search[{query, Args..}]
 
 %%
@@ -74,7 +74,10 @@ parse_query_text(Text) ->
 request_arg("authoritative")       -> authoritative;
 request_arg("cat")                 -> cat;
 request_arg("cat_exclude")         -> cat_exclude;
+request_arg("creator_id")          -> creator_id;
+request_arg("modifier_id")         -> modifier_id;
 request_arg("custompivot")         -> custompivot;
+request_arg("id_exclude")          -> id_exclude;
 request_arg("hasobject")           -> hasobject;
 request_arg("hasobjectpredicate")  -> hasobjectpredicate;
 request_arg("hassubject")          -> hassubject;
@@ -138,6 +141,16 @@ parse_query([{cat_exclude, Cats}|Rest], Context, Result) ->
     Cats2 = add_or_append("rsc", Cats1, Result#search_sql.cats_exclude),
     Tables1 = Result#search_sql.tables,
     parse_query(Rest, Context, Result#search_sql{cats_exclude=Cats2, tables=Tables1});
+
+%% id_exclude=resource-id
+%% Exclude an id from the result
+parse_query([{id_exclude, Id}|Rest], Context, Result)  when is_integer(Id) ->
+    Result1 = add_where("rsc.id <> " ++ integer_to_list(Id), Result),
+    parse_query(Rest, Context, Result1);
+
+parse_query([{id_exclude, _Id}|Rest], Context, Result)  ->
+    parse_query(Rest, Context, Result);
+
 
 %% hassubject=[id]
 %% Give all things which have an incoming edge to Id
@@ -230,18 +243,18 @@ parse_query([{is_published, Boolean}|Rest], Context, Result) ->
         "all" ->
             parse_query(Rest, Context, Result1);
         _ ->
-            case z_convert:to_bool(Boolean) of
-                true ->
-                    Result2 = add_where("rsc.is_published and "
-                                    "rsc.publication_start <= now() and "
-                                    "rsc.publication_end >= now()",
-                                    Result1);
-                false ->
-                    Result2 = add_where("(not rsc.is_published or "
-                                    "rsc.publication_start > now() or "
-                                    "rsc.publication_end < now())",
-                                    Result1)
-            end,
+            Result2 = case z_convert:to_bool(Boolean) of
+                          true ->
+                              add_where("rsc.is_published and "
+                                        "rsc.publication_start <= now() and "
+                                        "rsc.publication_end >= now()",
+                                        Result1);
+                          false ->
+                              add_where("(not rsc.is_published or "
+                                        "rsc.publication_start > now() or "
+                                        "rsc.publication_end < now())",
+                                        Result1)
+                      end,
             parse_query(Rest, Context, Result2)
     end;
 
@@ -253,12 +266,12 @@ parse_query([{is_public, Boolean}|Rest], Context, Result) ->
         "all" ->
             parse_query(Rest, Context, Result);
         _ ->
-            case z_convert:to_bool(Boolean) of
-                true ->
-                    Result2 = add_where("rsc.visible_for = 0", Result);
-                false ->
-                    Result2 = add_where("rsc.visible_for > 0", Result)
-            end,
+            Result2 = case z_convert:to_bool(Boolean) of
+                          true ->
+                              add_where("rsc.visible_for = 0", Result);
+                          false ->
+                              add_where("rsc.visible_for > 0", Result)
+                      end,
             parse_query(Rest, Context, Result2)
     end;
 
@@ -286,6 +299,20 @@ parse_query([{ongoing, Boolean}|Rest], Context, Result) ->
 parse_query([{authoritative, Boolean}|Rest], Context, Result) ->
     {Arg, Result1} = add_arg(z_convert:to_bool(Boolean), Result),
      Result2 = add_where("rsc.is_authoritative = " ++ Arg, Result1),
+     parse_query(Rest, Context, Result2);
+
+%% creator_id=<rsc id>
+%% Filter on items which are created by <rsc id>
+parse_query([{creator_id, Integer}|Rest], Context, Result) ->
+    {Arg, Result1} = add_arg(z_convert:to_integer(Integer), Result),
+     Result2 = add_where("rsc.creator_id = " ++ Arg, Result1),
+     parse_query(Rest, Context, Result2);
+
+%% modifier_id=<rsc id>
+%% Filter on items which are last modified by <rsc id>
+parse_query([{modifier_id, Integer}|Rest], Context, Result) ->
+    {Arg, Result1} = add_arg(z_convert:to_integer(Integer), Result),
+     Result2 = add_where("rsc.modifier_id = " ++ Arg, Result1),
      parse_query(Rest, Context, Result2);
 
 %% query_id=<rsc id>

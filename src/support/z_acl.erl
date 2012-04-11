@@ -24,6 +24,7 @@
 	is_allowed/3,
 
 	rsc_visible/2,
+        rsc_prop_visible/3,
 	rsc_editable/2,
 	rsc_deletable/2,
 
@@ -57,11 +58,21 @@ is_allowed(_Action, _Object, #context{acl=admin}) ->
 is_allowed(_Action, _Object, #context{user_id=?ACL_ADMIN_USER_ID}) ->
     true;
 is_allowed(Action, Object, Context) ->
-    case z_notifier:first({acl_is_allowed, Action, Object}, Context) of
+    case z_notifier:first(#acl_is_allowed{action=Action, object=Object}, Context) of
         undefined -> false;
         Other -> Other
     end.
 
+%% @doc Check if an action on a property of a resource is allowed for the current actor.
+is_allowed_prop(_Action, _Object, _Property, #context{acl=admin}) ->
+    true;
+is_allowed_prop(_Action, _Object, _Property, #context{user_id=?ACL_ADMIN_USER_ID}) ->
+    true;
+is_allowed_prop(Action, Object, Property, Context) ->
+    case z_notifier:first(#acl_is_allowed_prop{action=Action, object=Object, prop=Property}, Context) of
+        undefined -> true; % Note, the default behaviour is different for props!
+        Other -> Other
+    end.
 
 %% @doc Check if the resource is visible for the current user
 rsc_visible(Id, #context{user_id=UserId}) when Id == UserId andalso is_integer(UserId) ->
@@ -85,6 +96,28 @@ rsc_visible(Id, Context) ->
 		false ->
 			is_allowed(view, Id, Context)
 	end.
+
+%% @doc Check if a property of the resource is visible for the current user
+rsc_prop_visible(Id, _Property, #context{user_id=UserId}) when Id == UserId andalso is_integer(UserId) ->
+    true;
+rsc_prop_visible(_Id, _Property, #context{user_id=?ACL_ADMIN_USER_ID}) ->
+    true;
+rsc_prop_visible(_Id, _Property, #context{acl=admin}) ->
+    true;
+rsc_prop_visible(Id, Property, Context) ->
+    case z_memo:is_enabled(Context) of
+        true ->
+                case z_memo:get({rsc_prop_visible, Id, Property}) of
+                        undefined ->
+                                Visible = is_allowed_prop(view, Id, Property, Context),
+                                z_memo:set({rsc_prop_visible, Id, Property}, Visible),
+                                Visible;
+                        Visible ->
+                                Visible
+                end;
+        false ->
+                is_allowed_prop(view, Id, Property, Context)
+    end.
 
 %% @doc Check if the resource is editable by the current user
 rsc_editable(_Id, #context{user_id=undefined}) ->
@@ -111,7 +144,7 @@ rsc_deletable(Id, Context) ->
 
 %% @doc Filter the properties of an update.  This is before any escaping.
 rsc_update_check(Id, Props, Context) ->
-	z_notifier:foldl({acl_rsc_update_check, Id}, Props, Context).
+	z_notifier:foldl(#acl_rsc_update_check{id=Id}, Props, Context).
 		
 
 %% @doc Set the acl fields of the context for the 'visible_for' setting.  Used when rendering scomps.
@@ -125,7 +158,7 @@ set_visible_for(?ACL_VIS_COMMUNITY, Context) ->
     Context#context{user_id=?ACL_ANONYMOUS_USER_ID, acl=undefined};
 set_visible_for(?ACL_VIS_GROUP, Context) ->
     Context#context{acl=undefined};
-set_visible_for(_VIS_USER, Context) ->
+set_visible_for(?ACL_VIS_USER, Context) ->
     Context.
 
 
@@ -139,7 +172,7 @@ can_see(#context{acl=admin}) ->
 can_see(#context{user_id=?ACL_ANONYMOUS_USER_ID}) ->
     ?ACL_VIS_COMMUNITY;
 can_see(Context) ->
-	case z_notifier:first({acl_can_see}, Context) of
+	case z_notifier:first(#acl_can_see{}, Context) of
 		undefined -> [];
 		CanSee -> CanSee
 	end.
@@ -217,7 +250,7 @@ anondo(Context) ->
 %% @doc Log the user with the id on, fill the acl field of the context
 %% @spec logon(integer(), #context{}) -> #context{}
 logon(Id, Context) ->
-	case z_notifier:first({acl_logon, Id}, Context) of
+	case z_notifier:first(#acl_logon{id=Id}, Context) of
 		undefined -> Context#context{acl=undefined, user_id=Id};
 		#context{} = NewContext -> NewContext
 	end.
@@ -226,7 +259,7 @@ logon(Id, Context) ->
 %% @doc Log off, reset the acl field of the context
 %% @spec logoff(#context{}) -> #context{}
 logoff(Context) ->
-	case z_notifier:first({acl_logoff}, Context) of
+	case z_notifier:first(#acl_logoff{}, Context) of
 		undefined -> Context#context{user_id=undefined, acl=undefined};
 		#context{} = NewContext -> NewContext
 	end.

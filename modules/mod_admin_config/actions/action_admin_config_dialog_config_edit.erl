@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-08-07
+%% Date: 2009-08-07
 %% @doc Open a dialog to change the value of a config key.
 
 %% Copyright 2009 Marc Worrell
@@ -39,7 +39,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the new group form. The form will be posted back to this module.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {config_edit_dialog, Module, Key, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={config_edit_dialog, Module, Key, OnSuccess}}, Context) ->
     Vars = [
         {module, Module},
         {key, Key},
@@ -50,7 +50,7 @@ event({postback, {config_edit_dialog, Module, Key, OnSuccess}, _TriggerId, _Targ
 
 %% @doc Add a member to a group.  The roles are in the request (they come from a form)
 %% @spec event(Event, Context1) -> Context2
-event({submit, {config_edit, Args}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={config_edit, Args}}, Context) ->
     case z_acl:is_allowed(use, mod_admin_config, Context) of
         true ->
             Value = z_context:get_q("val", Context, ""),

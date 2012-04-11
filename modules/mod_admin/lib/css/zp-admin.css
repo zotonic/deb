@@ -158,6 +158,11 @@ hr {
 		float: left;
 		display: block;
 	}
+
+	.short-list li span[dir=rtl] {
+	    float: right;
+	    margin-right: 10px;
+	}
 	
 	.short-list li.log-warning, .short-list li.log-warning a {
         color: #930;
@@ -375,7 +380,7 @@ a:focus {
 	#navigation li a {
 		height: 27px;
 		line-height: 27px;
-		padding: 0 0 0 9px;
+		padding: 0 4px 0 9px;
 		border-bottom: 1px solid #ddd;
 		float: none;
 		display: block;
@@ -608,6 +613,10 @@ input[type="radio"],
 	margin: 0 0 9px 0;
 }
 
+ul.media-sorter {
+    padding: 6px 0 !important;
+}
+
 ul.media-sorter li {
 	width: 187px;
 	float: left;
@@ -642,6 +651,7 @@ ul.media-sorter li {
 .autocomplete-wrapper {
 	position: relative;
 }
+
 
 .suggestions-list {
 	background: #888;
@@ -717,6 +727,9 @@ span.add-connection {
 .unlink-item {
 	float: left;
 	display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 140px;
 }
 
 .unlink-cross {
@@ -826,39 +839,42 @@ span.add-connection {
 /* modules - navigation builder
 ---------------------------------------------------------- */
 
-ul.navigation-manager {
+ul.ui-sortable {
 	padding: 8px 6px;
 }
 
-ul.navigation-manager li {
-	padding: 0;
-}
-
-ul.navigation-manager li a {
+ul.ui-sortable li.placeholder {
 	padding: 1px 0 0;
-	border: 1px solid #e0e0e0;
-	background: #fff;
-	display: block;
+    background: #efe;
+    border: 1px solid #ccc;
 }
 
-	ul.navigation-manager li .grippy img {
-		position: absolute;
-		top: 4px;
-		left: 6px;
-	}
+ul.ui-sortable li .grippy img {
+	position: absolute;
+	top: 4px;
+	left: 6px;
+}
 
-	ul.navigation-manager li#top {
-		padding: 1px 0 0 7px;
-		border: 1px dotted #ccc;
-		margin: 0 0 3px 0;
-	}
-
-		ul.navigation-manager li ul li {
-			border: none;
-		}
+ul.ui-sortable li ul li {
+	border: none;
+}
 
 .search-nav-items input.autocompleter {
 	width: 279px;
+}
+
+.search-nav-items .autocomplete-wrapper .short-list {
+    border: none;
+    padding: 4px 0px;
+}
+
+#sortable-new {
+    border: none;
+    padding-top: 8px;
+}
+
+#drag-explanation {
+    height: 60px;
 }
 
 ul ul {
@@ -874,56 +890,48 @@ li.hover, li.hover a {
 	border-color: #fff;
 }
 
-.short-list .line {
-	height: 15px;
-	border: 1px dotted #ccc !important;
-	background: none;
-	margin: 6px 0;
+ul.tree-list {
+	padding: 0;
+	min-height: 30px;
 }
 
-ul.categories {
-	padding: 8px 6px 0;
-}
-
-ul.categories li {
+ul.tree-list li {
+    position: relative;
+	display: block;
 	margin: 0;
 	padding: 0;
+	line-height: 27px;
+}
+
+ul.tree-list li div {
+	border: 1px solid #e0e0e0;
+    margin-bottom: -1px;
+    padding-left: 20px;
+    position: relative;
+}
+
+ul.tree-list li button,
+ul.tree-list li a.button {
+	margin: 3px 3px 0 0;
+}
+
+ul.tree-list li:last-child {
 	border: none;
 }
 
-ul.categories li.active {
-	background: #f1f1f1;	
-}
-
-	ul.categories li.ui-draggable {
-		width: auto;
-		display: block;
-	}
-
-ul.categories li a {
-	padding: 1px 0 0 15px;
-	border: 1px solid #e0e0e0;
-	background: #fff;
-	cursor: pointer;
-}
 
 #category-sorter .ui-draggable-dragging,
 .navigation-manager .ui-draggable-dragging {
 	width: 339px !important;
 }
 
-.grippy {
-	width: 18px;
-	height: 29px;
-	position: relative;
+img.grippy {
 	cursor: move;
+	position: absolute;
+	top: 4px;
+	left: 6px;
 }
 
-	.grippy img {
-		position: absolute;
-		top: 4px;
-		left: 6px;
-	}
 
 .short-list li.depth-1 { margin-left: 0; }
 .short-list li.depth-2 { margin-left: 30px; }
@@ -1020,6 +1028,10 @@ body.wait button {
 		text-decoration: none;
 	}
 
+    body[dir=rtl] .ui-tabs-nav li {
+        float: right;
+    }
+
 	.ui-tabs-nav .ui-state-hover {
 		border-color: #999;
 		background-color: #e4e4e4;
@@ -1046,3 +1058,44 @@ div.translations table.mceLayout {
 	-webkit-border-top-left-radius: 0px;
 	-webkit-border-top-right-radius: 0px;
 }
+
+
+/* tables */
+td button, td a.button {
+    display: inline;
+    float: none;
+    margin: 0;
+}
+
+td, th {
+    padding: 4px 0;
+}
+
+td {
+    border-bottom: 1px dotted #bbb;
+}
+th {
+    text-align: left;
+    border-bottom: 1px solid #bbb;
+}
+
+table {
+    margin-bottom: 18px;
+}
+
+/* Some extra rtl definitions */
+
+input[type="text"].rtl, textarea.rtl {
+    font-size: 150%;
+}
+
+body[dir=rtl] label {
+    float: right;
+    text-align: right;
+}
+
+
+/* tinyMCE buttons */
+.defaultSkin span.mce_zlink {background-position:-40px -40px}
+.defaultSkin span.mce_zbdoltr {background-position:-60px -40px}
+.defaultSkin span.mce_zbdortl {background-position:-80px -40px}

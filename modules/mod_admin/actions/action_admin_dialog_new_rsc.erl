@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-04-27
+%% Date: 2009-04-27
 %% @doc Open a dialog with some fields to make a new page/resource.
 
 %% Copyright 2009 Marc Worrell
@@ -36,14 +36,15 @@ render_action(TriggerId, TargetId, Args, Context) ->
     SubjectId = proplists:get_value(subject_id, Args),
     Predicate = proplists:get_value(predicate, Args),
     EdgeTemplate = proplists:get_value(edge_template, Args),
-    Postback = {new_rsc_dialog, Title, Cat, NoCatSelect, Redirect, SubjectId, Predicate, EdgeTemplate},
+    Actions = proplists:get_all_values(action, Args),
+    Postback = {new_rsc_dialog, Title, Cat, NoCatSelect, Redirect, SubjectId, Predicate, EdgeTemplate, Actions},
     {PostbackMsgJS, _PickledPostback} = z_render:make_postback(Postback, click, TriggerId, TargetId, ?MODULE, Context),
     {PostbackMsgJS, Context}.
 
 
 %% @doc Fill the dialog with the new page form. The form will be posted back to this module.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {new_rsc_dialog, Title, Cat, NoCatSelect, Redirect, SubjectId, Predicate, EdgeTemplate}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={new_rsc_dialog, Title, Cat, NoCatSelect, Redirect, SubjectId, Predicate, EdgeTemplate, Actions}}, Context) ->
     CatName = case Cat of
         undefined -> "page";
         _ -> z_convert:to_list(?__(m_rsc:p(Cat, title, Context), Context))
@@ -62,19 +63,21 @@ event({postback, {new_rsc_dialog, Title, Cat, NoCatSelect, Redirect, SubjectId, 
         {cat, CatId},
         {nocatselect, NoCatSelect},
         {catname, CatName},
-        {edge_template, EdgeTemplate}
+        {edge_template, EdgeTemplate},
+        {actions, Actions}
     ],
     z_render:dialog("Make a new "++CatName++".", "_action_dialog_new_rsc.tpl", Vars, Context);
 
 
-event({submit, {new_page, Args}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={new_page, Args}}, Context) ->
     Title   = z_context:get_q("new_rsc_title", Context),
     CatId   = list_to_integer(z_context:get_q("category_id", Context)),
+    IsPublished = z_context:get_q("is_published", Context),
     Redirect = proplists:get_value(redirect, Args),
     SubjectId = proplists:get_value(subject_id, Args),
     Predicate = proplists:get_value(predicate, Args),
     EdgeTemplate = proplists:get_value(edge_template, Args),
-    IsPublished = z_context:get_q("is_published", Context),
+    Actions = proplists:get_value(actions, Args, []),
 
     Props = [
         {category_id, CatId},
@@ -93,8 +96,13 @@ event({submit, {new_page, Args}, _TriggerId, _TargetId}, Context) ->
             Context
     end,
     
-    % Close the dialog and optionally redirect to the edit page of the new resource
-    Context2 = z_render:wire({dialog_close, []}, Context1),
+    % Close the dialog
+    Context2a = z_render:wire({dialog_close, []}, Context1),
+
+    % wire any custom actions
+    Context2 = z_render:wire([{Action, [{id, Id}|ActionArgs]}|| {Action, ActionArgs} <- Actions], Context2a),
+
+    % optionally redirect to the edit page of the new resource
     case z_convert:to_bool(Redirect) of
         false ->
             Context2;

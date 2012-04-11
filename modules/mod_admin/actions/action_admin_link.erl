@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-04-26
+%% Date: 2009-04-26
 %% @doc Add an edge between two resources
 
 %% Copyright 2009 Marc Worrell
@@ -43,7 +43,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Unlink the edge, on success show an undo message in the element with id "unlink-message"
 %% @spec event(Event, Context1) -> Context2
-event({postback, {link, SubjectId, Predicate, ObjectId, ElementId, EdgeTemplate, Action}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={link, SubjectId, Predicate, ObjectId, ElementId, EdgeTemplate, Action}}, Context) ->
     do_link(SubjectId, Predicate, ObjectId, ElementId, EdgeTemplate, Action, Context).
 
 
@@ -53,23 +53,28 @@ do_link(SubjectId, Predicate, ObjectId, EdgeTemplate, Context) ->
 do_link(SubjectId, Predicate, ObjectId, ElementId, EdgeTemplate, Action, Context) ->
     case z_acl:rsc_editable(SubjectId, Context) of
         true ->
-            {ok, EdgeId} = m_edge:insert(SubjectId, Predicate, ObjectId, Context),
-            Vars = [
-                {subject_id, SubjectId},
-                {predicate, Predicate},
-                {object_id, ObjectId},
-                {edge_id, EdgeId}
-            ],
-            Html  = z_template:render(case EdgeTemplate of undefined -> "_rsc_edge.tpl"; _ -> EdgeTemplate end,
-                                      Vars,
-                                      Context),
-            Title = z_html:strip(?__(m_rsc:p(ObjectId, title, Context), Context)),
-            ElementId1 = case ElementId of
-                undefined -> "links-"++z_convert:to_list(SubjectId)++"-"++z_convert:to_list(Predicate);
-                _ -> ElementId
-            end,
-            Context1 = z_render:insert_bottom(ElementId1, Html, Context),
-            z_render:wire([{growl, [{text, "Added the connection to “"++z_convert:to_list(Title)++"”."}]} | Action], Context1);
+            case m_edge:get_id(SubjectId, Predicate, ObjectId, Context) of
+                undefined ->
+                    {ok, EdgeId} = m_edge:insert(SubjectId, Predicate, ObjectId, Context),
+                    Vars = [
+                            {subject_id, SubjectId},
+                            {predicate, Predicate},
+                            {object_id, ObjectId},
+                            {edge_id, EdgeId}
+                           ],
+                    Html  = z_template:render(case EdgeTemplate of undefined -> "_rsc_edge.tpl"; _ -> EdgeTemplate end,
+                                              Vars,
+                                              Context),
+                    Title = z_html:strip(?__(m_rsc:p(ObjectId, title, Context), Context)),
+                    ElementId1 = case ElementId of
+                                     undefined -> "links-"++z_convert:to_list(SubjectId)++"-"++z_convert:to_list(Predicate);
+                                     _ -> ElementId
+                                 end,
+                    Context1 = z_render:insert_bottom(ElementId1, Html, Context),
+                    z_render:wire([{growl, [{text, "Added the connection to “"++z_convert:to_list(Title)++"”."}]} | Action], Context1);
+                _ ->
+                    z_render:growl_error("This connection does already exist.", Context)
+            end;
         false ->
             z_render:growl_error("Sorry, you have no permission to add the connection.", Context)
     end.

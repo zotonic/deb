@@ -35,6 +35,8 @@ var z_drag_tag				= [];
 var z_registered_events		= new Object();
 var z_on_visible_checks		= [];
 var z_on_visible_timer		= undefined;
+var z_unique_id_counter		= 0;
+var z_language              = "en";
 
 /* Non modal dialogs
 ---------------------------------------------------------- */
@@ -101,13 +103,19 @@ function z_event(name, extraParams)
 
 function z_notify(message, extraParams)
 {
+	var trigger_id = '';
+	if (extraParams != undefined && extraParams.z_trigger_id != undefined) {
+	    trigger_id = extraParams.z_trigger_id;
+	    extraParams.z_trigger_id = undefined;
+	}
+
 	var extra = ensure_name_value(extraParams);
 	if (typeof extra != 'object')
 	{
 		extra = [];
 	}
 	extra.push({name: 'z_msg', value: message});
-	z_queue_postback('', 'notify', extra, true);
+	z_queue_postback(trigger_id, 'notify', extra, true);
 }
 
 /* Postback loop
@@ -210,7 +218,6 @@ function z_queue_postback(triggerID, postback, extraParams, noTriggerValue)
 	o.triggerID		= triggerID;
 	o.postback		= postback;
 	o.extraParams	= extraParams;
-	
 	z_postbacks.push(o);
 	z_postback_check();
 }
@@ -319,14 +326,48 @@ function z_progress(id, value)
 	}
 }
 
-function z_reload()
+function z_reload(args)
 {
 	var page = $('#logon_form input[name="page"]');
 
 	if (page.length > 0 && page.val() != "") {
 		window.location.href = window.location.protocol+"//"+window.location.host+page.val();
 	} else {
-		window.location.reload(true);
+	    if (typeof args == "undefined")
+		    window.location.reload(true);
+		else {
+    	    var qs = ensure_name_value(args);
+
+    		if (qs.length == 1 &&  typeof args.z_language == "string") {
+    		    var href;
+    		    
+    		    if (  window.location.pathname.substring(0,2+z_language.length) == "/"+z_language+"/") {
+        		    href = window.location.protocol+"//"+window.location.host
+        		            +"/"+args.z_language+"/"
+        		            +window.location.pathname.substring(2+args.z_language.length);
+        		} else {
+        		    href = window.location.protocol+"//"+window.location.host
+        		            +"/"+args.z_language
+        		            +window.location.pathname;
+        		}
+    		    if (window.location.search == "")
+    		        window.location.href = href;
+    		    else
+    		        window.location.href = href + "?" + window.location.search;
+    		} else {
+    		    var href = window.location.protocol+"//"+window.location.host+window.location.pathname;
+    		    if (window.location.search == "") {
+    		        window.location.href = href + '?' + $.param(qs);
+    		    } else {
+    		        var loc_qs = $.parseQuery();
+        		    for (var prop in loc_qs) {
+            		    if (typeof loc_qs[prop] != "undefined" && typeof args[prop] == "undefined")
+            			    qs.push({name: prop, value: loc_qs[prop]});
+            		}
+    		        window.location.href = href+"?" + $.param(qs);
+    		    }
+    		}
+    	}
 	}
 }
 
@@ -340,6 +381,24 @@ function z_translate(text)
 	return text;
 }
 
+
+/* Render text as html nodes
+---------------------------------------------------------- */
+
+function z_text_to_nodes(text)
+{
+    if (text == "") {
+        return $(text);
+    } else {
+        var len = text.length;
+        
+        if (text.charAt(0) == "<" && text.charAt(len-1) == ">") {
+            return $(text);
+        } else {
+            return $("<span></span>"+text+"<span></span>").slice(1,-1);
+        }
+    }
+}
 
 /* tinyMCE stuff
 ---------------------------------------------------------- */
@@ -510,6 +569,26 @@ function z_has_flash()
 	}
 	return false;
 }
+
+
+function z_ensure_id(elt)
+{
+	var id = $(elt).attr('id');
+	if (id == undefined) {
+		id = z_unique_id();
+		$(elt).attr('id', id);
+	}
+	return id;
+}
+
+function z_unique_id()
+{
+	do {
+		var id = '-z-' + z_unique_id_counter++;
+	} while ($('#'+id).length > 0);
+	return id;
+}
+
 
 /* Spinner, show when waiting for a postback
 ---------------------------------------------------------- */
@@ -790,11 +869,10 @@ function z_form_submit_validated_do(event)
 	
 	if (event.zAfterValidation)
 	{
-		for (var f in event.zAfterValidation) 
-		{
-			ret = event.zAfterValidation[f].func.call(f.context, event) && ret;
-		}
-		event.zAfterValidation = new Array();
+		$.each(event.zAfterValidation, function(){
+			ret = typeof this.func == 'function' && this.func.call(this.context, event) && ret;
+		});
+		event.zAfterValidation.length = 0;
 	}
 	return ret;
 }
@@ -1078,6 +1156,7 @@ function z_add_validator(id, type, args)
 			switch (type)
 			{
 				case 'email':			v.add(Validate.Email, args);		break;
+                                case 'date':                    v.add(Validate.Date, args);             break;
 				case 'presence':		v.add(Validate.Presence, args);		break;
 				case 'confirmation':	v.add(Validate.Confirmation, args); break;
 				case 'acceptance':		v.add(Validate.Acceptance, args);	break;
@@ -1187,7 +1266,8 @@ function ensure_name_value(a)
 		var n = []
 		for (var prop in a)
 		{
-			n.push({name: prop, value: a[prop]});
+		    if (a[prop] != undefined)
+			    n.push({name: prop, value: a[prop]});
 		}
 		return n;
 	}
@@ -1453,5 +1533,45 @@ $.fn.selected = function(select) {
 function log() {
 	if (window.console && window.console.log)
 		window.console.log('[jquery.form] ' + Array.prototype.join.call(arguments,''));
+}
+
+
+
+function is_equal(x, y) {
+    if ( x === y ) return true;
+    if ( ! ( x instanceof Object ) || ! ( y instanceof Object ) ) return false;
+    if ( x.constructor !== y.constructor ) return false;
+    for ( var p in x ) {
+        if ( ! x.hasOwnProperty( p ) ) continue;
+        if ( ! y.hasOwnProperty( p ) ) return false;
+        if ( x[ p ] === y[ p ] ) continue;
+        if ( typeof( x[ p ] ) !== "object" ) return false;
+        if ( ! is_equal( x[ p ],  y[ p ] ) ) return false;
+    }
+    for ( p in y ) {
+        if ( y.hasOwnProperty( p ) && ! x.hasOwnProperty( p ) ) return false;
+    }
+    return true;
+}
+
+
+/**
+ * A simple querystring parser.
+ * Example usage: var q = $.parseQuery(); q.fooreturns  "bar" if query contains "?foo=bar"; multiple values are added to an array. 
+ * Values are unescaped by default and plus signs replaced with spaces, or an alternate processing function can be passed in the params object .
+ * http://actingthemaggot.com/jquery
+ *
+ * Copyright (c) 2008 Michael Manning (http://actingthemaggot.com)
+ * Dual licensed under the MIT (MIT-LICENSE.txt)
+ * and GPL (GPL-LICENSE.txt) licenses.
+ **/
+$.parseQuery = function(qs,options) {
+	var q = (typeof qs === 'string'?qs:window.location.search), o = {'f':function(v){return unescape(v).replace(/\+/g,' ');}}, options = (typeof qs === 'object' && typeof options === 'undefined')?qs:options, o = jQuery.extend({}, o, options), params = {};
+	jQuery.each(q.match(/^\??(.*)$/)[1].split('&'),function(i,p){
+		p = p.split('=');
+		p[1] = o.f(p[1]);
+		params[p[0]] = params[p[0]]?((params[p[0]] instanceof Array)?(params[p[0]].push(p[1]),params[p[0]]):[params[p[0]],p[1]]):p[1];
+	});
+	return params;
 }
 

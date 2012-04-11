@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-07-13
+%% Date: 2009-07-13
 %% @doc Add a complete new person and make it into an user.
 
 %% Copyright 2009 Marc Worrell
@@ -35,7 +35,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 	{PostbackMsgJS, Context}.
 
 
-event({postback, {dialog_user_add, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={dialog_user_add, OnSuccess}}, Context) ->
     case z_acl:is_allowed(insert, identity, Context) of
         true ->
             Vars = [
@@ -48,7 +48,7 @@ event({postback, {dialog_user_add, OnSuccess}, _TriggerId, _TargetId}, Context) 
 
 %% @doc Delete an username from an user.
 %% @spec event(Event, Context1) -> Context2
-event({submit, {user_add, Props}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={user_add, Props}}, Context) ->
     case z_acl:is_allowed(insert, identity, Context) of
         true ->
             NameFirst = z_context:get_q_validated("name_first", Context),

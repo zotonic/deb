@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-11-29
+%% Date: 2009-11-29
 %% @doc Post a message to the test mailing list.
 
 %% Copyright 2009 Marc Worrell
@@ -35,7 +35,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 	{PostbackMsgJS, _PickledPostback} = z_render:make_postback(Postback, click, TriggerId, TargetId, ?MODULE, Context),
 	{PostbackMsgJS, Context}.
 
-event({postback, {mailing_page_test, PageId, OnSuccess}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={mailing_page_test, PageId, OnSuccess}}, Context) ->
 	case m_rsc:name_to_id(mailinglist_test, Context) of
 		{ok, ListId} ->
 			case z_acl:rsc_visible(ListId, Context) of
@@ -43,12 +43,12 @@ event({postback, {mailing_page_test, PageId, OnSuccess}, _TriggerId, _TargetId},
                     %% Reset the recepient stats for the test list
                     m_mailinglist:reset_log_email(ListId, PageId, Context),
                     %% And send.
-					z_notifier:notify({mailinglist_mailing, ListId, PageId}, Context),
-					Context1 = z_render:growl("Sending the page to the test mailing list...", Context),
+					z_notifier:notify(#mailinglist_mailing{list_id=ListId, page_id=PageId}, Context),
+					Context1 = z_render:growl(?__("Sending the page to the test mailing list...", Context), Context),
 					z_render:wire(OnSuccess, Context1);
 				false ->
-					z_render:growl_error("You are not allowed to send mail to the test mailing list.", Context)
+					z_render:growl_error(?__("You are not allowed to send mail to the test mailing list.", Context), Context)
 			end;
 		{error, _} ->
-			z_render:growl_error("There is no mailing list with the name ‘mailinglist_test’.", Context)
+			z_render:growl_error(?__("There is no mailing list with the name ‘mailinglist_test’.", Context), Context)
 	end.

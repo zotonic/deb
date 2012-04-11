@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-05-12
+%% Date: 2009-05-12
 %% @doc Open a dialog with some fields to add or change an username/password identity
 
 %% Copyright 2009 Marc Worrell
@@ -40,7 +40,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the new page form. The form will be posted back to this module.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {set_username_password, Id, OnDelete}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={set_username_password, Id, OnDelete}}, Context) ->
     {Username, Password} = case m_identity:get_username(Id, Context) of
                                 undefined -> {[], []};
                                 Name -> {Name, ?PASSWORD_DOTS}
@@ -54,7 +54,7 @@ event({postback, {set_username_password, Id, OnDelete}, _TriggerId, _TargetId}, 
     ],
     z_render:dialog("Set username/ password.", "_action_dialog_set_username_password.tpl", Vars, Context);
 
-event({submit, set_username_password, _TriggerId, _TargetId}, Context) ->
+event(#submit{message=set_username_password}, Context) ->
     Id = z_convert:to_integer(z_context:get_q("id", Context)),
     Username = z_context:get_q_validated("new_username", Context),
     Password = z_context:get_q_validated("new_password", Context),

@@ -20,31 +20,15 @@
 -export([is_a/3, is_a/4]).
 
 
-is_a(Id, Cat, Context) when is_integer(Id)->
+is_a(Arg, Cat, Context) ->
     case m_category:name_to_id(Cat, Context) of
-        {ok, CatId} -> m_rsc:is_a(Id, CatId, Context);
-        {error, _Reason} -> false
-    end;
-is_a([], _Cat, _Context) ->
-    [];
-is_a(List, Cat, Context) ->
-    case m_category:name_to_id(Cat, Context) of
-        {ok, CatId} -> lists:filter(fun(Id) -> m_rsc:is_a(Id, CatId, Context) end, erlydtl_runtime:to_list(List, Context));
-        {error, _Reason} -> []
+        {ok, CatId} -> z_list_of_ids_filter:filter(Arg, fun(Id) -> m_rsc:is_a(Id, CatId, Context) end, Context);
+        {error, _Reason} when is_integer(Arg) -> false;
+        {error, _Reason} when is_list(Arg) -> []
     end.
 
 is_a(List, Cat, N, Context) ->
     case m_category:name_to_id(Cat, Context) of
-        {ok, CatId} -> take_first(erlydtl_runtime:to_list(List, Context), CatId, N, Context, []);
+        {ok, CatId} -> z_list_of_ids_filter:filter(List, fun(Id) -> m_rsc:is_a(Id, CatId, Context) end, N, Context);
         {error, _Reason} -> []
-    end.
-
-take_first([], _CatId, _N, _Context, Acc) ->
-    lists:reverse(Acc);
-take_first(_List, _CatId, 0, _Context, Acc) ->
-    lists:reverse(Acc);
-take_first([Id|Rest], CatId, N, Context, Acc) ->
-    case m_rsc:is_a(Id, CatId, Context) of
-        true -> take_first(Rest, CatId, N-1, Context, [Id|Acc]);
-        false -> take_first(Rest, CatId, N, Context, Acc)
     end.

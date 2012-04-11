@@ -1,6 +1,6 @@
 %% @author Maas-Maarten Zeeman <mmzeeman@xs4all.nl>
 %% @copyright 2010 Maas-Maarten Zeeman
-%% @date 2010-12-03
+%% Date: 2010-12-03
 %% @doc Connect a page to a signal
 
 %% Copyright 2010 Maas-Maarten Zeeman
@@ -37,7 +37,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Connect a signal to a collection of actions.  
 %
-event({postback, {connect, [{signal, Signal}, {name, Name}, {actions, Actions}]}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={connect, [{signal, Signal}, {name, Name}, {actions, Actions}]}}, Context) ->
     Slot = z_connect:page(Signal, Actions, Context),
     store_slot(Name, Slot, Context),
     Context.

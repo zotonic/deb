@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @date 2009-04-27
+%% Date: 2009-04-27
 %% @doc Open a dialog with some fields to upload a new media.
 
 %% Copyright 2009 Marc Worrell
@@ -42,7 +42,7 @@ render_action(TriggerId, TargetId, Args, Context) ->
 
 %% @doc Fill the dialog with the new page form. The form will be posted back to this module.
 %% @spec event(Event, Context1) -> Context2
-event({postback, {media_upload_dialog, Title, Id, SubjectId, Predicate, Stay, Actions}, _TriggerId, _TargetId}, Context) ->
+event(#postback{message={media_upload_dialog, Title, Id, SubjectId, Predicate, Stay, Actions}}, Context) ->
     Vars = [
         {delegate, atom_to_list(?MODULE)},
         {id, Id },
@@ -56,13 +56,18 @@ event({postback, {media_upload_dialog, Title, Id, SubjectId, Predicate, Stay, Ac
     z_render:dialog(DTitle, "_action_dialog_media_upload.tpl", Vars, Context);
 
 
-event({submit, {media_upload, EventProps}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={media_upload, EventProps}}, Context) ->
     File = z_context:get_q_validated("upload_file", Context),
     ContextUpload = case File of
                         #upload{filename=OriginalFilename, tmpfile=TmpFile} ->
                             Props = case proplists:get_value(id, EventProps) of
                                         undefined ->
-                                            [{title, z_context:get_q_validated("new_media_title", Context)},
+                                            Title = z_context:get_q("new_media_title", Context),
+                                            NewTitle = case z_utils:is_empty(Title) of
+                                                           true -> OriginalFilename;
+                                                           false -> Title
+                                                       end,
+                                            [{title, NewTitle},
                                              {original_filename, OriginalFilename}];
                                         _ ->
                                             [{original_filename, OriginalFilename}]
@@ -80,7 +85,7 @@ event({submit, {media_upload, EventProps}, _TriggerId, _TargetId}, Context) ->
     z_render:wire({dialog_close, []}, ContextUpload);
 
 
-event({submit, {media_url, EventProps}, _TriggerId, _TargetId}, Context) ->
+event(#submit{message={media_url, EventProps}}, Context) ->
     Url = z_context:get_q("url", Context),
     Props = case proplists:get_value(id, EventProps) of
                 undefined ->
