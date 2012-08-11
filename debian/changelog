@@ -1,3 +1,9 @@
+zotonic (0.8.1-1) precise; urgency=low
+
+  * Import new release 0.8.1
+
+ -- Arjan Scherpenisse <arjan@ixion>  Sat, 11 Aug 2012 17:00:10 +0200
+
 zotonic (0.8.0-2) oneiric; urgency=low
 
   * Depend on postgresql instead of postgresql-8.4
