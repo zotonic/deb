@@ -21,7 +21,7 @@
 -author("Marc Worrell <marc@worrell.nl>").
 
 -mod_title("Menus").
--mod_description("Menus in Zotonic, adds amdin interface to define the menu.").
+-mod_description("Menus in Zotonic, adds admin interface to define the menu.").
 -mod_schema(1).
 -mod_depends([admin]).
 -mod_provides([menu]).
@@ -240,6 +240,8 @@ remove_invisible(Menu, Context) ->
     remove_invisible(Menu, [], Context).
 
 %% Remove invisible menu items
+remove_invisible(undefined, Acc, _Context) ->
+    lists:reverse(Acc);
 remove_invisible(<<>>, Acc, _Context) ->
     lists:reverse(Acc);
 remove_invisible([], Acc, _Context) ->
