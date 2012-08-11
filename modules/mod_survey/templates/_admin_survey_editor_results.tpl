@@ -2,12 +2,13 @@
 {% with m.survey.all_results[id] as r %}
 {% with r|first as columns %}
 {% with r|tail as results %}
+{% with m.survey.captions[id] as captions %}
 
 <table width="100%">
     <tr>
         <th>&nbsp;</th>
         {% for name in columns|tail|tail %}
-        <th>{{ name|capfirst }}</th>
+        <th>{{ captions[name] }}</th>
         {% endfor %}
         <th>&nbsp;</th>
     </tr>
@@ -26,6 +27,7 @@
     {% endfor %}
 </table>
 
+{% endwith %}
 {% endwith %}
 {% endwith %}
 {% endwith %}
