@@ -27,6 +27,8 @@
 -export([media_type_to_detail/1,
          quoted_string/1,
          split_quoted_strings/1]).
+-export([to_console/2]).
+-export([fmt_method/1]).
 
 -ifdef(TEST).
 -ifdef(EQC).
@@ -100,7 +102,7 @@ choose_media_type(Provided,AcceptHead) ->
     % Return the Content-Type we will serve for a request.
     % If there is no acceptable/available match, return the atom "none".
     % AcceptHead is the value of the request's Accept header
-    % Provided is a list of media types the resource can provide.
+    % Provided is a list of media types the controller can provide.
     %  each is either a string e.g. -- "text/html"
     %   or a string and parameters e.g. -- {"text/html",[{level,1}]}
     % (the plain string case with no parameters is much more common)
@@ -322,6 +324,24 @@ now_diff_milliseconds({M,S,U}, {M,S1,U1}) ->
     ((S-S1) * 1000) + ((U-U1) div 1000);
 now_diff_milliseconds({M,S,U}, {M1,S1,U1}) ->
     ((M-M1)*1000000+(S-S1))*1000 + ((U-U1) div 1000).
+
+%% @doc Use application config file to determine if any output to console is allowed.
+%% @spec is_silent_console() -> boolean()
+is_silent_console() -> valid_silent_console(application:get_env(silent_console)).
+
+valid_silent_console(undefined) -> true; % No console output allowed by default
+valid_silent_console({ok, Silent}) when is_boolean(Silent) -> Silent.
+
+%% @doc Write a message to console if allowed.
+%% @spec to_console(Format, Data) -> ok
+to_console(Format, Data) when is_list(Format), is_list(Data) ->
+    to_console(Format, Data, is_silent_console()).
+
+to_console(_Format, _Data, true) -> ok;
+to_console(Format, Data, false) -> io:format(Format, Data).
+
+fmt_method(M) when is_atom(M) -> atom_to_list(M);
+fmt_method(M) when is_list(M) -> M.
 
 %%
 %% TEST
