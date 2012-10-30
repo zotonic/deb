@@ -1,4 +1,4 @@
-zotonic (0.8.2-2) unstable; urgency=low
+zotonic (0.8.2-2) quantal; urgency=low
 
   * Change erlang dependency to erlang-nox
 
