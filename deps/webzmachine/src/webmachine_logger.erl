@@ -72,7 +72,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 log_open(FileName, DateHour) ->
     LogName = FileName ++ suffix(DateHour),
-    io:format("opening log file: ~p~n", [LogName]),
+    webmachine_util:to_console("opening log file: ~p~n", [LogName]),
     {ok, FD} = file:open(LogName, [read, write, raw]),
     {ok, Location} = file:position(FD, eof),
     fix_log(FD, Location),
@@ -81,10 +81,9 @@ log_open(FileName, DateHour) ->
 
 log_write({?MODULE, _Name, FD}, IoData) ->
     file:write(FD, lists:flatten(IoData)).
-    
 
 log_close({?MODULE, Name, FD}) ->
-    io:format("~p: closing log file: ~p~n", [?MODULE, Name]),
+    webmachine_util:to_console("~p: closing log file: ~p~n", [?MODULE, Name]),
     file:close(FD).
 
 maybe_rotate(State, Time) ->
@@ -123,11 +122,8 @@ format_req(#wm_log_data{req_id=ReqId,
 	    undefined -> "";
 	    U -> U
 	end,
-    fmt_alog(Time, ReqId, Peer, User, fmt_method(Method), Path, Version,
+    fmt_alog(Time, ReqId, Peer, User, webmachine_util:fmt_method(Method), Path, Version,
 	     Status, Length, Referer, UserAgent).
-
-fmt_method(M) when is_atom(M) -> atom_to_list(M);
-fmt_method(M) when is_list(M) -> M.
 
 
 %% Seek backwards to the last valid log entry
