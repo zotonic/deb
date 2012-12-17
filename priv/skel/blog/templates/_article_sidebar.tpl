@@ -6,7 +6,7 @@
 	{% for medium in media %}
 	<li>
 		<a href="{{ medium.id.page_url }}" class="thumbnail">
-			{% include "_body_media.tpl" width=300 align="block" id=medium %}
+			{% include "_body_media.tpl" width=360 align="block" id=medium %}
 		</a>
 	</li>
 	{% endfor %}
@@ -14,6 +14,4 @@
 {% endif %}
 {% endwith %}
 
-{% if m.rsc[id].is_editable %}
-	{% button text=_"edit this page" action={redirect dispatch="admin_edit_rsc" id=id} %}
-{% endif %}
+{% include "_edit_button.tpl" %}

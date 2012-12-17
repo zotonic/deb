@@ -36,7 +36,7 @@ var z_registered_events		= new Object();
 var z_on_visible_checks		= [];
 var z_on_visible_timer		= undefined;
 var z_unique_id_counter		= 0;
-var z_language              = "en";
+var z_language				= "en";
 
 /* Non modal dialogs
 ---------------------------------------------------------- */
@@ -49,6 +49,29 @@ function z_dialog_open(options)
 function z_dialog_close()
 {
 	$.dialogClose();
+}
+
+function z_dialog_confirm(options)
+{
+	html = '<div class="confirm">' + options.text + '</div>'
+		 + '<div class="modal-footer">'
+		 + '<button class="btn z-dialog-cancel-button">'
+		 + (options.cancel||z_translate('Cancel')) 
+		 + '</button>'
+		 + '<button class="btn btn-primary z-dialog-ok-button">'
+		 + (options.ok||z_translate('OK'))
+		 + '</button>'
+		 + '</div>';
+	$.dialogAdd({ 
+		title: (options.title||z_translate('Confirm')),
+		text: html,
+		width: (options.width)
+	});
+	$(".z-dialog-cancel-button").click(function() { z_dialog_close(); });
+	$(".z-dialog-ok-button").click(function() { 
+		z_dialog_close();
+		if (options.on_confirm) options.on_confirm();
+	});
 }
 
 /* Growl messages
@@ -105,10 +128,9 @@ function z_notify(message, extraParams)
 {
 	var trigger_id = '';
 	if (extraParams != undefined && extraParams.z_trigger_id != undefined) {
-	    trigger_id = extraParams.z_trigger_id;
-	    extraParams.z_trigger_id = undefined;
+		trigger_id = extraParams.z_trigger_id;
+		extraParams.z_trigger_id = undefined;
 	}
-
 	var extra = ensure_name_value(extraParams);
 	if (typeof extra != 'object')
 	{
@@ -293,11 +315,7 @@ function z_unmask(id)
 	if (id)
 	{
 		var trigger = $('#'+id).get(0);
-	
-		if (trigger && trigger.nodeName.toLowerCase() == 'form') 
-		{
-			try { $(trigger).unmask(); } catch (e) {};
-		}
+		try { $(trigger).unmask(); } catch (e) {};
 		$(trigger).removeClass("z_error_upload");
 	}
 }
@@ -333,41 +351,41 @@ function z_reload(args)
 	if (page.length > 0 && page.val() != "") {
 		window.location.href = window.location.protocol+"//"+window.location.host+page.val();
 	} else {
-	    if (typeof args == "undefined")
-		    window.location.reload(true);
+		if (typeof args == "undefined")
+			window.location.reload(true);
 		else {
-    	    var qs = ensure_name_value(args);
+			var qs = ensure_name_value(args);
 
-    		if (qs.length == 1 &&  typeof args.z_language == "string") {
-    		    var href;
-    		    
-    		    if (  window.location.pathname.substring(0,2+z_language.length) == "/"+z_language+"/") {
-        		    href = window.location.protocol+"//"+window.location.host
-        		            +"/"+args.z_language+"/"
-        		            +window.location.pathname.substring(2+args.z_language.length);
-        		} else {
-        		    href = window.location.protocol+"//"+window.location.host
-        		            +"/"+args.z_language
-        		            +window.location.pathname;
-        		}
-    		    if (window.location.search == "")
-    		        window.location.href = href;
-    		    else
-    		        window.location.href = href + "?" + window.location.search;
-    		} else {
-    		    var href = window.location.protocol+"//"+window.location.host+window.location.pathname;
-    		    if (window.location.search == "") {
-    		        window.location.href = href + '?' + $.param(qs);
-    		    } else {
-    		        var loc_qs = $.parseQuery();
-        		    for (var prop in loc_qs) {
-            		    if (typeof loc_qs[prop] != "undefined" && typeof args[prop] == "undefined")
-            			    qs.push({name: prop, value: loc_qs[prop]});
-            		}
-    		        window.location.href = href+"?" + $.param(qs);
-    		    }
-    		}
-    	}
+			if (qs.length == 1 &&  typeof args.z_language == "string") {
+				var href;
+				
+				if (  window.location.pathname.substring(0,2+z_language.length) == "/"+z_language+"/") {
+					href = window.location.protocol+"//"+window.location.host
+							+"/"+args.z_language+"/"
+							+window.location.pathname.substring(2+args.z_language.length);
+				} else {
+					href = window.location.protocol+"//"+window.location.host
+							+"/"+args.z_language
+							+window.location.pathname;
+				}
+				if (window.location.search == "")
+					window.location.href = href;
+				else
+					window.location.href = href + "?" + window.location.search;
+			} else {
+				var href = window.location.protocol+"//"+window.location.host+window.location.pathname;
+				if (window.location.search == "") {
+					window.location.href = href + '?' + $.param(qs);
+				} else {
+					var loc_qs = $.parseQuery();
+					for (var prop in loc_qs) {
+						if (typeof loc_qs[prop] != "undefined" && typeof args[prop] == "undefined")
+							qs.push({name: prop, value: loc_qs[prop]});
+					}
+					window.location.href = href+"?" + $.param(qs);
+				}
+			}
+		}
 	}
 }
 
@@ -387,21 +405,36 @@ function z_translate(text)
 
 function z_text_to_nodes(text)
 {
-    if (text == "") {
-        return $(text);
-    } else {
-        var len = text.length;
-        
-        if (text.charAt(0) == "<" && text.charAt(len-1) == ">") {
-            return $(text);
-        } else {
-            return $("<span></span>"+text+"<span></span>").slice(1,-1);
-        }
-    }
+	if (text == "") {
+		return $(text);
+	} else {
+		var text1 = $.trim(text);
+		var len = text1.length;
+		if (text1.charAt(0) == "<" && text1.charAt(len-1) == ">") {
+			return $(text);
+		} else {
+			return $("<span></span>"+text+"<span></span>").slice(1,-1);
+		}
+	}
 }
 
 /* tinyMCE stuff
 ---------------------------------------------------------- */
+
+/* Initialize all non-initialized tinymce controls */
+function z_tinymce_init()
+{
+	$(".tinymce-init:visible").each(function() { 
+		var self = $(this);
+		setTimeout(function() { 
+			var ti = jQuery.extend({}, tinyInit);
+			if (self.attr('dir')) {
+				ti.directionality = self.attr('dir');
+			}
+			self.tinymce(ti); 
+		}, 200);
+	}).removeClass('tinymce-init').addClass('tinymce');
+}
 
 function z_tinymce_add(element) 
 {
@@ -434,10 +467,10 @@ function z_tinymce_save(element)
 function z_tinymce_remove(element) 
 {
 	$("textarea.tinymce", element).each( function() {
-		if (typeof $(this).tinymce == 'function') {
-			$(this).tinymce().remove();
-		} else if (typeof(tinyMCE) != 'undefined') {
+		if (typeof(tinyMCE) != 'undefined') {
 			tinyMCE.execCommand('mceRemoveControl',false, $(this).attr('id')); 
+		} else if (typeof $(this).tinymce == 'function') {
+			$(this).tinymce().remove();
 		}
 	});
 }
@@ -450,7 +483,7 @@ function z_stream_start(host)
 {
 	if (!z_ws && !z_comet_is_running)
 	{
-		if ("WebSocket" in window && window.location.protocol == "http:") 
+		if ("WebSocket" in window) 
 		{
 			z_websocket_start(host);
 		}
@@ -514,7 +547,12 @@ function z_comet_data(data)
 
 function z_websocket_start(host)
 {
-	z_ws = new WebSocket("ws://"+document.location.host+"/websocket?z_pageid="+z_pageid);
+	var protocol = "ws:";
+	if (window.location.protocol == "https:")
+	{
+		protocol = "wss:";
+	}
+	z_ws = new WebSocket(protocol+"//"+document.location.host+"/websocket?z_pageid="+z_pageid);
 
 	z_ws.onopen = function() { z_ws_opened = true; };
 	z_ws.onerror = function() { };
@@ -652,10 +690,6 @@ function z_sorter(sortBlock, sortOptions, sortPostbackInfo)
 		for (var i = 0; i < this.childNodes.length; i++) 
 		{
 			var sortTag = $(this.childNodes[i]).data("z_sort_tag") 
-			if (!sortTag && this.childNodes[i].id)
-			{
-				sortTag = z_drag_tag[this.childNodes[i].id];
-			}
 			if (sortTag)
 			{
 				if (sortItems != "") 
@@ -671,7 +705,11 @@ function z_sorter(sortBlock, sortOptions, sortPostbackInfo)
 		
 		z_queue_postback(this.id, sortPostbackInfo, sortItem, true);
 	};
-
+	sortOptions.receive = function (ev, ui) {
+		var $target = $(this).data().sortable.element;
+		var $source = $(ui.sender);
+		$target.data('z_sort_tag', $source.data('z_drag_tag')); 
+	};
 	$(sortBlock).sortable(sortOptions);
 }
 
@@ -1122,7 +1160,7 @@ function z_init_validator(id, args)
 	{
 		if (elt.attr('type') == 'radio')
 		{
-			$('input[name='+elt.attr('name')+']').each(function() {
+			$('input[name="'+elt.attr('name')+'"]').each(function() {
 				addLiveValidation(this, args);
 			});
 		}
@@ -1143,7 +1181,7 @@ function z_add_validator(id, type, args)
 	var elt = $('#'+id);
 	
 	if (elt.attr('type') == 'radio')
-		elt = $('input[name='+elt.attr('name')+']');
+		elt = $('input[name="'+elt.attr('name')+'"]');
 
 	elt.each(function() {
 		var v = getLiveValidation(this);
@@ -1156,7 +1194,7 @@ function z_add_validator(id, type, args)
 			switch (type)
 			{
 				case 'email':			v.add(Validate.Email, args);		break;
-                                case 'date':                    v.add(Validate.Date, args);             break;
+								case 'date':					v.add(Validate.Date, args);				break;
 				case 'presence':		v.add(Validate.Presence, args);		break;
 				case 'confirmation':	v.add(Validate.Confirmation, args); break;
 				case 'acceptance':		v.add(Validate.Acceptance, args);	break;
@@ -1266,8 +1304,8 @@ function ensure_name_value(a)
 		var n = []
 		for (var prop in a)
 		{
-		    if (a[prop] != undefined)
-			    n.push({name: prop, value: a[prop]});
+			if (a[prop] != undefined)
+				n.push({name: prop, value: a[prop]});
 		}
 		return n;
 	}
@@ -1330,7 +1368,7 @@ $.fn.formToArray = function(semantic) {
 	if (sub) {
 		var n = sub.name;
 		if (n && !sub.disabled) {
-			a.push({name: n, value: ''});
+			a.push({name: n, value: $(sub).val()});
 			a.push({name: 'z_submitter', value: n});
 		}
 	}
@@ -1538,26 +1576,26 @@ function log() {
 
 
 function is_equal(x, y) {
-    if ( x === y ) return true;
-    if ( ! ( x instanceof Object ) || ! ( y instanceof Object ) ) return false;
-    if ( x.constructor !== y.constructor ) return false;
-    for ( var p in x ) {
-        if ( ! x.hasOwnProperty( p ) ) continue;
-        if ( ! y.hasOwnProperty( p ) ) return false;
-        if ( x[ p ] === y[ p ] ) continue;
-        if ( typeof( x[ p ] ) !== "object" ) return false;
-        if ( ! is_equal( x[ p ],  y[ p ] ) ) return false;
-    }
-    for ( p in y ) {
-        if ( y.hasOwnProperty( p ) && ! x.hasOwnProperty( p ) ) return false;
-    }
-    return true;
+	if ( x === y ) return true;
+	if ( ! ( x instanceof Object ) || ! ( y instanceof Object ) ) return false;
+	if ( x.constructor !== y.constructor ) return false;
+	for ( var p in x ) {
+		if ( ! x.hasOwnProperty( p ) ) continue;
+		if ( ! y.hasOwnProperty( p ) ) return false;
+		if ( x[ p ] === y[ p ] ) continue;
+		if ( typeof( x[ p ] ) !== "object" ) return false;
+		if ( ! is_equal( x[ p ],  y[ p ] ) ) return false;
+	}
+	for ( p in y ) {
+		if ( y.hasOwnProperty( p ) && ! x.hasOwnProperty( p ) ) return false;
+	}
+	return true;
 }
 
 
 /**
  * A simple querystring parser.
- * Example usage: var q = $.parseQuery(); q.fooreturns  "bar" if query contains "?foo=bar"; multiple values are added to an array. 
+ * Example usage: var q = $.parseQuery(); q.fooreturns	"bar" if query contains "?foo=bar"; multiple values are added to an array. 
  * Values are unescaped by default and plus signs replaced with spaces, or an alternate processing function can be passed in the params object .
  * http://actingthemaggot.com/jquery
  *

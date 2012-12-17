@@ -26,23 +26,27 @@
 -mod_depends([admin]).
 -mod_provides([menu]).
 
--include("zotonic.hrl").
-
 %% interface functions
 -export([
-	manage_schema/2,
+    manage_schema/2,
     init/1,
     event/2,
     observe_menu_get_rsc_ids/2,
     observe_menu_save/2,
+    observe_admin_menu/3,
     get_menu/1,
     get_menu/2,
     set_menu/3,
     menu_flat/2,
+    menu_flat/3,
+    menu_subtree/3,
+    menu_subtree/4,
     remove_invisible/2,
     test/0
 ]).
 
+-include("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
 
 
 %% @doc Initializes the module (after the datamodel is installed).
@@ -74,7 +78,16 @@ event(#postback_notify{message="menuedit", trigger=TriggerId}, Context) ->
         edge ->
             % Hierarchy using edges between resources
             hierarchy_edge(m_rsc:rid(RootId, Context1), Predicate, Tree1, Context1)
-    end.
+    end;
+
+event(#postback_notify{message="menu-item-render"}, Context) ->
+    Id = z_convert:to_integer(z_context:get_q("id", Context)),
+    Callback = z_context:get_q("callback", Context),
+    {Html, Context2} = z_template:render_to_iolist("_menu_edit_item.tpl", [{id,Id}], Context),
+    z_render:wire({script, [{script, [
+                    Callback, $(, $",z_utils:js_escape(Html,Context2),$",$),$;
+                ]}]}, Context2).
+
 
 % @doc Sync a hierarchy based on edges (silently ignore ACL errors)
 hierarchy_edge(RootId, Predicate, Tree, Context) ->
@@ -269,31 +282,89 @@ set_menu(Id, Menu, Context) ->
     m_rsc:update(Id, [{menu, Menu}], Context).
 
 
+%% @doc Flatten the menu structure in a list, used for display purposes in templates
+-spec menu_flat(list() | undefined | <<>>, #context{}) -> [ {integer()|undefined, LevelIndex::list(integer()) | undefined, up|down|undefined} ].
+menu_flat(Menu, Context) ->
+    menu_flat(Menu, 999, Context).
 
-menu_flat(undefined, _Context) ->
+-spec menu_flat(list() | undefined | <<>>, integer(), #context{}) -> [ {integer()|undefined, LevelIndex::list(integer()) | undefined, up|down|undefined} ].
+menu_flat(Menu, _MaxDepth, _Context) when not is_list(Menu) ->
     [];
-menu_flat(<<>>, _Context) ->
+menu_flat([], _MaxDepth, _Context) ->
     [];
-menu_flat(X, Context) ->
-    menu_flat(X, [1], [], Context).
+menu_flat(X, MaxDepth, Context) ->
+    menu_flat(X, MaxDepth, [1], [], Context).
 
-menu_flat([], _Path, Acc, _Context) ->
+menu_flat([], _MaxDepth, _Path, Acc, _Context) ->
     lists:reverse(Acc);
-menu_flat([ {MenuId, []} | Rest], [Idx|PR], Acc, Context ) ->
-
+menu_flat([ {MenuId, []} | Rest], MaxDepth, [Idx|PR], Acc, Context ) ->
     [ {m_rsc:rid(MenuId, Context), [Idx|PR], undefined} ] 
-        ++ menu_flat(Rest, [Idx+1|PR], [], Context)
+        ++ menu_flat(Rest, MaxDepth, [Idx+1|PR], [], Context)
         ++  Acc;
-menu_flat([ {MenuId, Children} | Rest], [Idx|PR], Acc, Context ) ->
-
+menu_flat([ {MenuId, _Children} | Rest], 1, [Idx|PR], Acc, Context ) ->
+    [ {m_rsc:rid(MenuId, Context), [Idx|PR], undefined} ] 
+        ++ menu_flat(Rest, 1, [Idx+1|PR], [], Context)
+        ++  Acc;
+menu_flat([ {MenuId, Children} | Rest], MaxDepth, [Idx|PR], Acc, Context ) ->
     [ {m_rsc:rid(MenuId, Context), [Idx|PR], down} ] 
-        ++ menu_flat(Children, [1,Idx|PR], [], Context) 
+        ++ menu_flat(Children, MaxDepth-1, [1,Idx|PR], [], Context) 
         ++ [{undefined, undefined, up}]
-        ++ menu_flat(Rest, [Idx+1|PR], [], Context)
+        ++ menu_flat(Rest, MaxDepth, [Idx+1|PR], [], Context)
         ++  Acc;
-menu_flat([ MenuId | Rest ], P, A, C) when is_integer(MenuId) ->
+menu_flat([ MenuId | Rest ], MaxDepth, P, A, C) when is_integer(MenuId) ->
     %% oldschool notation fallback
-    menu_flat([{MenuId, []} | Rest], P, A, C).
+    menu_flat([{MenuId, []} | Rest], MaxDepth, P, A, C).
+
+
+%% @doc Find the subtree below a resource id. 'undefined' when not found.
+-spec menu_subtree(Menu::list(), PageId :: term(), #context{}) -> list() | undefined.
+menu_subtree(Menu, PageId, Context) ->
+    menu_subtree(Menu, PageId, false, Context).
+    
+-spec menu_subtree(Menu::list(), PageId :: term(), AddSiblings :: boolean(), #context{}) -> list() | undefined.
+menu_subtree([], _BelowId, _AddSiblings, _Context) ->
+    undefined;
+menu_subtree(Menu, _BelowId, _AddSiblings, _Context) when not is_list(Menu) ->
+    undefined;
+menu_subtree(_Menu, undefined, _AddSiblings, _Context) ->
+    undefined;
+menu_subtree(Menu, BelowId, AddSiblings, Context) when not is_integer(BelowId) ->
+    menu_subtree(Menu, m_rsc:rid(BelowId, Context), AddSiblings, Context);
+menu_subtree(Menu, BelowId, AddSiblings, _Context) ->
+    menu_subtree_1(Menu, BelowId, AddSiblings, Menu).
+    
+    menu_subtree_1([], _BelowId, _AddSiblings, _CurrMenu) ->
+        undefined;
+    menu_subtree_1([{BelowId, Menu}|_Rest], BelowId, false, _CurrMenu) ->
+        Menu;
+    menu_subtree_1([{BelowId, _}|_Rest], BelowId, true, CurrMenu) ->
+        [
+            case MenuId of
+                BelowId -> {BelowId, Menu};
+                _ -> {MenuId, []}
+            end
+            || {MenuId,Menu} <- CurrMenu
+        ];
+    menu_subtree_1([{_Id, Menu}|Rest], BelowId, AddSiblings, CurrMenu) ->
+        case menu_subtree_1(Menu, BelowId, AddSiblings, Menu) of
+            undefined -> menu_subtree_1(Rest, BelowId, AddSiblings, CurrMenu);
+            M -> M
+        end;
+    % Old notation
+    menu_subtree_1([BelowId|_Rest], BelowId, false, _CurrMenu) ->
+        [];
+    menu_subtree_1([BelowId|_Rest], BelowId, true, CurrMenu) ->
+        [
+          case Id of
+            {MenuId,_} -> {MenuId, []};
+            _ -> {Id,[]}
+          end 
+          || Id <- CurrMenu 
+        ];
+    menu_subtree_1([_|Rest], BelowId, AddSiblings, CurrMenu) ->
+        menu_subtree_1(Rest, BelowId, AddSiblings, CurrMenu).
+
+
 
 
 %% @doc The datamodel for the menu routines.
@@ -310,7 +381,7 @@ manage_schema(install, Context) ->
               {main_menu,
                    menu,
                    [{title, <<"Main menu">>},
-                    {menu, case z_install_defaultdata:default_menu(m_site:get(skeleton, Context)) of
+                    {menu, case z_install_defaultdata:default_menu(Context) of
                                 undefined -> [];
                                 Menu -> Menu
                            end}
@@ -319,6 +390,23 @@ manage_schema(install, Context) ->
         ]
       },
       Context).
+
+
+
+observe_admin_menu(admin_menu, Acc, Context) ->
+    case m_rsc:name_to_id(main_menu, Context) of
+        {ok, Id} ->
+            [
+             #menu_item{id=admin_menu,
+                        parent=admin_content,
+                        label=?__("Menu", Context),
+                        url={admin_edit_rsc, [{id, Id}]},
+                        visiblecheck={acl, use, mod_menu}}
+             |Acc];
+        _ ->
+            Acc
+    end.
+
 
 
 %% @doc test function

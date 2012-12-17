@@ -70,6 +70,10 @@ Nonterminals
     FilterBraced
     EndFilterBraced
     Filters
+    
+    ScriptBlock
+    ScriptBraced
+    EndScriptBraced
 
     ForBlock
     ForBraced
@@ -81,8 +85,8 @@ Nonterminals
     IfBlock
     IfBraced
     ElsePart
-    ElseIfList
-    ElseIfBraced
+    ElifList
+    ElifBraced
     ElseBraced
     EndIfBraced
 
@@ -118,6 +122,7 @@ Nonterminals
     LoadNames
     
     CustomTag
+    WithArgs
     Args
     SpacelessBlock
 	TransArgs
@@ -165,7 +170,7 @@ Terminals
     cycle_keyword
     dot
     else_keyword
-    elseif_keyword
+    elif_keyword
     empty_keyword
     endautoescape_keyword
     endblock_keyword
@@ -176,6 +181,7 @@ Terminals
     endif_keyword
     endifequal_keyword
     endifnotequal_keyword
+    endjavascript_keyword
     endspaceless_keyword
 	endwith_keyword
     equal
@@ -202,6 +208,7 @@ Terminals
     overrules_keyword
     pipe
     print_keyword
+    javascript_keyword
     spaceless_keyword
     string_literal
     text
@@ -221,6 +228,7 @@ Terminals
 	__keyword
  	hash
 	'==' '/=' '<' '>' '=<' '>='
+    '++'
 	'+' '-'
 	'*' '/' '%'
 	'(' ')'.
@@ -233,12 +241,13 @@ Left 100 or_keyword.
 Left 105 xor_keyword.
 Left 110 and_keyword.
 Nonassoc 300 '==' '/=' '<' '>' '=<' '>='.
+Left 350 '++'.
 Left 400 '+' '-'.
 Left 500 '*' '/' '%'.
 Unary 600 Uminus Unot.
 
 %% Expected shift/reduce conflicts
-Expect 1.
+Expect 3.
 
 Elements -> '$empty' : [].
 Elements -> Elements text : '$1' ++ ['$2'].
@@ -268,6 +277,7 @@ Elements -> Elements CallTag : '$1' ++ ['$2'].
 Elements -> Elements CallWithTag : '$1' ++ ['$2'].
 Elements -> Elements UrlTag : '$1' ++ ['$2'].
 Elements -> Elements PrintTag : '$1' ++ ['$2'].
+Elements -> Elements ScriptBlock : '$1' ++ ['$2'].
 Elements -> Elements ImageTag : '$1' ++ ['$2'].
 Elements -> Elements ImageUrlTag : '$1' ++ ['$2'].
 Elements -> Elements MediaTag : '$1' ++ ['$2'].
@@ -286,8 +296,8 @@ InheritTag -> open_tag inherit_keyword close_tag : inherit.
 
 TransTag -> open_trans trans_text close_trans : {trans, '$2'}.
 TransExtTag -> open_tag __keyword string_literal TransArgs close_tag : {trans_ext, '$3', '$4'}.
-IncludeTag -> open_tag OptionalAll include_keyword E Args close_tag : {include, '$4', '$5', '$2'}.
-CatIncludeTag -> open_tag OptionalAll catinclude_keyword E E Args close_tag : {catinclude, '$4', '$5', '$6', '$2'}.
+IncludeTag -> open_tag OptionalAll include_keyword E OptWith WithArgs close_tag : {include, '$4', '$6', '$2'}.
+CatIncludeTag -> open_tag OptionalAll catinclude_keyword E E WithArgs close_tag : {catinclude, '$4', '$5', '$6', '$2'}.
 NowTag -> open_tag now_keyword string_literal close_tag : {date, now, '$3'}.
 
 OptionalAll -> all_keyword : true.
@@ -323,6 +333,10 @@ FilterBlock -> FilterBraced Elements EndFilterBraced : {filter, '$1', '$2'}.
 FilterBraced -> open_tag filter_keyword Filters close_tag : '$3'.
 EndFilterBraced -> open_tag endfilter_keyword close_tag.
 
+ScriptBlock -> ScriptBraced Elements EndScriptBraced : {javascript, '$2'}.
+ScriptBraced -> open_tag javascript_keyword close_tag.
+EndScriptBraced -> open_tag endjavascript_keyword close_tag.
+
 Filters -> Filter : ['$1'].
 Filters -> Filters pipe Filter : '$1' ++ ['$3'].
 
@@ -339,12 +353,12 @@ IfBlock -> IfBraced Elements ElsePart : {'if', '$1', '$2', '$3'}.
 
 ElsePart -> EndIfBraced : [].
 ElsePart -> ElseBraced Elements EndIfBraced : [{'else', '$2'}].
-ElsePart -> ElseIfList : '$1'.
+ElsePart -> ElifList : '$1'.
 
-ElseIfList -> ElseIfBraced Elements ElsePart : [{'elseif', '$1', '$2'}] ++ '$3'.
+ElifList -> ElifBraced Elements ElsePart : [{'elif', '$1', '$2'}] ++ '$3'.
 
 IfBraced -> open_tag if_keyword E close_tag : '$3'.
-ElseIfBraced -> open_tag elseif_keyword E close_tag : '$3'.
+ElifBraced -> open_tag elif_keyword E close_tag : '$3'.
 ElseBraced -> open_tag else_keyword close_tag.
 EndIfBraced -> open_tag endif_keyword close_tag.
 
@@ -403,6 +417,10 @@ PrintTag -> open_tag print_keyword E close_tag : {print, '$3'}.
 TransArgs -> '$empty' : [].
 TransArgs -> TransArgs identifier equal string_literal : '$1' ++ [{'$2', '$4'}].
 
+WithArgs -> with_keyword Args identifier : '$2' ++ [{'$3', true}].
+WithArgs -> with_keyword Args identifier equal E : '$2' ++ [{'$3', '$5'}].
+WithArgs -> Args : '$1'.
+
 Args -> '$empty' : [].
 Args -> Args identifier : '$1' ++ [{'$2', true}].
 Args -> Args identifier equal E : '$1' ++ [{'$2', '$4'}].
@@ -421,7 +439,7 @@ AutoId -> identifier dot identifier : { '$1', '$3' }.
 AutoId -> identifier : '$1'.
 
 Variable -> identifier : {variable, '$1'}.
-Variable -> Variable open_bracket Value close_bracket : {index_value, '$1', '$3'}.
+Variable -> Variable open_bracket E close_bracket : {index_value, '$1', '$3'}.
 Variable -> Variable dot identifier : {attribute, {'$3', '$1'}}.
 
 ValueList -> E : ['$1'].
@@ -450,6 +468,7 @@ E -> E '<' E  : {expr, "lt", '$1', '$3'}.
 E -> E '>' E  : {expr, "gt", '$1', '$3'}.
 E -> E '=<' E  : {expr, "le", '$1', '$3'}.
 E -> E '>=' E  : {expr, "ge", '$1', '$3'}.
+E -> E '++' E  : {expr, "concat", '$1', '$3'}.
 E -> E '+' E  : {expr, "add", '$1', '$3'}.
 E -> E '-' E  : {expr, "sub", '$1', '$3'}.
 E -> E '*' E  : {expr, "multiply", '$1', '$3'}.

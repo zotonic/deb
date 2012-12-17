@@ -27,17 +27,12 @@
 
 vary(_Params, _Context) -> nocache.
 render(Params, _Vars, Context) ->
-    Id = m_rsc:rid(proplists:get_value(id, Params), Context),
-    RcptId = proplists:get_value(recipient_id, Params),
-    InAdmin = proplists:get_value(in_admin, Params, false),
     Template = proplists:get_value(template, Params, "_scomp_mailinglist_subscribe.tpl"),
-    UserId = z_acl:user(Context),
     Props = [
-        {id, Id},
-        {recipient_id, RcptId},
-        {user_id, UserId},
-        {in_admin, InAdmin},
+        {id, m_rsc:rid(proplists:get_value(id, Params), Context)},
+        {user_id, z_acl:user(Context)},
         {delegate, ?MODULE}
+        | Params
     ],
     {ok, z_template:render(Template, Props, Context)}.
 
@@ -63,7 +58,7 @@ event(#submit{message={recipient_add, Props}}, Context) ->
 				ok -> 
 				    case InAdmin of
 				        true ->
-        					z_render:wire([	{growl, [{text, "Added the recipient."}]}, 
+        					z_render:wire([	{growl, [{text, ?__("Added the recipient.", Context)}]}, 
         									{dialog_close, []},
         									{reload, []}], Context);
         				false ->
@@ -73,7 +68,7 @@ event(#submit{message={recipient_add, Props}}, Context) ->
 				{error, _Reason} ->
 				    case InAdmin of
 				        true ->
-					        z_render:growl_error("Could not add the recipient.", Context);
+					        z_render:growl_error(?__("Could not add the recipient.", Context), Context);
 					    false ->
 					        z_render:wire([ {slide_fade_in, [{target, "mailinglist_subscribe_error"}]}], Context)
 					end
@@ -81,7 +76,7 @@ event(#submit{message={recipient_add, Props}}, Context) ->
 		false ->
 		    case InAdmin of
 		        true ->
-			        z_render:growl_error("You are not allowed to add or enable recipients.", Context);
+			        z_render:growl_error(?__("You are not allowed to add or enable recipients.", Context), Context);
 			    false ->
 			        z_render:wire([ {slide_fade_in, [{target, "mailinglist_subscribe_error"}]}], Context)
 			end
@@ -102,13 +97,13 @@ event(#submit{message={recipient_edit, Props}}, Context) ->
 			    {name_surname, z_string:trim(z_context:get_q(name_surname, Context, ""))}
 			],
             ok = m_mailinglist:update_recipient(RcptId, RecipientProps, Context),
-            z_render:wire([	{growl, [{text, "Updated the recipient."}]}, 
+            z_render:wire([	{growl, [{text, ?__("Updated the recipient.", Context)}]}, 
                             {dialog_close, []},
                             {reload, []}], Context);
 		false ->
 		    case InAdmin of
 		        true ->
-			        z_render:growl_error("You are not allowed to edit recipients.", Context);
+			        z_render:growl_error(?__("You are not allowed to edit recipients.", Context), Context);
 			    false ->
 			        z_render:wire([ {slide_down, [{target, "mailinglist_subscribe_error"}]}], Context)
 			end

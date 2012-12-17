@@ -1,8 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009 Marc Worrell
+%% @copyright 2009-2012 Marc Worrell
 %% @doc Supervisor for the zotonic application.
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2012 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
 -behaviour(supervisor).
 
 %% External exports
--export([start_link/0, upgrade/0]).
+-export([start_link/0, upgrade/0, upgrade/2]).
 
 %% supervisor callbacks
 -export([init/1]).
@@ -34,23 +34,27 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-%% @spec upgrade() -> ok
+%% @spec upgrade(Name, NewSpecs) -> ok
 %% @doc Add processes if necessary.
-upgrade() ->
-    {ok, {_, Specs}} = init([]),
-
-    Old = sets:from_list([Name || {Name, _, _, _} <- supervisor:which_children(?MODULE)]),
+upgrade(SupName, Specs) ->
+    Old = sets:from_list([Name || {Name, _, _, _} <- supervisor:which_children(SupName)]),
     New = sets:from_list([Name || {Name, _, _, _, _, _} <- Specs]),
     Kill = sets:subtract(Old, New),
 
     sets:fold(fun (Id, ok) ->
-                      supervisor:terminate_child(?MODULE, Id),
-                      supervisor:delete_child(?MODULE, Id),
+                      supervisor:terminate_child(SupName, Id),
+                      supervisor:delete_child(SupName, Id),
                       ok
               end, ok, Kill),
 
-    [supervisor:start_child(?MODULE, Spec) || Spec <- Specs],
+    [supervisor:start_child(SupName, Spec) || Spec <- Specs],
     ok.
+
+%% @spec upgrade() -> ok
+%% @doc Add processes if necessary.
+upgrade() ->
+    {ok, {_, Specs}} = init([]),
+    upgrade(?MODULE, Specs).
 
 %% @spec init([]) -> SupervisorTree
 %% @doc supervisor callback.
@@ -72,11 +76,6 @@ init([]) ->
     PreviewServer = {z_media_preview_server,
                      {z_media_preview_server, start_link, []}, 
                      permanent, 5000, worker, dynamic},
-
-    % Sites disapatcher, matches hosts and paths to sites and resources.
-    Dispatcher = {z_sites_dispatcher,
-                  {z_sites_dispatcher, start_link, []},
-                  permanent, 5000, worker, dynamic},
               
     % SMTP gen_servers: one for encoding and sending mails, the other for bounces
     SmtpServer = {z_email_server,
@@ -106,15 +105,15 @@ init([]) ->
                         permanent, 5000, worker, dynamic},
 
     % Sites supervisor, starts all enabled sites
-    SitesSup = {z_sites_manager,
-                {z_sites_manager, start_link, []},
-                permanent, 5000, worker, dynamic},
+    SitesSup = {z_sites_sup,
+                {z_sites_sup, start_link, []},
+                permanent, 10100, supervisor, dynamic},
                 
     Processes = [
         Ids, Config, PreviewServer,
-        SmtpServer, SmtpBounceServer, 
-        SitesSup, Dispatcher | get_extensions()
-                ],
+        SmtpServer, SmtpBounceServer,
+        SitesSup | get_extensions()
+    ],
 
     % Listen to IP address and Port
     WebIp = case os:getenv("ZOTONIC_IP") of
@@ -126,65 +125,40 @@ init([]) ->
                   false -> z_config:get_dirty(listen_port); 
                   Anyport -> list_to_integer(Anyport) 
               end,
-    WebPortSSL = case os:getenv("ZOTONIC_PORT_SSL") of
-                     false -> z_config:get_dirty(listen_port_ssl); 
-                     Anyport_ -> list_to_integer(Anyport_)
-                 end,      
+
     z_config:set_dirty(listen_ip, WebIp),
     z_config:set_dirty(listen_port, WebPort),
-    z_config:set_dirty(listen_port_ssl, WebPortSSL),    
 
     WebConfig = [ 
         {dispatcher, z_sites_dispatcher},
         {dispatch_list, []},
         {backlog, z_config:get_dirty(inet_backlog)}
-                ],
+    ],
     
-    NonSSLOpts = [{port, WebPort}],
-    SSLCertOpts = [{certfile, z_config:get_dirty(ssl_certfile)}, 
-                   {keyfile, z_config:get_dirty(ssl_keyfile)}],
-    SSLCertOpts2 = case z_config:get_dirty(ssl_cacertfile) of
-                       undefined -> SSLCertOpts;
-                       CACertFile -> [{cacertfile, CACertFile} | SSLCertOpts]
-                   end,
-    SSLOpts = [
-        {port, WebPortSSL},
-        {ssl, true},  
-        {ssl_opts, SSLCertOpts2}
-              ],
-
-    IPv4Opts = [{ip, WebIp}], % Listen to the ip address and port for all sites.
-    IPv6Opts = [{ip, any6}],
+    % Listen to the ip address and port for all sites.
+    IPv4Opts = [{port, WebPort}, {ip, WebIp}], 
+    IPv6Opts = [{port, WebPort}, {ip, any6}],
 
     % Webmachine/Mochiweb processes
-    [IPv4Proc, IPv4SSLProc, IPv6Proc, IPv6SSLProc] =
+    [IPv4Proc, IPv6Proc] =
         [[{Name,
            {webmachine_mochiweb, start,
             [Name, Opts]},                                 
            permanent, 5000, worker, dynamic}]
          || {Name, Opts} 
-         <- [{webmachine_mochiweb, IPv4Opts ++ NonSSLOpts ++ WebConfig},
-             {webmachine_mochiweb_ssl, IPv4Opts ++ SSLOpts ++ WebConfig},
-             {webmachine_mochiweb_v6, IPv6Opts ++ NonSSLOpts ++ WebConfig},
-             {webmachine_mochiweb_v6_ssl, IPv6Opts ++ SSLOpts ++ WebConfig}]],
+         <- [{webmachine_mochiweb, IPv4Opts ++ WebConfig},
+             {webmachine_mochiweb_v6, IPv6Opts ++ WebConfig}]],
 
     %% When binding to all IP addresses ('any'), bind separately for ipv6 addresses
     EnableIPv6 = case WebIp of
                      any -> ipv6_supported();
                      _ -> false
                  end,
-    EnableSSL = z_config:get_dirty(ssl),
-   
+ 
     Processes1 = 
-        case {EnableIPv6, EnableSSL} of
-            {true, true} ->
-                Processes ++ IPv4Proc ++ IPv4SSLProc ++ IPv6Proc ++ IPv6SSLProc;
-            {true, false} ->
-                Processes ++ IPv4Proc ++ IPv6Proc;
-            {false, true} ->
-                Processes ++ IPv4Proc ++ IPv4SSLProc;
-            {false, false} ->
-                Processes ++ IPv4Proc
+        case EnableIPv6 of
+            true -> Processes ++ IPv4Proc ++ IPv6Proc;
+            false -> Processes ++ IPv4Proc
         end,
 
     init_webmachine(),

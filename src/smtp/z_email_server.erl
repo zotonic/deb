@@ -44,11 +44,15 @@
 % Timeout value for the connection of the spamassassin daemon
 -define(SPAMD_TIMEOUT, 10000).
 
+% Max number of e-mails being sent at the same time
+-define(EMAIL_MAX_SENDING, 30).
+
+
 -record(state, {smtp_relay, smtp_relay_opts, smtp_no_mx_lookups,
                 smtp_verp_as_from, smtp_bcc, override, 
                 smtp_spamd_ip, smtp_spamd_port, sending=[],
                 delete_sent_after}).
--record(email_queue, {id, retry_on=inc_timestamp(now(), 10), retry=0, 
+-record(email_queue, {id, retry_on=inc_timestamp(now(), 1), retry=0, 
                       recipient, email, created=now(), sent, 
                       pickled_context}).
 
@@ -352,16 +356,41 @@ send_email(Id, Recipient, Email, Context, State) ->
     QEmail = #email_queue{id=Id,
                           recipient=Recipient,
                           email=Email,
+                          retry_on=inc_timestamp(now(), 0),
                           pickled_context=z_context:pickle(Context)},
     QEmailTransFun = fun() -> mnesia:write(QEmail) end,
     {atomic, ok} = mnesia:transaction(QEmailTransFun),        
-    case Email#email.queue of
-        false -> spawn_send(Id, Recipient, Email, Context, State);
-        true -> State
+    case Email#email.queue orelse length(State#state.sending) > ?EMAIL_MAX_SENDING of
+        true -> State;
+        false -> spawn_send(Id, Recipient, Email, Context, State)
     end.
 
 
 spawn_send(Id, Recipient, Email, Context, State) ->
+    case is_valid_email(Recipient) of
+        true ->
+            spawn_send_checked(Id, Recipient, Email, Context, State);
+        false ->
+            %% delete email from the queue and notify the system
+            delete_emailq(Id),
+            z_notifier:first({email_failed, Id, Recipient}, Context),
+            LogEmail = #log_email{
+                severity=?LOG_ERROR, 
+                mailer_status=error,
+                props=[{reason, illegal_address}],
+                message_nr=Id,
+                envelop_to=Recipient,
+                to_id=proplists:get_value(recipient_id, Email#email.vars),
+                from_id=z_acl:user(Context),
+                content_id=proplists:get_value(id, Email#email.vars),
+                other_id=proplists:get_value(list_id, Email#email.vars),
+                message_template=Email#email.html_tpl
+            },
+            z_notifier:notify({log, LogEmail}, Context),
+            State
+    end.
+
+spawn_send_checked(Id, Recipient, Email, Context, State) ->
     F = fun() ->
             MessageId = message_id(Id, Context),
             VERP = "<"++bounce_email(MessageId, Context)++">",
@@ -430,8 +459,7 @@ spawn_send(Id, Recipient, Email, Context, State) ->
                                             }}, Context),
                     %% delete email from the queue and notify the system
                     delete_emailq(Id),
-                    z_notifier:first({email_failed, Id, Recipient}, Context),
-                    io:format("Invalid SMTP options: ~p\n", [Reason]);
+                    z_notifier:first({email_failed, Id, Recipient}, Context);
                 Receipt when is_binary(Receipt) ->
                     z_notifier:notify({log, LogEmail#log_email{
                                                 severity=?LOG_INFO, 
@@ -572,17 +600,28 @@ build_and_encode_mail(Headers, Text, Html, Attachment, Context) ->
                 _MultiPart -> mimemail:encode({<<"multipart">>, <<"alternative">>, Headers1, [], Parts1})
             end;
         _ ->
+            AttsEncoded = [ encode_attachment(Att, Context) || Att <- Attachment ],
+            AttsEncodedOk = lists:filter(fun({error, _}) -> false; (_) -> true end, AttsEncoded),
             mimemail:encode({<<"multipart">>, <<"mixed">>,
-             Headers1,
-             [],
-             [
-                {<<"multipart">>, <<"alternative">>, [], [], Parts1} |
-                [ encode_attachment(Att, Context) || Att <- Attachment ]
-             ]
-            })
+                             Headers1,
+                             [],
+                             [ {<<"multipart">>, <<"alternative">>, [], [], Parts1} | AttsEncodedOk ]
+                            })
     end.
 
-    encode_attachment(Att, _Context) ->
+    encode_attachment(Att, Context) when is_integer(Att) ->
+        case m_media:get(Att, Context) of
+            undefined -> 
+                {error, no_medium};
+            Props ->
+                Upload = #upload{
+                            tmpfile=filename:join(z_path:media_archive(Context), 
+                                                   proplists:get_value(filename, Props)),
+                            mime=proplists:get_value(mime, Props)
+                        },
+                encode_attachment(Upload, Context)
+        end;
+    encode_attachment(#upload{} = Att, _Context) ->
         Data = case Att#upload.data of
                     undefined ->
                         {ok, FileData} = file:read_file(Att#upload.tmpfile),
@@ -767,12 +806,13 @@ delete_emailq(Id) ->
 poll_queued(State) ->
 
     %% delete sent messages
+    Now = now(),
     DelTransFun = fun() -> 
                           DelQuery = qlc:q([QEmail || QEmail <- mnesia:table(email_queue),
                                                       QEmail#email_queue.sent /= undefined andalso
                                                         timer:now_diff(
                                                             inc_timestamp(QEmail#email_queue.sent, State#state.delete_sent_after),
-                                                            now()) < 0
+                                                            Now) < 0
                                             ]),
                           DelQueryRes = qlc:e(DelQuery),
                           [ begin
@@ -805,35 +845,44 @@ poll_queued(State) ->
     [ z_notifier:first(#email_failed{message_nr=Id, recipient=Recipient}, z_context:depickle(PickledContext)) 
      || {Id, Recipient, PickledContext} <- NotifyList2 ],
 
-    %% fetch a batch of messages for sending
-    FetchTransFun =
-        fun() ->
-                Q = qlc:q([QEmail || QEmail <- mnesia:table(email_queue),
-                           %% Should not already have been sent
-                           QEmail#email_queue.sent == undefined,
-                           %% Should not be currently sending
-                           proplists:get_value(QEmail#email_queue.id, State#state.sending) == undefined,
-                           %% Eligible for retry
-                           timer:now_diff(QEmail#email_queue.retry_on, now()) < 0]),
-                qlc:e(Q)
-        end,
-    {atomic, Ms} = mnesia:transaction(FetchTransFun),
-    %% send the fetched messages
-    case Ms of
-        [] ->
-            State;
-        _  ->
-            State2 = update_config(State),
-            lists:foldl(
-              fun(QEmail, St) ->
-                  update_retry(QEmail),
-                  spawn_send(QEmail#email_queue.id, 
-                             QEmail#email_queue.recipient,
-                             QEmail#email_queue.email,
-                             z_context:depickle(QEmail#email_queue.pickled_context), 
-                             St)
-              end,
-              State2, Ms)
+    MaxListSize = ?EMAIL_MAX_SENDING - length(State#state.sending), 
+    case MaxListSize > 0 of
+        true ->
+            %% fetch a batch of messages for sending
+            FetchTransFun =
+                fun() ->
+                        Q = qlc:q([QEmail || QEmail <- mnesia:table(email_queue),
+                                   %% Should not already have been sent
+                                   QEmail#email_queue.sent == undefined,
+                                   %% Should not be currently sending
+                                   proplists:get_value(QEmail#email_queue.id, State#state.sending) == undefined,
+                                   %% Eligible for retry
+                                   timer:now_diff(QEmail#email_queue.retry_on, Now) < 0]),
+                        QCursor = qlc:cursor(Q),
+                        QFound = qlc:next_answers(QCursor, MaxListSize),
+                        ok = qlc:delete_cursor(QCursor),
+                        QFound
+                end,
+            {atomic, Ms} = mnesia:transaction(FetchTransFun),
+            %% send the fetched messages
+            case Ms of
+                [] ->
+                    State;
+                _  ->
+                    State2 = update_config(State),
+                    lists:foldl(
+                      fun(QEmail, St) ->
+                          update_retry(QEmail),
+                          spawn_send(QEmail#email_queue.id, 
+                                     QEmail#email_queue.recipient,
+                                     QEmail#email_queue.email,
+                                     z_context:depickle(QEmail#email_queue.pickled_context), 
+                                     St)
+                      end,
+                      State2, Ms)
+            end;
+        false ->
+            State
     end.
 
 
@@ -862,6 +911,30 @@ inc_timestamp({MegaSec, Sec, MicroSec}, MinToAdd) ->
     MegaSec2 = MegaSec + Sec2 div 1000000,
     {MegaSec2, Sec3, MicroSec}.
 
+
+%% @doc Check if an e-mail address is valid
+is_valid_email(Recipient) ->
+    Recipient1 = string:strip(z_string:line(binary_to_list(z_convert:to_binary(Recipient)))),
+    {_RcptName, RecipientEmail} = z_email:split_name_email(Recipient1),
+    case re:run(RecipientEmail, [$^|re()]++"$", [extended]) of
+        nomatch   -> false;
+        {match,_} -> true
+    end.
+
+    re() ->
+        "(
+                (\"[^\"\\f\\n\\r\\t\\v\\b]+\")
+            |   ([\\w\\!\\#\\$\\%\\&\'\\*\\+\\-\\~\\/\\^\\`\\|\\{\\}]+
+                    (\\.[\\w\\!\\#\\$\\%\\&\\'\\*\\+\\-\\~\\/\^\`\\|\\{\\}]+)*
+                )
+        )
+        @
+        (
+            (
+                ([A-Za-z0-9\\-])+\\.
+            )+
+            [A-Za-z\\-]{2,}
+        )".
 
 
 %% @doc Simple header encoding.

@@ -41,6 +41,10 @@ init(Host) ->
     % On (re)start we use the newest site config.
     SiteProps = z_sites_manager:get_site_config(Host),
 
+    Notifier = {z_notifier,
+                {z_notifier, start_link, [SiteProps]}, 
+                permanent, 5000, worker, dynamic},
+
     Depcache = {z_depcache,
                 {z_depcache, start_link, [SiteProps]}, 
                 permanent, 5000, worker, dynamic},
@@ -55,10 +59,6 @@ init(Host) ->
                 permanent, 1, worker, dynamic},
 
     % Continue with the normal per-site servers
-    Notifier = {z_notifier,
-                {z_notifier, start_link, [SiteProps]}, 
-                permanent, 5000, worker, dynamic},
-
     Session = {z_session_manager,
                 {z_session_manager, start_link, [SiteProps]}, 
                 permanent, 5000, worker, dynamic},
@@ -69,6 +69,10 @@ init(Host) ->
 
     Template = {z_template,
                 {z_template, start_link, [SiteProps]}, 
+                permanent, 5000, worker, dynamic},
+
+    MediaClass = {z_mediaclass, 
+                {z_mediaclass, start_link, [SiteProps]},
                 permanent, 5000, worker, dynamic},
 
     DropBox = {z_dropbox,
@@ -92,8 +96,8 @@ init(Host) ->
                     permanent, 5000, worker, dynamic},
 
     Processes = [
-            Depcache, Translation, Installer, Notifier, Session, 
-            Dispatcher, Template, DropBox, Pivot,
+            Notifier, Depcache, Translation, Installer, Session, 
+            Dispatcher, Template, MediaClass, DropBox, Pivot,
             ModuleIndexer, Modules,
             PostStartup
     ],

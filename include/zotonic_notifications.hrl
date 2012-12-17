@@ -16,6 +16,20 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
+%% @doc Final try for dispatch, try to match the request. Called with z_notifier:first/2
+%%      Result:   {ok, RscId::integer()} 
+%%              | {ok, #dispatch_match{}} 
+%%              | {ok, #dispatch_redirect{}}
+%%              | undefined.
+-record(dispatch, {host, path=[], method='GET', protocol=http}).
+    
+    -record(dispatch_redirect, {location, is_permanent=false}).
+    -record(dispatch_match, {dispatch_name, mod, mod_opts=[], path_tokens=[], bindings=[], app_root="", string_path=""}).
+
+
+%% @doc Modify cookie options, used for setting http_only and secure options. (foldl)
+-record(cookie_options, {name, value}).
+
 % 'module_ready' - Sent when modules have changed, z_module_indexer reindexes all modules' templates, actions etc.
 
 %% @doc A module has been activated and started. (notify)
@@ -92,6 +106,11 @@
 %% @doc Rewrite an url before it will be dispatched using the z_dispatcher (foldl)
 -record(dispatch_rewrite, {is_dir=false, path=""}).
 
+%% @doc Used in the admin to fetch the possible blocks for display (foldl)
+-record(admin_edit_blocks, {id}).
+
+%% Used for fetching the menu in the admin (foldl)
+% admin_menu
 
 %% @doc An activity in Zotonic. When this is handled as a notification then return a list
 %% of patterns matching this activity.  These patterns are then used to find interested
@@ -156,6 +175,9 @@
 %% @doc Signal that the hierarchy underneath a resource has been changed by mod_menu (notify)
 -record(hierarchy_updated, {root_id, predicate}).
 
+%% @doc Resource is read, opportunity to add computed fields
+%%      Used in a foldr with the read properties as accumulator.
+-record(rsc_get, {id}).
 
 %% @doc Resource will be deleted. (notify)
 %% This notification is part of the delete transaction, it's purpose is to clean up
@@ -175,6 +197,10 @@
 %% action is 'insert', 'update' or 'delete'
 -record(rsc_update_done, {action, id, pre_is_a, post_is_a, pre_props, post_props}).
 
+%% @doc Upload and replace the the resource with the given data. The data is in the given format.
+%%		Return {ok, Id} or {error, Reason}, return {error, badarg} when the data is corrupt.
+-record(rsc_upload, {id, format :: json|bert, data}).
+
 
 %% @doc Add custom pivot fields to a resource's search index (map)
 %% Result is a list of {module, props} pairs.
@@ -183,6 +209,10 @@
 -record(custom_pivot, {id}).
 
 % 'pivot_rsc_data' - foldl over the resource props to extend/remove data to be pivoted
+
+%% @doc Pivot just before a m_rsc_update update. Used to pivot fields before the pivot itself.
+%%      Foldr over all observers.
+-record(pivot_update, {id, raw_props}).
 
 %% @doc Foldr over a resource's pivot data, after 'pivot_rsc_data' fold.
 %% Further filtering/extending of pivot data.
@@ -196,12 +226,17 @@
 %% Foldr over the related ids of a resource.
 -record(pivot_related_text_ids, {id}).
 
+%% @doc Foldr to change or add pivot fields for the main pivot table.
+%%      The rsc contains all rsc properties for this resource, including pivot properties.
+-record(pivot_fields, {id, rsc}).
+
 %% @doc Signal that a resource pivot has been done. (notify)
 -record(rsc_pivot_done, {id, is_a=[]}).
 
 
 %% @doc Check if an action is allowed (first).
 %% Should return undefined, true or false.
+%% action :: view|update|delete
 -record(acl_is_allowed, {action, object}).
 
 %% @doc Check if an action on a property is allowed (first).
@@ -244,6 +279,9 @@
 -record(user_is_enabled, {id}).
 
 
+%% @doc Request API logon
+-record(service_authorize, {service_module}).
+
 
 %% @doc Fetch the url of a resource's html representation (first)
 %% Returns {ok, Url} or undefined
@@ -264,6 +302,11 @@
 
 %% @doc Notification that a site configuration's property is changed (notify)
 -record(m_config_update_prop, {module, key, prop, value}).
+
+%% @doc Notification that a medium file has been uploaded.
+%%      This is the moment to change properties, modify the file etc. 
+%%		The medium record properties are folded over all observers. (foldl)
+-record(media_upload_props, {id, mime, archive_file, options}).
 
 %% @doc Notification that a medium file has been changed (notify)
 %% The id is the resource id, medium contains the medium's property list.
@@ -306,11 +349,18 @@
 -record(media_stillimage, {id, props=[]}).
 
 
-%% @doc A survey has been filled in and submitted. (notify)
--record(survey_submit, {id, answers}).
+%% @doc Fetch lisy of handlers. (foldr)
+-record(survey_get_handlers, {}).
+
+%% @doc A survey has been filled in and submitted. (first)
+-record(survey_submit, {id, handler, answers, missing, answers_raw}).
 
 %% @doc Check if the current user is allowed to download a survey. (first)
 -record(survey_is_allowed_results_download, {id}).
+
+%% @doc Check if a question is a submitting question. (first)
+-record(survey_is_submit, {block=[]}).
+
 
 %% @doc Put a value into the typed key/value store
 -record(tkvstore_put, {type, key, value}).

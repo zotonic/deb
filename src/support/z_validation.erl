@@ -94,7 +94,7 @@ validate_query_args(Context) ->
                             (_X) -> false
                        end,
             GetValue = fun
-                            ({Id, {ok, #upload{} = Value}}) -> {Id, Value};
+                            ({Id, {ok, Value}}) when is_tuple(Value) -> {Id, Value};
                             ({Id, {ok, Value}}) -> {Id, lists:flatten(Value)}
                        end,
 
@@ -127,9 +127,13 @@ report_errors([{_Id, {error, ErrId, Error}}|T], Context) ->
 
 %% @doc Perform all validations
 validate(Val, Context) ->
-    [Name,Pickled]        = string:tokens(Val, ":"),
-    {Id,Name,Validations} = z_utils:depickle(Pickled, Context),
-    Value                 = z_context:get_q(Name, Context),
+    [Name,Pickled] = string:tokens(Val, ":"),
+    {Id,Name1,Validations} = z_utils:depickle(Pickled, Context),
+    Name = z_convert:to_list(Name1),
+    Value = case [ V || V <- z_context:get_q_all(Name, Context), V =/= [], V =/= <<>> ] of
+                [A] -> A;
+                Vs -> Vs
+            end,
 
     %% Fold all validations, stop on error
     ValidateF = fun

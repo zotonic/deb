@@ -81,10 +81,19 @@ function do_addsite {
     fi
 
     # Make the new site
-    make -C $ZOTONIC
+    echo "Building site..."
+    $ZOTONIC_CALL -a "make all [[load]]"  > /dev/null
 
+    URL="http://$SITE:${ZOTONIC_PORT:=8000}/"
+    
+    echo "Starting..."
+    curl -s $URL > /dev/null
+    sleep 1
+    
+    $ZOTONIC_CALL -a "z_sites_manager start [$SITE]" > /dev/null
+    
     echo
-    echo "Added site $SITE. Now start zotonic and go to http://$SITE:${ZOTONIC_PORT:=8000}/ to view it."
+    echo "Added site $SITE. Now go to $URL to view it."
 }
 
 
@@ -96,6 +105,9 @@ function check_options {
     if [ -f "$HOME/.zotonic-defaults" ]; then
         source "$HOME/.zotonic-defaults"
     fi
+
+    # make sure Zotonic is up
+    require_zotonic_running
 
     # The defaults
     SKEL=${SKEL:=blog}
@@ -135,6 +147,19 @@ function check_options {
         exit 1
     fi
 
+    if ! ping -c 1 -q $SITE &>/dev/null; then
+
+        echo "Warning!"
+        echo "Site: '$SITE' cannot be reached."
+        echo "Command 'host $SITE' must resolve to an IP address,"
+        echo "otherwise you won't be able to reach it after installing the site."
+        echo "You can fix that by adding the following line to /etc/hosts:"
+        echo
+        echo "127.0.0.1         $SITE"
+        echo
+    fi
+    
+    
     # allow %%SITE%% syntax in db name and schema
     DBDATABASE=`echo $DBDATABASE|sed "s/%%SITE%%/$SITE/g"`
     DBSCHEMA=`echo $DBSCHEMA|sed "s/%%SITE%%/$SITE/g"`

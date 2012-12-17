@@ -1,10 +1,10 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2010 Marc Worrell
+%% @copyright 2010-2012 Marc Worrell
 %% Date: 2010-02-11
 %% @doc Backup module. Creates backup of the database and files.  Allows downloading of the backup.
 %% Support creation of periodic backups.
 
-%% Copyright 2010 Marc Worrell
+%% Copyright 2010-2012 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -25,6 +25,9 @@
 -mod_title("Backup").
 -mod_description("Make a backup of the database and files.").
 -mod_prio(600).
+-mod_provides([backup]).
+-mod_depends([rest, admin]).
+-mod_schema(1).
 
 %% gen_server exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -32,15 +35,20 @@
 
 %% interface functions
 -export([
+    observe_admin_menu/3,
+    observe_rsc_update/3,
     start_backup/1,
     list_backups/1,
     backup_in_progress/1,
     file_exists/2,
     file_forbidden/2,
-	check_configuration/1
+    check_configuration/0,
+    manage_schema/2
 ]).
 
 -include_lib("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
+
 
 -record(state, {context, backup_start, backup_pid, timer_ref}).
 
@@ -48,7 +56,26 @@
 -define(BCK_POLL_INTERVAL, 3600 * 1000).
 
 
-%% @doc Callback for resource_file_readonly.  Check if the file exists.
+
+observe_admin_menu(admin_menu, Acc, Context) ->
+    [
+     #menu_item{id=admin_backup,
+                parent=admin_modules,
+                label=?__("Backup", Context),
+                url={admin_backup},
+                visiblecheck={acl, use, mod_backup}}
+     
+     |Acc].
+
+
+observe_rsc_update(#rsc_update{action=update, id=Id, props=Props}, Acc, Context) ->
+    m_backup_revision:save_revision(Id, Props, Context),
+    Acc;
+observe_rsc_update(_, Acc, _Context) ->
+    Acc.
+
+
+%% @doc Callback for controller_file_readonly.  Check if the file exists.
 file_exists(File, Context) ->
     PathFile = filename:join([dir(Context), File]),
     case filelib:is_regular(PathFile) of 
@@ -59,7 +86,7 @@ file_exists(File, Context) ->
     end.
 
 
-%% @doc Callback for resource_file_readonly.  Check if access is allowed.
+%% @doc Callback for controller_file_readonly.  Check if access is allowed.
 file_forbidden(_File, Context) ->
     not z_acl:is_allowed(use, mod_admin_backup, Context).
 
@@ -80,7 +107,12 @@ backup_in_progress(Context) ->
         undefined -> false;
         _ -> true
     end.
-    
+
+
+manage_schema(install, Context) ->
+    m_backup_revision:install(Context).
+
+
 
 %%====================================================================
 %% API
@@ -159,22 +191,9 @@ handle_info(periodic_backup, #state{backup_pid=Pid} = State) when is_pid(Pid) ->
 handle_info(periodic_backup, State) ->
     cleanup(State#state.context),
     z_utils:flush_message(periodic_backup), 
-    {Date, Time} = calendar:local_time(),
-    case Time >= {3,0,0} andalso Time =< {7,0,0} of
-        true ->
-            DoStart = case list_backup_files(State#state.context) of
-                [{_, LastBackupDate}|_] -> LastBackupDate < {Date, {0,0,0}};
-                [] -> true
-            end,
-            case DoStart of
-                true ->
-                    Pid = do_backup(erlydtl_dateformat:format({Date, Time}, "Ymd-His", State#state.context), State),
-                    {noreply, State#state{backup_pid=Pid, backup_start={Date, Time}}};
-                false ->
-                    {noreply, State}
-            end;
-        false ->
-            {noreply, State}
+    case z_convert:to_bool(m_config:get_value(mod_backup, daily_dump, State#state.context)) of
+        true -> maybe_daily_dump(State);
+        false -> {noreply, State}
     end;
 
 handle_info({'EXIT', Pid, normal}, State) ->
@@ -240,6 +259,27 @@ cleanup(Context) ->
     end.
     
 
+
+maybe_daily_dump(State) ->
+    {Date, Time} = calendar:local_time(),
+    case Time >= {3,0,0} andalso Time =< {7,0,0} of
+        true ->
+            DoStart = case list_backup_files(State#state.context) of
+                [{_, LastBackupDate}|_] -> LastBackupDate < {Date, {0,0,0}};
+                [] -> true
+            end,
+            case DoStart of
+                true ->
+                    Pid = do_backup(erlydtl_dateformat:format({Date, Time}, "Ymd-His", State#state.context), State),
+                    {noreply, State#state{backup_pid=Pid, backup_start={Date, Time}}};
+                false ->
+                    {noreply, State}
+            end;
+        false ->
+            {noreply, State}
+    end.
+
+
 %% @doc Start a backup and return the pid of the backup process, whilst linking to the process.
 do_backup(Name, State) ->
     spawn_link(fun() -> do_backup_process(Name, State#state.context) end).
@@ -247,7 +287,7 @@ do_backup(Name, State) ->
 
 %% @todo Add a tar of all files in the files/archive directory (excluding preview)
 do_backup_process(Name, Context) ->
-    Cfg = check_configuration(Context),
+    Cfg = check_configuration(),
     case proplists:get_value(ok, Cfg) of
         true ->
             ok = pg_dump(Name, Context),
@@ -287,7 +327,7 @@ pg_dump(Name, Context) ->
     ok = file:change_mode(PgPass, 8#00600),
     Command = [
                "PGPASSFILE='",PgPass,"' '",
-               db_dump_cmd(Context),
+               db_dump_cmd(),
                "' -h ", Host,
                " -p ", z_convert:to_list(Port),
                " -w ", 
@@ -316,7 +356,7 @@ archive(Name, Context) ->
         true ->
             DumpFile = filename:join(dir(Context), z_convert:to_list(Name) ++ ".tar.gz"),
             Command = lists:flatten([
-                                     archive_cmd(Context),
+                                     archive_cmd(),
                                      " -c -z ",
                                      "-f '", DumpFile, "' ",
                                      "-C '", ArchiveDir, "' ",
@@ -346,18 +386,19 @@ filename_to_date(File) ->
     {{Y,M,D},{H,I,S}}.
 
 
-archive_cmd(Context) ->
-    z_convert:to_list(m_config:get_value(?MODULE, tar, "tar", Context)).
+archive_cmd() ->
+    z_convert:to_list(z_config:get(tar, "tar")).
 
-db_dump_cmd(Context) ->
-    z_convert:to_list(m_config:get_value(?MODULE, pg_dump, "pg_dump", Context)).
+db_dump_cmd() ->
+    z_convert:to_list(z_config:get(pg_dump, "pg_dump")).
 
 
 %% @doc Check if we can make backups, the configuration is ok
-check_configuration(Context) ->
+check_configuration() ->
     Which = fun(Cmd) -> filelib:is_regular(z_string:trim_right(os:cmd("which " ++ z_utils:os_escape(Cmd)))) end,
-    Db = Which(db_dump_cmd(Context)),
-    Tar = Which(archive_cmd(Context)),
+    Db = Which(db_dump_cmd()),
+    Tar = Which(archive_cmd()),
     [{ok, Db and Tar},
      {db_dump, Db},
      {archive, Tar}].
+

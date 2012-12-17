@@ -65,8 +65,14 @@
     uri_lookup/2
 ]).
 
+-export_type([resource/0, resource_id/0, resource_name/0]).
+
 -include_lib("zotonic.hrl").
 
+-type resource() :: resource_id() | resource_name().
+-type resource_id() :: integer() | list(digits()).
+-type resource_name() :: string() | binary() | atom().
+-type digits() :: 16#30..16#39.
 
 %% @doc Fetch the value for the key from a model source
 %% @spec m_find_value(Key, Source, Context) -> term()
@@ -162,10 +168,17 @@ page_path_to_id(Path, Context) ->
 get(Id, Context) ->
     case rid(Id, Context) of
         Rid when is_integer(Rid) ->
-            F = fun() ->
-                get_raw(Rid, Context)
-            end,
-            z_depcache:memo(F, Rid, ?WEEK, Context)
+            z_depcache:memo(fun() -> 
+                                case get_raw(Rid, Context) of
+                                    undefined -> undefined;
+                                    Props -> z_notifier:foldr(#rsc_get{id=Rid}, Props, Context) 
+                                end
+                            end,
+                            Rid,
+                            ?WEEK,
+                            Context);
+        undefined ->
+            undefined
     end.
 
 %% @doc Get the resource from the database, do not fetch the pivot fields.
@@ -173,7 +186,12 @@ get_raw(Id, Context) when is_integer(Id) ->
     SQL = case z_memo:get(rsc_raw_sql) of
             undefined ->
                 AllCols = [ z_convert:to_list(C) || C <- z_db:column_names(rsc, Context) ],
-                DataCols = lists:filter(fun("pivot_" ++ _) -> false; (_) -> true end, AllCols),
+                DataCols = lists:filter(
+                                    fun("pivot_geocode") -> true;
+                                       ("pivot_" ++ _) -> false; 
+                                       (_) -> true 
+                                    end, 
+                                    AllCols),
                 Query = "select "++string:join(DataCols, ",") ++ " from rsc where id = $1",
                 z_memo:set(rsc_raw_sql, Query),
                 Query;
@@ -187,27 +205,34 @@ get_raw(Id, Context) when is_integer(Id) ->
              
 
 
-%% @doc Get the ACL fields for the resource with the id. The id must be an integer
-%% @spec get_acl_props(Id, #context{}) -> #acl_props{}
+%% @doc Get the ACL fields for the resource with the id.
+%% Will always return a valid record, even if the resource does not exist.
+-spec get_acl_props(Id::resource(), #context{}) -> #acl_props{}.
 get_acl_props(Id, Context) when is_integer(Id) ->
     F = fun() ->
-            case z_db:q_row("
-                select is_published, is_authoritative, visible_for,
-                    publication_start, publication_end
-                from rsc 
-                where id = $1", [Id], Context) of
-    
-            {IsPub, IsAuth, Vis, PubS, PubE} ->
-                #acl_props{is_published=IsPub, is_authoritative=IsAuth,visible_for=Vis, 
-                           publication_start=PubS, publication_end=PubE};
-            undefined ->
-                #acl_props{is_published=false, visible_for=3}
-        end
-    end,
+                Result = 
+                    z_db:q_row(
+                      "select is_published, is_authoritative, visible_for, "
+                      "publication_start, publication_end "
+                      "from rsc "
+                      "where id = $1", 
+                      [Id], Context),
+                case Result of
+                    {IsPub, IsAuth, Vis, PubS, PubE} ->
+                        #acl_props{is_published=IsPub, is_authoritative=IsAuth,visible_for=Vis, 
+                                   publication_start=PubS, publication_end=PubE};
+                    undefined ->
+                        #acl_props{is_published=false, visible_for=?ACL_VIS_USER}
+                end
+        end,
     z_depcache:memo(F, {rsc_acl_fields, Id}, ?DAY, [Id], Context);
-
 get_acl_props(Name, Context) ->
-    get_acl_props(name_to_id_check(Name, Context), Context).
+    case name_to_id(Name, Context) of
+        {ok, Id} ->
+            get_acl_props(Id, Context);
+        _ ->
+            #acl_props{is_published=false, visible_for=?ACL_VIS_USER}
+    end.
 
 
 %% @doc Insert a new resource
@@ -337,7 +362,10 @@ p(Id, Property, DefaultValue, Context) ->
 
 %% @doc Fetch a property from a resource, no ACL check is done.
 p_no_acl(undefined, _Predicate, _Context) -> undefined;
-p_no_acl(Id, Prop, Context) when not is_integer(Id) -> p_no_acl(rid(Id, Context), Prop, Context);
+p_no_acl(Id, Prop, Context) when not is_integer(Id) -> 
+    case rid(Id, Context) of
+        Rid when is_integer(Rid) -> p_no_acl(Rid, Prop, Context)
+    end;
 p_no_acl(Id, o, Context)  -> o(Id, Context);
 p_no_acl(Id, s, Context)  -> s(Id, Context);
 p_no_acl(Id, op, Context) -> op(Id, Context);
@@ -421,7 +449,7 @@ p_no_acl(Id, Predicate, Context) when is_integer(Id) ->
                 % Unknown properties will be checked against the predicates, returns o(Predicate).
                 case m_predicate:is_predicate(Predicate, Context) of
                     true -> o(Id, Predicate, Context);
-                    false -> undefined
+                    false -> undefined % z_notifier:first(#rsc_property{id=Id, property=Predicate}, Context)
                 end;
             _ ->
                 Value
@@ -609,7 +637,7 @@ page_url(Id, Context) ->
                 {ok, Url} -> 
                     Url;
                 undefined ->
-                    Args = [{id,RscId}, {slug, p(RscId, slug, Context)}],
+                    Args = [{id,RscId}, {slug, p(RscId, slug, Context)} | z_context:get(extra_args, Context, [])],
                     page_url_path(CatPath, Args, Context)
             end;
         _ ->
@@ -617,7 +645,12 @@ page_url(Id, Context) ->
     end.
 
 page_url_path([], Args, Context) ->
-    z_dispatcher:url_for(page, Args, Context);
+    case z_dispatcher:url_for(page, Args, Context) of
+        undefined ->
+            ?zWarning("Failed to get page url path. Is the `page' dispatch rule missing?", Context), 
+            undefined;
+        Url -> Url
+    end;
 page_url_path([CatName|Rest], Args, Context) ->
     case z_dispatcher:url_for(CatName, Args, Context) of
         undefined -> page_url_path(Rest, Args, Context);

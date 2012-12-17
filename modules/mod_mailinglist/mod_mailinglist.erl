@@ -34,15 +34,17 @@
 
 %% interface functions
 -export([
-	manage_schema/2,
-	observe_search_query/2,
-	observe_mailinglist_message/2,
-	observe_email_bounced/2,
-	event/2,
-	page_attachments/2
-]).
+         manage_schema/2,
+         observe_search_query/2,
+         observe_mailinglist_message/2,
+         observe_email_bounced/2,
+         event/2,
+         page_attachments/2,
+         observe_admin_menu/3
+        ]).
 
 -include_lib("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
 
 -record(state, {context}).
 
@@ -132,7 +134,8 @@ event(#postback{message={mailinglist_reset, Args}}, Context) ->
 %% @doc Handle upload of a new recipients list
 event(#submit{message={mailinglist_upload,[{id,Id}]}}, Context) ->
     #upload{tmpfile=TmpFile} = z_context:get_q_validated("file", Context),
-    case import_file(TmpFile, Id, Context) of
+    IsTruncate = z_convert:to_bool(z_context:get_q("truncate", Context)),
+    case import_file(TmpFile, IsTruncate, Id, Context) of
         ok ->
             z_render:wire([{dialog_close, []}, {reload, []}], Context);
         {error, Msg} ->
@@ -206,7 +209,7 @@ handle_call({{dropbox_file, File}, _SenderContext}, _From, State) ->
 		ListId ->
 			HandleF = fun() ->
 				C = z_acl:sudo(State#state.context),
-                case import_file(File, ListId, C) of
+                case import_file(File, true, ListId, C) of
                     ok ->
         				z_email:send_admin(
                           "mod_mailinglist: Import from dropbox",
@@ -270,11 +273,11 @@ code_change(_OldVsn, State, _Extra) ->
 
 
 %% @doc Import a file, replacing the recipients of the list.
-import_file(TmpFile, Id, Context) ->
+import_file(TmpFile, IsTruncate, Id, Context) ->
 	{ok, Data} = file:read_file(TmpFile),
 	file:delete(TmpFile),
     try
-        ok = m_mailinglist:replace_recipients(Id, Data, Context)
+        ok = m_mailinglist:insert_recipients(Id, Data, IsTruncate, Context)
     catch
         _: {badmatch, {rollback, {{case_clause, {error, {error, error, <<"22021">>, _, _}}},_}}}->
             {error, "The encoding of the input file is not right. Please upload a file with UTF-8 encoding."};
@@ -295,8 +298,7 @@ poll_scheduled(Context) ->
 	end.
 	
 
-%% @doc Send the page to the mailinglist. The first 20 e-mails are send directly, which is useful for
-%% short lists like test e-mail lists. All other e-mails are queued and sent later.
+%% @doc Send the page to the mailinglist.
 send_mailing(ListId, PageId, Context) ->
     spawn(fun() -> send_mailing_process(ListId, PageId, z_acl:sudo(Context)) end).
 
@@ -314,41 +316,33 @@ send_mailing_process(ListId, PageId, Context) ->
 
 send_mailing_process(ListId, Recipients, PageId, Context) ->
     m_mailinglist:reset_bounced(ListId, Context),
-    {Direct,Queued} = split_list(20, Recipients),
     From = m_mailinglist:get_email_from(ListId, Context),
     Options = [
         {id,PageId}, {list_id, ListId}, {email_from, From}
     ],
-    [ send(true, Email, From, Options, Context) || Email <- Direct ],
-    [ send(false, Email, From, Options, Context) || Email <- Queued ],
+    [ send(Email, From, Options, Context) || Email <- Recipients ],
     ok.
 
 
-    send(_IsDirect, undefined, _From, _Options, _Context) ->
+    send(undefined, _From, _Options, _Context) ->
         skip;
-    send(IsDirect, Id, From, Options, Context) when is_integer(Id) ->
-        send(IsDirect, m_rsc:p_no_acl(Id, email, Context), From, [{recipient_id,Id}|Options], Context);
-    send(IsDirect, Email, From, Options, Context) ->
+    send(Id, From, Options, Context) when is_integer(Id) ->
+        send(m_rsc:p_no_acl(Id, email, Context), From, [{recipient_id,Id}|Options], Context);
+    send(Email, From, Options, Context) ->
         case z_convert:to_list(z_string:trim(Email)) of
-            [] -> skip;
+            [] -> 
+                skip;
             Email1 ->
                 Id = proplists:get_value(id, Options),
                 Attachments = mod_mailinglist:page_attachments(Id, Context),
-                z_email_server:send(#email{queue=not(IsDirect), to=Email1, from=From,
-                                           html_tpl={cat, "mailing_page.tpl"}, vars=[{email,Email1}|Options], attachments=Attachments}, Context)
+                z_email_server:send(#email{to=Email1, 
+                                           from=From,
+                                           html_tpl={cat, "mailing_page.tpl"}, 
+                                           vars=[{email,Email1}|Options], 
+                                           attachments=Attachments
+                                    }, 
+                                    Context)
         end.
-
-
-	split_list(N, List) ->
-		split_list(N, List, []).
-
-		split_list(0, List, Acc) ->
-			{Acc, List};
-		split_list(_N, [], Acc) ->
-			{Acc, []};
-		split_list(N, [H|T], Acc) ->
-			split_list(N-1, T, [H|Acc]).
-
 
 %% @doc Return list of attachments for this page as a list of files. Attachments are outgoing 'hasdocument' edges.
 page_attachments(Id, Context) ->
@@ -363,3 +357,13 @@ as_upload(Id, Context) ->
              mime=proplists:get_value(mime, M),
              filename=proplists:get_value(original_filename, M)
            }.
+
+observe_admin_menu(admin_menu, Acc, Context) ->
+    [
+     #menu_item{id=admin_mailinglist,
+                parent=admin_content,
+                label=?__("Mailing lists", Context),
+                url={admin_mailinglist},
+                visiblecheck={acl, use, ?MODULE}}
+     
+     |Acc].

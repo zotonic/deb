@@ -30,31 +30,40 @@
 
 render_action(TriggerId, TargetId, Args, Context) ->
     EdgeId = proplists:get_value(edge_id, Args),
+    Callback = proplists:get_value(callback, Args),
     RscId = proplists:get_value(id, Args),
     Template = proplists:get_value(template, Args),
     Actions = proplists:get_all_values(action, Args),
-    Postback = {edit_basics, RscId, EdgeId, Template, Actions},
+    Postback = {edit_basics, RscId, EdgeId, Template, Actions, Callback},
     {PostbackMsgJS, _PickledPostback} = z_render:make_postback(Postback, click, TriggerId, TargetId, ?MODULE, Context),
     {PostbackMsgJS, Context}.
 
 
 %% @doc Fill the dialog with the edit basics form. The form will be posted back to this module.
 %% @spec event(Event, Context1) -> Context2
-event(#postback{message={edit_basics, RscId, EdgeId, Template, Actions}, target=TargetId}, Context) ->
+event(#postback{message={edit_basics, RscId, EdgeId, Template, Actions, Callback}, target=TargetId}, Context) ->
     ObjectId = case RscId of
                     undefined ->
-                        {_, _, OId} = m_edge:get_triple(EdgeId, Context),
-                        OId;
+                        case EdgeId of
+                            undefined ->
+                                z_convert:to_integer(z_context:get_q("id", Context));
+                            _ ->
+                                {_, _, OId} = m_edge:get_triple(EdgeId, Context),
+                                OId
+                        end;
                     _ -> 
                         RscId
                end,
+    TargetId1 = z_context:get_q("element_id", Context, TargetId),
     Vars = [
         {delegate, atom_to_list(?MODULE)},
         {id, ObjectId},
         {edge_id, EdgeId},
         {template, Template},
-        {update_element, TargetId},
-        {actions, Actions}
+        {update_element, TargetId1},
+        {is_update, z_convert:to_bool(z_context:get_q("is_update", Context))},
+        {actions, Actions},
+        {callback, Callback}
     ],
     Title = z_convert:to_list(z_trans:lookup_fallback(m_rsc:p(ObjectId, title, Context), Context)),
     z_render:dialog("Edit " ++ Title, "_action_dialog_edit_basics.tpl", Vars, Context);
@@ -66,7 +75,7 @@ event(#submit{message={rsc_edit_basics, Args}}, Context) ->
     Actions = proplists:get_value(actions, Args, []),
 
     Post = z_context:get_q_all_noz(Context),
-    Props = resource_admin_edit:filter_props(Post),
+    Props = controller_admin_edit:filter_props(Post),
     Props1 = proplists:delete("id", Props),
 
     case m_rsc:update(Id, Props1, Context) of
@@ -83,16 +92,34 @@ event(#submit{message={rsc_edit_basics, Args}}, Context) ->
                             {edge_id, EdgeId}
                         ]
                   end,
-            Html = z_template:render(case proplists:get_value(template, Args) of 
-                                        undefined -> "_rsc_edge.tpl"; 
-                                        X -> X
-                                      end,
-                                      Vars,
-                                      Context),
-            Context1 = z_render:replace(proplists:get_value(update_element, Args), Html, Context),
+            Context1 = case proplists:get_value(update_element, Args) of
+                            window -> Context;
+                            undefined -> Context;
+                            UpdateElt ->
+                                Html = z_template:render(case proplists:get_value(template, Args) of 
+                                                            undefined -> "_rsc_edge.tpl"; 
+                                                            X -> X
+                                                          end,
+                                                          Vars,
+                                                          Context),
+                                case proplists:get_value(is_update, Args) of
+                                    true -> z_render:update(UpdateElt, Html, Context);
+                                    false -> z_render:replace(UpdateElt, Html, Context)
+                                end
+                        end,
             Context2 = z_render:wire({dialog_close, []}, Context1),
             %% wire any custom actions
-            z_render:wire([{Action, [{id, Id}|ActionArgs]}|| {Action, ActionArgs} <- Actions], Context2);
+            Context3 = case proplists:get_value(callback, Args) of
+                            undefined -> Context2;
+                            Callback -> 
+                                Title = m_rsc:p(Id, title, Context2),
+                                z_render:wire({script, [{script, [
+                                                Callback,
+                                                $(,$",integer_to_list(Id),$",$,,
+                                                   $",z_utils:js_escape(Title,Context2),$",$),$;
+                                            ]}]}, Context2)
+                       end,
+            z_render:wire([{Action, [{id, Id}|ActionArgs]}|| {Action, ActionArgs} <- Actions], Context3);
 
         {error, _Reason} ->
             z_render:growl_error(?__("Something went wrong. Sorry.", Context), Context)

@@ -155,7 +155,7 @@ init(SiteProps) ->
 drop_port(undefined) ->
     undefined;
 drop_port(none) ->
-    "localhost";
+    undefined;
 drop_port(Hostname) ->
     hd(string:tokens(Hostname, ":")).
 
@@ -300,17 +300,42 @@ dispatch_for_uri_lookup1([{Name, Pattern, _Resource, _Args}|T], Dict) ->
 %% @doc Make an uri for the named dispatch with the given parameters
 make_url_for(Name, Args, Escape, UriLookup) ->
     Name1 = z_convert:to_atom(Name),
-    Args1 = lists:filter(fun
-            ({_, <<>>}) -> false;
-            ({_, []}) -> false;
-            ({_, undefined}) -> false;
-            (_) -> true
-        end, Args),
+    Args1 = filter_empty_args(Args),
     case dict:find(Name1, UriLookup) of
-        {ok, Patterns} -> make_url_for1(Args1, Patterns, Escape, undefined);
-        error -> undefined
+        {ok, Patterns} -> 
+            case make_url_for1(Args1, Patterns, Escape, undefined) of
+                undefined ->
+                    case Name of
+                        image -> 
+                            skip;
+                        _ ->
+                            lager:warning("make_url_for: dispatch rule `~p' failed when processing ~p.~n", 
+                                 [
+                                  Name1,
+                                  [{'Args', Args1},
+                                   {'Patterns', Patterns},
+                                   {'Escape', Escape}
+                                  ]
+                                 ])
+                    end,
+                    undefined;
+                Url -> Url
+            end;
+        error -> 
+            undefined
     end.
 
+
+%% @doc Filter out empty dispatch arguments before making an URL.
+filter_empty_args(Args) ->
+    lists:filter(
+      fun
+          ({_, <<>>}) -> false;
+          ({_, []}) -> false;
+          ({_, undefined}) -> false;
+          (_) -> true
+      end, Args).
+    
 
 %% @doc Try to match all patterns with the arguments
 make_url_for1(_Args, [], _Escape, undefined) ->

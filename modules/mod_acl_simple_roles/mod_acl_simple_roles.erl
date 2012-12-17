@@ -30,16 +30,18 @@
 
 %% interface functions
 -export([
-	manage_schema/2,
+    manage_schema/2,
     observe_acl_is_allowed/2,
     observe_acl_can_see/2,
     observe_acl_logon/2,
     observe_acl_logoff/2,
     observe_acl_rsc_update_check/3,
-    observe_rsc_update/3
+    observe_rsc_update/3,
+    observe_admin_menu/3
 ]).
 
 -include("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
 
 -record(acl_user, {modules, categories, roles, view_all, only_update_own, file_mimes, file_size, visible_for}).
 
@@ -48,12 +50,14 @@
 
 %% @doc Check if the user is allowed to perform Action on Object
 %% @todo #acl_edge
-observe_acl_is_allowed(#acl_is_allowed{action=view, object=Id}, #context{user_id=undefined} = Context) when is_integer(Id) ->
+observe_acl_is_allowed(#acl_is_allowed{object=undefined}, _Context) ->
+    undefined;
+observe_acl_is_allowed(#acl_is_allowed{action=view, object=Id}, #context{user_id=undefined} = Context) ->
     is_view_public(Id, Context);
 observe_acl_is_allowed(#acl_is_allowed{}, #context{user_id=undefined}) ->
 	undefined;
 % Logged on users
-observe_acl_is_allowed(#acl_is_allowed{action=view, object=Id}, Context) when is_integer(Id) ->
+observe_acl_is_allowed(#acl_is_allowed{action=view, object=Id}, Context) ->
     can_view(Id, Context);
 observe_acl_is_allowed(#acl_is_allowed{action=insert, object=#acl_media{mime=Mime, size=Size}}, Context) -> 
     can_media(Mime, Size, Context);
@@ -61,17 +65,17 @@ observe_acl_is_allowed(#acl_is_allowed{action=insert, object=#acl_rsc{category=C
     can_insert(Cat, Context);
 observe_acl_is_allowed(#acl_is_allowed{action=insert, object=Cat}, Context) when is_atom(Cat) -> 
     can_insert(Cat, Context);
-observe_acl_is_allowed(#acl_is_allowed{action=update, object=Id}, Context) when is_integer(Id) ->
+observe_acl_is_allowed(#acl_is_allowed{action=update, object=Id}, Context) ->
 	case m_rsc:p_no_acl(Id, is_authoritative, Context) of
 		true -> can_edit(Id, Context);
 		_ -> undefined
 	end;
-observe_acl_is_allowed(#acl_is_allowed{action=delete, object=Id}, Context) when is_integer(Id) ->
+observe_acl_is_allowed(#acl_is_allowed{object=#acl_edge{} = Edge}, Context) ->
+    can_edge(Edge, Context);
+observe_acl_is_allowed(#acl_is_allowed{action=delete, object=Id}, Context) ->
 	can_edit(Id, Context);
 observe_acl_is_allowed(#acl_is_allowed{action=Action, object=ModuleName}, Context) when Action == use; Action == admin ->
 	can_module(Action, ModuleName, Context);
-observe_acl_is_allowed(#acl_is_allowed{object=#acl_edge{} = Edge}, Context) ->
-    can_edge(Edge, Context);
 observe_acl_is_allowed(#acl_is_allowed{}, _Context) ->
     undefined.
 
@@ -400,6 +404,16 @@ can_media(Mime, Size, #context{acl=ACL}) ->
 
 
 
+observe_admin_menu(admin_menu, Acc, Context) ->
+    [
+     #menu_item{id=admin_acl,
+                parent=admin_auth,
+                label=?__("Access Control", Context),
+                url={admin_acl},
+                visiblecheck={acl, use, ?MODULE}}
+     |Acc].
+
+
 %% @doc The datamodel for the role based ACL
 manage_schema(install, _Context) ->
     #datamodel{categories=
@@ -411,7 +425,7 @@ manage_schema(install, _Context) ->
                predicates=
                [{acl_role_member,
                  [{title, <<"ACL Role Member">>}],
-                 [{acl_role, person}, {acl_role, institution}]
+                 [{acl_role, person}]
                 }],
                resources=
                [

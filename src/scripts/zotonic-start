@@ -53,12 +53,12 @@ else
     starttime=$now
 
     # Only build zotonic the first time, not for restarts
-    echo  "Starting zotonic $SNAME@$HOSTNAME" 
-    make >/dev/null
+    echo  "Starting Zotonic $NODENAME@$HOSTNAME" 
+    ${MAKE} >/dev/null
 fi
 
 ENV=`which env`
 HEART_COMMAND="${ENV} HEART=true ZOTONIC_HEART_RESTARTS=$restarts ZOTONIC_HEART_START=$starttime $ZOTONIC_BIN/zotonic start"
 export HEART_COMMAND
 
-$ERL -env ERL_MAX_PORTS $MAX_PORTS -pa $PA -name $SNAME@$HOSTNAME -boot start_sasl -config $ZOTONIC/priv/erlang.config -heart -detached -s zotonic
+$ERL -env ERL_MAX_PORTS $MAX_PORTS +P $MAX_PROCESSES +K $KERNEL_POLL -pa $PA $NAME_ARG $NODE -boot start_sasl -config $ZOTONIC/priv/erlang.config -heart -detached -s zotonic

@@ -1,11 +1,5 @@
-<div class="alert">
-	<p>{{ text }}</p>
+<p class="text-warning">{{ text }}</p>
 
-	<div class="buttons">
-		<button id="{{ #cancel }}">{{ button|default:_"OK" }}</button>
-		{% wire id=#cancel 
-				action={dialog_close}
-				action=action
-		%}
-	</div>
+<div class="modal-footer">
+	{% button class="btn btn-primary" text=button|default:_"OK" action={dialog_close} action=action postback=postback delegate=delegate %}
 </div>

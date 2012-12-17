@@ -61,6 +61,9 @@ manage(Module, Datamodel, Context) ->
     ok.
 
 
+manage_medium(Module, {Name, Props}, Context) ->
+    manage_resource(Module, {Name, media, Props}, Context);
+
 manage_medium(Module, {Name, {EmbedService, EmbedCode}, Props}, Context) ->
     case manage_resource(Module, {Name, media, Props}, Context) of
         {ok} ->
@@ -107,7 +110,8 @@ manage_predicate(Module, {Name, Uri, Props, ValidFor}, Context) ->
     manage_predicate(Module, {Name, [{uri,Uri}|Props], ValidFor}, Context);
 
 manage_predicate(Module, {Name, Props, ValidFor}, Context) ->
-    case manage_resource(Module, {Name, predicate, Props}, Context) of
+    Category = proplists:get_value(category, Props, predicate),
+    case manage_resource(Module, {Name, Category, lists:keydelete(category, 1, Props)}, Context) of
         {ok} ->
             {ok};
         {ok, Id} ->
@@ -145,7 +149,7 @@ manage_resource(Module, {Name, Category, Props0}, Context) ->
                                  undefined -> [{visible_for, ?ACL_VIS_PUBLIC} | Props2];
                                  _ -> Props2
                              end,
-                    ?zInfo(io_lib:format("Creating new resource '~p'", [Name]), Context),
+                    ?zInfo(io_lib:format("Creating new ~p '~p'", [Category, Name]), Context),
                     {ok, Id} = m_rsc:insert(Props3, Context),
                     case proplists:get_value(media_url, Props3) of
                         undefined ->

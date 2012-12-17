@@ -328,7 +328,8 @@ tokenize(B, S=#decoder{offset=O}) ->
             {Tag, S1} = tokenize_literal(B, ?ADV_COL(S, 2)),
             {S2, _} = find_gt(B, S1),
             {{end_tag, Tag}, S2};
-        <<_:O/binary, "<", C, _/binary>> when ?IS_WHITESPACE(C) ->
+        <<_:O/binary, "<", C, _/binary>> 
+                when ?IS_WHITESPACE(C); not ?IS_LITERAL_SAFE(C) ->
             %% This isn't really strict HTML
             {{data, Data, _Whitespace}, S1} = tokenize_data(B, ?INC_COL(S)),
             {{data, <<$<, Data/binary>>, false}, S1};
@@ -339,7 +340,7 @@ tokenize(B, S=#decoder{offset=O}) ->
             Singleton = HasSlash orelse is_singleton(Tag),
             {{start_tag, Tag, Attrs, Singleton}, S3};
         _ ->
-            tokenize_data(B, S)
+            tokenize_data(B, S, false)
     end.
 
 tree_data([{data, Data, Whitespace} | Rest], AllWhitespace, Acc) ->
@@ -455,6 +456,9 @@ is_singleton(_) -> false.
 
 tokenize_data(B, S=#decoder{offset=O}) ->
     tokenize_data(B, S, O, true).
+
+tokenize_data(B, S=#decoder{offset=O}, WhiteSpace) ->
+    tokenize_data(B, S, O, WhiteSpace).
 
 tokenize_data(B, S=#decoder{offset=O}, Start, Whitespace) ->
     case B of
@@ -932,39 +936,50 @@ parse_test() ->
 </html>">>,
     ?assertEqual(
        {<<"html">>, [],
-        [{<<"head">>, [],
-          [{<<"meta">>,
+        [<<"\n ">>,
+         {<<"head">>, [],
+          [<<"\n   ">>,
+           {<<"meta">>,
             [{<<"http-equiv">>,<<"Content-Type">>},
              {<<"content">>,<<"text/html; charset=UTF-8">>}],
             []},
+           <<"\n   ">>,
            {<<"title">>,[],[<<"Foo">>]},
+           <<"\n   ">>,
            {<<"link">>,
             [{<<"rel">>,<<"stylesheet">>},
              {<<"type">>,<<"text/css">>},
              {<<"href">>,<<"/static/rel/dojo/resources/dojo.css">>},
              {<<"media">>,<<"screen">>}],
             []},
+           <<"\n   ">>,
            {<<"link">>,
             [{<<"rel">>,<<"stylesheet">>},
              {<<"type">>,<<"text/css">>},
              {<<"href">>,<<"/static/foo.css">>},
              {<<"media">>,<<"screen">>}],
             []},
+           <<"\n   ">>,
            {comment,<<"[if lt IE 7]>\n   <style type=\"text/css\">\n     .no_ie { display: none; }\n   </style>\n   <![endif]">>},
+           <<"\n   ">>,
            {<<"link">>,
             [{<<"rel">>,<<"icon">>},
              {<<"href">>,<<"/static/images/favicon.ico">>},
              {<<"type">>,<<"image/x-icon">>}],
             []},
+           <<"\n   ">>,
            {<<"link">>,
             [{<<"rel">>,<<"shortcut icon">>},
              {<<"href">>,<<"/static/images/favicon.ico">>},
              {<<"type">>,<<"image/x-icon">>}],
-            []}]},
+            []},
+           <<"\n ">>]},
+         <<"\n ">>,
          {<<"body">>,
           [{<<"id">>,<<"home">>},
            {<<"class">>,<<"tundra">>}],
-          [<<"&lt;<this<!-- is -->CDATA>&gt;">>]}]},
+          [<<"&lt;<this<!-- is -->CDATA>&gt;">>]},
+         <<"\n">>]},
        parse(D0)),
     ?assertEqual(
        {<<"html">>,[],
@@ -1385,5 +1400,23 @@ parse_charref_garbage_in_garbage_out_test() ->
        mochiweb_html:parse(D1)),
     
     ok.
+
+parse_unescaped_lt_test() ->
+    D1 = <<"<div> < < <a href=\"/\">Back</a></div>">>,
+    ?assertEqual(
+        {<<"div">>, [], [<<" < < ">>, {<<"a">>, [{<<"href">>, <<"/">>}], 
+                                       [<<"Back">>]}]},
+        mochiweb_html:parse(D1)),
+
+    D2 = <<"<div> << <a href=\"/\">Back</a></div>">>,
+    ?assertEqual(
+        {<<"div">>, [], [<<" << ">>, {<<"a">>, [{<<"href">>, <<"/">>}], 
+                                      [<<"Back">>]}]},
+    mochiweb_html:parse(D2)).
+
+
+
+
+
     
 -endif.

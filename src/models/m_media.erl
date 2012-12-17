@@ -1,11 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009-2012 Marc Worrell
-%% Date: 2009-04-09
-%%
 %% @doc Model for medium database
-%% @todo Add ACL checks for the mime types.
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2012 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -242,7 +239,8 @@ insert_file(File, Props, Context) ->
 
 insert_file(File, Props, PropsMedia, Context) ->
     Mime = proplists:get_value(mime, PropsMedia),
-    case z_acl:is_allowed(insert, #acl_media{mime=Mime, size=filelib:file_size(File)}, Context) of
+    case z_acl:is_allowed(insert, #acl_rsc{category=mime_to_category(Mime)}, Context) andalso
+         z_acl:is_allowed(insert, #acl_media{mime=Mime, size=filelib:file_size(File)}, Context) of
         true ->
             insert_file_mime_ok(File, Props, PropsMedia, Context);
         false ->
@@ -304,7 +302,8 @@ replace_file(File, RscId, Props, Opts, Context) ->
 
 replace_file(File, RscId, Props, PropsMedia, Opts, Context) ->
     Mime = proplists:get_value(mime, PropsMedia),
-    case z_acl:is_allowed(insert, #acl_media{mime=Mime, size=filelib:file_size(File)}, Context) of
+    case z_acl:is_allowed(insert, #acl_rsc{category=mime_to_category(Mime)}, Context) andalso
+         z_acl:is_allowed(insert, #acl_media{mime=Mime, size=filelib:file_size(File)}, Context) of
         true ->
             replace_file_mime_ok(File, RscId, Props, PropsMedia, Opts, Context);
         false ->
@@ -326,6 +325,15 @@ replace_file(File, RscId, Props, PropsMedia, Opts, Context) ->
                     {is_deletable_file, not z_media_archive:is_archived(File, Context)}
                     | PropsMedia
                 ],
+                MediumPropRows1 = z_notifier:foldl(
+                                        #media_upload_props{
+                                                id=RscId,
+                                                mime=Mime, 
+                                                archive_file=ArchiveFile,
+                                                options=Opts
+                                        },
+                                        MediumRowProps,
+                                        Context),
 
                 IsImport = proplists:is_defined(is_import, Opts),
                 NoTouch = proplists:is_defined(no_touch, Opts),
@@ -355,7 +363,7 @@ replace_file(File, RscId, Props, PropsMedia, Opts, Context) ->
                                                z_db:delete(medium, RscId, Ctx),
                                                {ok, RscId}
                                        end,
-                            case z_db:insert(medium, [{id, Id} | MediumRowProps], Ctx) of
+                            case z_db:insert(medium, [{id, Id} | MediumPropRows1], Ctx) of
                                 {ok, _MediaId} ->
                                     {ok, Id};
                                 Error ->
@@ -426,6 +434,8 @@ download_file(Url) ->
                       [{stream, File}]) of
         {ok, saved_to_file} ->
             {ok, File};
+        {ok, _Other} ->
+            {error, download_failed};
         {error, E} ->
             file:delete(File),
             {error, E}

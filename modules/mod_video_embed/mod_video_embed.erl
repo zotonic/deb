@@ -151,6 +151,7 @@ event(#submit{message={add_video_embed, EventProps}}, Context) ->
     Stay = z_convert:to_bool(proplists:get_value(stay, EventProps, false)),
     EmbedService = z_context:get_q("video_embed_service", Context),
     EmbedCode = z_context:get_q_validated("video_embed_code", Context),
+    Callback = proplists:get_value("callback", EventProps), 
 
     case Id of
         %% Create a new page
@@ -166,33 +167,27 @@ event(#submit{message={add_video_embed, EventProps}}, Context) ->
                 {video_embed_code, EmbedCode}
             ],
 
-            F = fun(Ctx) ->
-                case m_rsc:insert(Props, Context) of
-                    {ok, MediaRscId} ->
-                        case SubjectId of
-                            undefined -> nop;
-                            _ -> m_edge:insert(SubjectId, Predicate, MediaRscId, Ctx)
-                        end,
-                        {ok, MediaRscId};
-                    {error, Error} ->
-                        throw({error, Error})
-                end 
-            end,
-    
-            case z_db:transaction(F, Context) of
+            case m_rsc:insert(Props, Context) of
                 {ok, MediaId} ->
                     spawn(fun() -> preview_create(MediaId, Props, Context) end),
+
+                    {_, ContextLink} = mod_admin:do_link(z_convert:to_integer(SubjectId), Predicate, 
+                                                         MediaId, Callback, Context),
+
                     ContextRedirect = case SubjectId of
                         undefined ->
                             case Stay of
-                                false -> z_render:wire({redirect, [{dispatch, "admin_edit_rsc"}, {id, MediaId}]}, Context);
-                                true -> Context
+                                false -> z_render:wire({redirect, [{dispatch, "admin_edit_rsc"}, {id, MediaId}]}, ContextLink);
+                                true -> ContextLink
                             end;
-                        _ -> Context
+                        _ -> ContextLink
                     end,
-                    z_render:wire([{dialog_close, []}, {growl, [{text, "Made the media page."}]} | Actions], ContextRedirect);
-                {rollback, {_Error, _Trace}} ->
-                    ?ERROR("~p~n~p", [_Error, _Trace]),
+                    z_render:wire([
+                        {dialog_close, []},
+                        {growl, [{text, "Made the media page."}]}
+                        | Actions], ContextRedirect);
+                {error, _} = Error ->
+                    ?ERROR("~p", [Error]),
                     z_render:growl_error("Could not create the media page.", Context)
             end;
         
@@ -234,11 +229,11 @@ preview_youtube(MediaId, InsertProps, Context) ->
     case z_convert:to_list(proplists:get_value(video_embed_code, InsertProps)) of
         [] -> nop;
         Embed ->
-            case re:run(Embed, "youtube(\-nocookie)?\\.com/v/([^\?\"'&]+)", [{capture,[2],list}]) of
+            case re:run(Embed, "youtube(\-nocookie)?\\.com/(v|embed)/([^\?\"'&]+)", [{capture,[3],list}]) of
                 {match, [Code]} ->
                     Url = "http://img.youtube.com/vi/"++Code++"/0.jpg",
                     case httpc:request(Url) of
-                        {ok, {_StatusLine, _Header, Data}} ->
+                        {ok, {{_,200,_}, _Header, Data}} ->
                             %% Received the preview image, move it to a file.
                             m_media:save_preview(MediaId, Data, "image/jpeg", Context);
                         {error, _Reason} ->

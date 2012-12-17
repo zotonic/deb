@@ -26,10 +26,12 @@
 -mod_provides([]).
 
 -export([
-    observe_category_hierarchy_save/2
+         observe_category_hierarchy_save/2,
+         observe_admin_menu/3
 ]).
 
 -include_lib("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
 
 
 observe_category_hierarchy_save(#category_hierarchy_save{tree=New}, Context) ->
@@ -46,8 +48,9 @@ observe_category_hierarchy_save(#category_hierarchy_save{tree=New}, Context) ->
             OldIds = lists:sort(flatten(Old, [])),
             Deleted = OldIds -- NewIds,
             % Inserted = NewIds -- OldIds,
+
             lists:map(fun(Id) ->
-                        m_category:delete(Id, undefined, Context)
+                        ok = m_category:delete(Id, undefined, Context)
                       end,
                       Deleted),
             
@@ -76,3 +79,13 @@ pair(P, N, [{Id, Sub}|Rest], Acc) ->
     Acc1 = pair(Id, 1, Sub, Acc),
     pair(P, N+1, Rest, [{Id,P,N}|Acc1]).
 
+
+observe_admin_menu(admin_menu, Acc, Context) ->
+    [
+     #menu_item{id=admin_categories,
+                parent=admin_structure,
+                label=?__("Categories", Context),
+                url={admin_category_sorter},
+                visiblecheck={acl, insert, category}}
+     
+     |Acc].

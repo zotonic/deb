@@ -172,7 +172,7 @@ render_actions(TriggerId, TargetId, {Action, Args}, Context) ->
             Trigger = proplists:get_value(trigger, Args, TriggerId),
             Target = proplists:get_value(target,  Args, TargetId),
             case z_module_indexer:find(action, Action, Context) of
-                {ok, ActionModule} ->
+                {ok, #module_index{erlang_module=ActionModule}} ->
                     ActionModule:render_action(Trigger, Target, Args, Context);
                 {error, enoent} ->
                     ?LOG("No action enabled for \"~p\"", [Action]),
@@ -203,7 +203,7 @@ render_validator(TriggerId, TargetId, Args, Context) ->
     Name        = proplists:get_value(name,  Args, Target),
 
     % The validator object, can have parameters for failureMessage.
-    VldOptions  = z_utils:js_object(Args, [type,trigger,id,target]),
+    VldOptions  = z_utils:js_object(Args, [type,trigger,id,target], Context),
     VldScript   = [<<"z_init_validator(\"">>,Trigger,<<"\", ">>,VldOptions,<<");\n">>],
     
     % Now render and append all individual validations
@@ -213,7 +213,7 @@ render_validator(TriggerId, TargetId, Args, Context) ->
                     VMod = case proplists:get_value(delegate, VArgs) of
                                 undefined -> 
                                     case z_module_indexer:find(validator, VType, Context) of
-                                        {ok, Mod} -> {ok, Mod};
+                                        {ok, #module_index{erlang_module=Mod}} -> {ok, Mod};
                                         {error, enoent} -> ?LOG("No validator found for \"~p\"", [VType])
                                     end;
                                 Delegate  -> 
@@ -419,7 +419,7 @@ update_js_selector_first(CssSelector, Html, Function, AfterEffects) ->
 
 dialog(Title, Template, Vars, Context) ->
     {Html, Context1} = z_template:render_to_iolist(Template, Vars, Context),
-    Args = [{title, Title}, {text, Html}],
+    Args = [{title, z_trans:lookup_fallback(Title, Context)}, {text, Html}],
     Args1 = case proplists:get_value(width, Vars) of
                 undefined -> Args;
                 Width -> [{width, Width} | Args]
@@ -449,7 +449,7 @@ growl(Text, Type, Stay, Context) ->
 %% @doc Make an encoded string containing information which module and function to call.
 make_postback_info(Tag, EventType, TriggerId, TargetId, Delegate, Context) ->
     Delegate1 = case Delegate of
-                    undefined -> z_context:get_resource_module(Context);
+                    undefined -> z_context:get_controller_module(Context);
                     _         -> z_convert:to_atom(Delegate)
                 end,
     PostbackInfo = {EventType, TriggerId, TargetId, Tag, Delegate1},

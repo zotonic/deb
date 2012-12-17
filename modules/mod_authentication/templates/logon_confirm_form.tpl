@@ -2,7 +2,7 @@
 	wire id="logon_confirm_form"
 	type="submit"
 	postback={logon_confirm on_success=on_success on_success={dialog_close}}
-	delegate="resource_logon"
+	delegate="controller_logon"
 %}
 <form id="logon_confirm_form" method="post" action="postback">
 	<h1 class="logon_header">{_ Please confirm your _} <span>{{ m.config.site.title.value|default:"Zotonic" }} password</span></h1>
@@ -24,12 +24,8 @@
 	<div id="confirm_button">
 		<button type="submit">{_ Confirm _}</button>
 	</div>
-{%
-	wire id=#cancel
-	action={dialog_close}
-%}
 	<div id="cancel_button">
-		<button id="{{#cancel}}" type="cancel">{_ Cancel _}</button>
+	    {% button class="btn" text=_"Cancel" action={dialog_close} tag="a" %}
 	</div>
 </form>
 

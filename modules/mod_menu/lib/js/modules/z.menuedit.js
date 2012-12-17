@@ -44,7 +44,7 @@ $.widget("ui.menuedit", {
         self.options.receive = function(event, ui) {
             var elt = ui.item[0];
             var elt_id = $(elt).attr('id');
-            var target_elt = $('#'+elt_id, $(this));
+            var target_elt = $('.drag_group_dragdrop', $(this));
             var new_id = z_unique_id()+"-"+elt_id;
 
             $(target_elt)
@@ -67,6 +67,7 @@ $.widget("ui.menuedit", {
                 suppress_update = true;
             }
         };
+        $(self.element).bind('sortupdate', self.options.update);
         $(self.element).nestedSortable(self.options);
     },
     
@@ -89,7 +90,7 @@ $.ui.menuedit.defaults = {
 	forcePlaceholderSize: true,
 	handle: "div",
 	helper: "clone",
-	items: "li",
+	items: "li.menu-item",
 	maxLevels: 0,
 	opacity: .6,
 	placeholder: "placeholder",

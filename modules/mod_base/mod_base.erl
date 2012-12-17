@@ -1,9 +1,9 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009 Marc Worrell
+%% @copyright 2009-2012 Marc Worrell
 %% Date: 2009-06-08
 %% @doc The base module, implementing basic Zotonic scomps, actions, models and validators.
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2012 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,7 +31,9 @@
 %% interface functions
 -export([
     observe_media_stillimage/2,
-    observe_scomp_script_render/2
+    observe_scomp_script_render/2,
+    observe_dispatch/2,
+    observe_postback_notify/2
 ]).
 
 %% @doc Return the filename of a still image to be used for image tags.
@@ -57,7 +59,7 @@ observe_media_stillimage(#media_stillimage{props=Props}, Context) ->
                     lists:foldl(
                         fun(F, undefined) ->
                                 case z_module_indexer:find(lib, F, Context) of
-                                    {ok, File} -> {ok, {filepath, "lib/"++F, File}};
+                                    {ok, #module_index{filepath=_File}} -> {ok, "lib/"++F};
                                     {error, enoent} -> undefined
                                 end;
                            (_F, Result) ->
@@ -75,6 +77,65 @@ observe_scomp_script_render(#scomp_script_render{is_nostartup=false}, Context) -
     [<<"z_init_postback_forms();\nz_default_form_postback = \"">>, DefaultFormPostback, $", $; ];
 observe_scomp_script_render(#scomp_script_render{is_nostartup=true}, _Context) ->
     [].
+
+%% @doc Check if there is a controller or template matching the path.
+observe_dispatch(#dispatch{path=Path}, Context) ->
+    case m_rsc:page_path_to_id(Path, Context) of
+        {ok, Id} ->
+            {ok, Id};
+        {error, _} ->
+            Last = last(Path),
+            Template= case Last of
+                         $/ -> "static/"++Path++"index.tpl";
+                         _ -> "static/"++Path++".tpl"
+                      end,
+            case z_module_indexer:find(template, Template, Context) of
+                {ok, _} ->
+                    {ok, #dispatch_match{
+                        mod=controller_template,
+                        mod_opts=[{template, Template}, {ssl, any}],
+                        bindings=[{path, Path}, {is_static, true}]
+                    }};
+                {error, _} ->
+                    % Check again, assuming the path is a directory (without trailing $/) 
+                    case Last of
+                        $/ -> 
+                            undefined;
+                        $. ->
+                            undefined;
+                        _ ->
+                            Template1 = "static/"++Path++"/index.tpl",
+                            case z_module_indexer:find(template, Template1, Context) of
+                                {ok, _} ->
+                                    {ok, #dispatch_match{
+                                        mod=controller_template,
+                                        mod_opts=[{template, Template1}, {ssl, any}],
+                                        bindings=[{path, Path}, {is_static, true}]
+                                    }};
+                                {error, _} ->
+                                    undefined
+                            end
+                    end
+            end
+    end.
+
+    last([]) -> $/;
+    last(Path) -> lists:last(Path).
+
+
+observe_postback_notify(#postback_notify{message="render-update", target=TargetId}, Context) ->
+    Id = m_rsc:rid(z_context:get_q("id", Context), Context),
+    case z_context:get_q("template", Context) of
+        undefined ->
+            undefined;
+        Template -> 
+            case Id of
+                undefined -> z_render:update(TargetId, #render{template=Template, vars=[]}, Context);
+                _ -> z_render:update(TargetId, #render{template={cat, Template}, vars=[{id, Id}]}, Context)
+            end
+    end;
+observe_postback_notify(#postback_notify{}, _Context) ->
+    undefined.
 
 
 %%====================================================================

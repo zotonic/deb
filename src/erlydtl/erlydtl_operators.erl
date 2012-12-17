@@ -25,6 +25,7 @@
     'or'/3,
     'xor'/3,
 
+    concat/3,
     add/3,
     sub/3,
     divide/3,
@@ -42,17 +43,25 @@
 ]).
 
 
-'and'(A, B, _Context) ->
-    erlydtl_runtime:is_true(A) and erlydtl_runtime:is_true(B).
+'and'(A, B, Context) ->
+    erlydtl_runtime:is_true(A, Context) and erlydtl_runtime:is_true(B, Context).
 
-'not'(A, _Context) ->
-    not erlydtl_runtime:is_true(A).
+'not'(A, Context) ->
+    erlydtl_runtime:is_false(A, Context).
 
-'or'(A, B, _Context) ->
-    erlydtl_runtime:is_true(A) or erlydtl_runtime:is_true(B).
+'or'(A, B, Context) ->
+    erlydtl_runtime:is_true(A, Context) or erlydtl_runtime:is_true(B, Context).
 
-'xor'(A, B, _Context) ->
-    erlydtl_runtime:is_true(A) xor erlydtl_runtime:is_true(B).
+'xor'(A, B, Context) ->
+    erlydtl_runtime:is_true(A, Context) xor erlydtl_runtime:is_true(B, Context).
+
+
+concat(A, B, _Context) when is_list(A), is_list(B) ->
+    A++B;
+concat(A, B, Context) ->
+    ABin = z_convert:to_binary(A, Context),
+    BBin = z_convert:to_binary(B, Context),
+    <<ABin/binary, BBin/binary>>.
 
 
 add(A, B, _Context) ->

@@ -1,7 +1,7 @@
 %% This is the MIT license.
 %% 
 %% Copyright (c) 2008-2009 Rusty Klophaus
-%% Copyright (c) 2009-2010 Marc Worrell
+%% Copyright (c) 2009-2012 Marc Worrell
 %% 
 %% Permission is hereby granted, free of charge, to any person obtaining a copy 
 %% of this software and associated documentation files (the "Software"), to deal 
@@ -26,6 +26,7 @@
     split/1,
     add_script/2,
     get_script/1,
+    javascript_ast/2,
     get_page_startup_script/1,
     add_content_script/2,
     clean/1
@@ -36,13 +37,24 @@
 split(Context) ->
     {iolist_to_binary(get_script(Context)), clean(Context)}.
 
+%% @doc Render a javascript ast, injects a #context{} with a script into the output stream.
+-spec javascript_ast(list() | binary(), #context{}) -> #context{}.
+javascript_ast(Block, Context) when is_binary(Block) ->
+    z_render:wire({script, [{script, Block}]}, z_context:new(Context));
+javascript_ast(Block, Context) ->
+    {Script, C} = z_render:render_to_iolist(Block, z_context:new(Context)),
+    z_render:wire({script, [{script, iolist_to_binary(Script)}]}, C).
 
 add_content_script([], Context) -> 
+    Context;
+add_content_script(<<>>, Context) -> 
     Context;
 add_content_script(Script, Context) ->
     Context#context{content_scripts=[Script, "\n" | Context#context.content_scripts]}.
 
 add_script([], Context) -> 
+    Context;
+add_script(<<>>, Context) -> 
     Context;
 add_script(Script, Context) ->
     Context#context{scripts=[Script, "\n" | Context#context.scripts]}.
@@ -74,7 +86,7 @@ clean(Context) ->
 
 %% @doc Collect all scripts in the context, returns an iolist with javascript.
 %% @spec get_script(Context) -> iolist()    
-get_script(Context) -> 
+get_script(Context) ->
     get_script1(Context).
     
     get_script1(Context) ->
@@ -115,7 +127,8 @@ get_script(Context) ->
             _NonEmpty ->
                 [   
                     lists:reverse(Context#context.content_scripts),
-                    lists:reverse(Context#context.scripts) | get_script1(Context4)
+                    lists:reverse(Context#context.scripts),
+                    get_script1(Context4)
                 ]
         end.
     

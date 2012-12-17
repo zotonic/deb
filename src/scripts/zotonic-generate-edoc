@@ -29,14 +29,9 @@ main(_) ->
     Zotonic = os:getenv("ZOTONIC"),
     Modules = [string:substr(L, length(Zotonic++"/modules/")+1) || L <- filelib:wildcard(filename:join([os:getenv("ZOTONIC"), "modules/mod_*"]))],
 
-    file:write_file(Zotonic ++ "/doc/modules/index.html", "<h1>Module docs</h1>" ++ lists:flatten([ ["<li><a href=\"", M, "/index.html\">", M, "</a></li>"] || M <- Modules])),
-        
     [
      generate("modules/" ++ M, "modules/" ++ M) || M <- Modules
     ],
-
-
-%%    generate("priv", "priv"),
     io:format("Generated modules edoc files in ~p~n", [outpath("modules")]).
 
 generate(InputDir, OutputDir) ->
@@ -45,6 +40,6 @@ generate(InputDir, OutputDir) ->
     edoc:files(Files, [{dir, outpath(OutputDir)}]).
 
 outpath(Component) ->
-    Path = filename:join([os:getenv("ZOTONIC"), "doc", Component]),
+    Path = filename:join([os:getenv("ZOTONIC"), "doc", "_build", "edoc", Component]),
     filelib:ensure_dir(filename:join([Path, ".empty"])),
     Path.

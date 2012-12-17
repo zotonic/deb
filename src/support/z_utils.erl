@@ -1,11 +1,11 @@
 %% @author Marc Worrell
-%% @copyright 2009 Marc Worrell
+%% @copyright 2009-2012 Marc Worrell
 %%
 %% Parts are from wf_utils.erl which is Copyright (c) 2008-2009 Rusty Klophaus
 %%
 %% @doc Misc utility functions for zotonic
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2012 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -34,9 +34,7 @@
           coalesce/1,
           combine/2,
           combine_defined/2,
-          decode/2,
           depickle/2,
-          encode/2,
           f/1,
           f/2,
           get_seconds/0,
@@ -53,10 +51,12 @@
           is_process_alive/1,
           erase_process_dict/0,
           is_true/1,
+          js_escape/2,
           js_escape/1,
           js_array/1,
           js_object/1,
           js_object/2,
+          js_object/3,
           json_escape/1,
           lib_dir/0,
           lib_dir/1,
@@ -77,29 +77,24 @@
           replace1/3,
           split/2,
           split_in/2,
-          url_path_encode/1,
-          url_encode/1,
-          url_decode/1,
-          percent_encode/1,
           vsplit_in/2,
           now/0,
           now_msec/0,
           tempfile/0,
           temppath/0,
-          url_reserved_char/1,
-          url_unreserved_char/1,
-          url_valid_char/1,
           flush_message/1,
           ensure_existing_module/1,
-          generate_username/2
-         ]).
+          generate_username/2,
 
--define(is_uppercase_alpha(C), C >= $A, C =< $Z).
--define(is_lowercase_alpha(C), C >= $a, C =< $z).
--define(is_alpha(C), ?is_uppercase_alpha(C); ?is_lowercase_alpha(C)).
--define(is_digit(C), C >= $0, C =< $9).
--define(is_alphanumeric(C), ?is_alpha(C); ?is_digit(C)).
--define(is_unreserved(C), ?is_alphanumeric(C); C =:= $-; C =:= $_; C =:= $.; C =:= $~).
+          % Deprecated, see z_url.erl
+          url_path_encode/1,
+          url_encode/1,
+          url_decode/1,
+          percent_encode/1,
+          url_reserved_char/1,
+          url_unreserved_char/1,
+          url_valid_char/1
+         ]).
 
 
 %%% FORMAT %%%
@@ -152,35 +147,6 @@ erase_process_dict() ->
     erlang:erase(),
     [ erlang:put(K,V) || {K,V} <- Values, V =/= undefined ],
     ok.
-
-
-%%% HEX ENCODE and HEX DECODE
-
-hex_encode(Data) -> encode(Data, 16).
-hex_decode(Data) -> decode(Data, 16).
-
-encode(Data, Base) when is_binary(Data) -> encode(binary_to_list(Data), Base);
-encode(Data, Base) when is_list(Data) ->
-	F = fun(C) when is_integer(C) ->
-		case erlang:integer_to_list(C, Base) of
-			[C1, C2] -> [C1, C2];
-			[C1]     -> [$0, C1]
-		end
-	end,
-	[F(I) || I <- Data].
-
-decode(Data, Base) when is_binary(Data) -> decode(binary_to_list(Data), Base);
-decode(Data, Base) when is_list(Data) ->
-	inner_decode(Data, Base).
-
-inner_decode(Data, Base) when is_list(Data) ->
-	case Data of
-		[C1, C2|Rest] ->
-			I = erlang:list_to_integer([C1, C2], Base),
-			[I|inner_decode(Rest, Base)];
-		[] ->
-			[]
-	end.
 
 
 %% Encode value securely, for use in cookies.
@@ -241,60 +207,23 @@ depickle(Data, Context) ->
         _M:_E -> erlang:throw("Postback data invalid, could not depickle: "++Data)
     end.
 
+%%% HEX ENCODE and HEX DECODE
+
+hex_encode(Value) -> z_url:hex_encode(Value).
+hex_decode(Value) -> z_url:hex_decode(Value).
+
 
 %%% URL ENCODE %%%
 
-url_encode(S) -> 
-    %% @todo possible speedups for binaries
-    mochiweb_util:quote_plus(S).
+url_encode(S) -> z_url:url_encode(S).
+url_decode(S) -> z_url:url_decode(S).
+url_path_encode(L) -> z_url:url_path_encode(L).
+percent_encode(S) -> z_url:percent_encode(S).
 
-% hexdigit is from Mochiweb.
+url_valid_char(C) -> z_url:url_valid_char(C).
+url_reserved_char(C) -> z_url:url_reserved_char(C).
+url_unreserved_char(C) -> z_url:url_unreserved_char(C).
 
--define(PERCENT, 37).  % $\%
-
-hexdigit(C) when C < 10 -> $0 + C;
-hexdigit(C) when C < 16 -> $A + (C - 10).
-
-%%% URL PATH ENCODE %%%
-
-%% url spec for path part
-url_path_encode(L) when is_list(L) ->
-    url_path_encode(L, []);
-url_path_encode(L) ->
-    url_path_encode(z_convert:to_list(L)).
-
-url_path_encode([], Acc) ->
-    lists:reverse(Acc);
-url_path_encode([$/|R], Acc) ->
-    url_path_encode(R, [$/|Acc]);
-url_path_encode([C|R], Acc) when (C==$: orelse C==$@ orelse C==$& orelse C==$= orelse C==$+ orelse C==$$ orelse C==$ orelse C==$;) ->
-    url_path_encode(R, [C|Acc]);
-url_path_encode([C|R], Acc)->
-    case url_unreserved_char(C) of
-        true ->
-            url_path_encode(R, [C|Acc]);
-        false ->
-            <<Hi:4, Lo:4>> = <<C>>,
-            url_path_encode(R, [hexdigit(Lo), hexdigit(Hi), ?PERCENT | Acc])
-    end.
-
-
-%%% PERCENT encode ENCODE %%%
-
-%% @doc Percent encoding/decoding as defined by RFC 3986 (http://tools.ietf.org/html/rfc3986).
-percent_encode(Chars) when is_list(Chars) ->
-    percent_encode(Chars, []);
-percent_encode(Chars) ->
-    percent_encode(z_convert:to_list(Chars)).
-
-percent_encode([], Encoded) ->
-  lists:flatten(lists:reverse(Encoded));
-percent_encode([C|Etc], Encoded) when ?is_unreserved(C) ->
-  percent_encode(Etc, [C|Encoded]);
-percent_encode([C|Etc], Encoded) ->
-  Value = [io_lib:format("%~s", [z_utils:encode([Char], 16)]) 
-            || Char <- binary_to_list(unicode:characters_to_binary([C]))],
-  percent_encode(Etc, [lists:flatten(Value)|Encoded]).
 
 
 %% @spec os_filename(String) -> String
@@ -372,160 +301,99 @@ os_escape(win32, [C|Rest], Acc) ->
     os_escape(win32, Rest, [C|Acc]).
 
 
-url_decode(S) ->
-    lists:reverse(url_decode(S, [])).
-
-url_decode([], Acc) -> 
-    Acc;
-url_decode([$%, A, B|Rest], Acc) ->
-    Ch = erlang:list_to_integer([A, B], 16),
-    url_decode(Rest, [Ch|Acc]);
-url_decode([$+|Rest], Acc) ->
-    url_decode(Rest, [32|Acc]);
-url_decode([Ch|Rest], Acc) ->
-    url_decode(Rest, [Ch|Acc]).
-
-%% VALID URL CHARACTERS
-%% RFC 3986
-url_valid_char(Char) ->
-    url_reserved_char(Char) orelse url_unreserved_char(Char).
-
-url_reserved_char($!) -> true;
-url_reserved_char($*) -> true;
-url_reserved_char($") -> true;
-url_reserved_char($') -> true;
-url_reserved_char($() -> true;
-url_reserved_char($)) -> true;
-url_reserved_char($;) -> true;
-url_reserved_char($:) -> true;
-url_reserved_char($@) -> true;
-url_reserved_char($&) -> true;
-url_reserved_char($=) -> true;
-url_reserved_char($+) -> true;
-url_reserved_char($$) -> true;
-url_reserved_char($,) -> true;
-url_reserved_char($/) -> true;
-url_reserved_char($?) -> true;
-url_reserved_char($%) -> true;
-url_reserved_char($#) -> true;
-url_reserved_char($[) -> true;
-url_reserved_char($]) -> true;
-url_reserved_char(_) -> false.
-
-url_unreserved_char(Ch) when ?is_unreserved(Ch) ->
-    true;
-url_unreserved_char(_) -> 
-    false.
-
-
 
 
 %%% ESCAPE JAVASCRIPT %%%
 
 %% @doc Javascript escape, see also: http://code.google.com/p/doctype/wiki/ArticleXSSInJavaScript
+js_escape({trans, []}, undefined) -> [];
+js_escape({trans, Ts}, undefined) -> js_escape(hd(Ts));
+js_escape({trans, _} = Tr, Context) -> js_escape(z_trans:lookup_fallback(Tr, Context), Context);
+js_escape(undefined, _OptContext) -> [];
+js_escape([], _OptContext) -> [];
+js_escape(<<>>, _OptContext) -> [];
+js_escape(Value, _OptContext) when is_integer(Value) -> integer_to_list(Value);
+js_escape(Value, OptContext) when is_atom(Value) ->  js_escape1(atom_to_list(Value), [], OptContext);
+js_escape(Value, OptContext) when is_binary(Value) -> js_escape1(binary_to_list(Value), [], OptContext);
+js_escape(Value, OptContext) -> js_escape1(Value, [], OptContext).
 
-js_escape(undefined) -> [];
-js_escape([]) -> [];
-js_escape(<<>>) -> [];
-js_escape(Value) when is_integer(Value) -> integer_to_list(Value);
-js_escape(Value) when is_atom(Value) ->  js_escape(atom_to_list(Value), []);
-js_escape(Value) when is_binary(Value) -> js_escape(binary_to_list(Value), []);
-js_escape(Value) -> js_escape(Value, []).
+js_escape(V) ->
+  js_escape(V, undefined).
 
-js_escape([], Acc) -> lists:reverse(Acc);
-js_escape([$\\|T], Acc) -> js_escape(T, [$\\,$\\|Acc]);
-js_escape([$\n|T], Acc) -> js_escape(T, [$n,$\\|Acc]);
-js_escape([$\r|T], Acc) -> js_escape(T, [$r,$\\|Acc]);
-js_escape([$\t|T], Acc) -> js_escape(T, [$t,$\\|Acc]);
-js_escape([$'|T], Acc) -> js_escape(T, [$7,$2,$x,$\\|Acc]);
-js_escape([$"|T], Acc) -> js_escape(T, [$2,$2,$x,$\\|Acc]);
-js_escape([$<|T], Acc) -> js_escape(T, [$c,$3,$x,$\\|Acc]);
-js_escape([$>|T], Acc) -> js_escape(T, [$e,$3,$x,$\\|Acc]);
-js_escape([$=|T], Acc) -> js_escape(T, [$d,$3,$x,$\\|Acc]);
-js_escape([$&|T], Acc) -> js_escape(T, [$6,$2,$x,$\\|Acc]);
-%% js_escape([16#85,C|T], Acc) when C >= 16#80 -> js_escape(T, [C,16#85|Acc]);
-%% js_escape([16#85|T], Acc) -> js_escape(T, [$5,$8,$0,$0,$u,$\\|Acc]);
-js_escape([16#2028|T],Acc)-> js_escape(T, [$8,$2,$0,$2,$u,$\\|Acc]);
-js_escape([16#2029|T],Acc)-> js_escape(T, [$9,$2,$0,$2,$u,$\\|Acc]);
-js_escape([16#e2,16#80,16#a8|T],Acc)-> js_escape(T, [$8,$2,$0,$2,$u,$\\|Acc]);
-js_escape([16#e2,16#80,16#a9|T],Acc)-> js_escape(T, [$9,$2,$0,$2,$u,$\\|Acc]);
-js_escape([H|T], Acc) when is_integer(H) ->
-    js_escape(T, [H|Acc]);
-js_escape([H|T], Acc) ->
-    H1 = js_escape(H),
-    js_escape(T, [H1|Acc]).
+
+js_escape1([], Acc, _OptContext) -> lists:reverse(Acc);
+js_escape1([$\\|T], Acc, OptContext) -> js_escape1(T, [$\\,$\\|Acc], OptContext);
+js_escape1([$\n|T], Acc, OptContext) -> js_escape1(T, [$n,$\\|Acc], OptContext);
+js_escape1([$\r|T], Acc, OptContext) -> js_escape1(T, [$r,$\\|Acc], OptContext);
+js_escape1([$\t|T], Acc, OptContext) -> js_escape1(T, [$t,$\\|Acc], OptContext);
+js_escape1([$'|T], Acc, OptContext) -> js_escape1(T, [$7,$2,$x,$\\|Acc], OptContext);
+js_escape1([$"|T], Acc, OptContext) -> js_escape1(T, [$2,$2,$x,$\\|Acc], OptContext);
+js_escape1([$<|T], Acc, OptContext) -> js_escape1(T, [$c,$3,$x,$\\|Acc], OptContext);
+js_escape1([$>|T], Acc, OptContext) -> js_escape1(T, [$e,$3,$x,$\\|Acc], OptContext);
+js_escape1([$=|T], Acc, OptContext) -> js_escape1(T, [$d,$3,$x,$\\|Acc], OptContext);
+js_escape1([$&|T], Acc, OptContext) -> js_escape1(T, [$6,$2,$x,$\\|Acc], OptContext);
+%% js_escape1([16#85,C|T], Acc) when C >= 16#80 -> js_escape1(T, [C,16#85|Acc]);
+%% js_escape1([16#85|T], Acc) -> js_escape1(T, [$5,$8,$0,$0,$u,$\\|Acc]);
+js_escape1([16#2028|T],Acc, OptContext)-> js_escape1(T, [$8,$2,$0,$2,$u,$\\|Acc], OptContext);
+js_escape1([16#2029|T],Acc, OptContext)-> js_escape1(T, [$9,$2,$0,$2,$u,$\\|Acc], OptContext);
+js_escape1([16#e2,16#80,16#a8|T],Acc, OptContext)-> js_escape1(T, [$8,$2,$0,$2,$u,$\\|Acc], OptContext);
+js_escape1([16#e2,16#80,16#a9|T],Acc, OptContext)-> js_escape1(T, [$9,$2,$0,$2,$u,$\\|Acc], OptContext);
+js_escape1([H|T], Acc, OptContext) when is_integer(H) ->
+    js_escape1(T, [H|Acc], OptContext);
+js_escape1([H|T], Acc, OptContext) ->
+    H1 = js_escape(H, OptContext),
+    js_escape1(T, [H1|Acc], OptContext).
 
 %% js_escape(<<"<script", Rest/binary>>, Acc) -> js_escape(Rest, <<Acc/binary, "<scr\" + \"ipt">>);
 %% js_escape(<<"script>", Rest/binary>>, Acc) -> js_escape(Rest, <<Acc/binary, "scr\" + \"ipt>">>);
 
 js_array(L) ->
-    [ $[, combine($,,[ js_prop_value(undefined, V) || V <- L ]), $] ].
+    [ $[, combine($,,[ js_prop_value(undefined, V, undefined) || V <- L ]), $] ].
 
 %% @doc Create a javascript object from a proplist
-js_object([]) -> <<"{}">>;
-js_object(L) -> js_object(L,[]).
+js_object(L) -> js_object(L, undefined).
 
-js_object(L, []) -> js_object1(L, []);
-js_object(L, [Key|T]) -> js_object(proplists:delete(Key,L), T).
+js_object([], _OptContext) -> <<"{}">>;
+js_object(L, OptContext) -> js_object(L,[], OptContext).
+
+js_object(L, [], Context) -> js_object1(L, [], Context);
+js_object(L, [Key|T], Context) -> js_object(proplists:delete(Key,L), T, Context).
 
 %% recursively add all properties as object properties
-js_object1([], Acc) ->
+js_object1([], Acc, _OptContext) ->
     [${, combine($,,lists:reverse(Acc)), $}];
-js_object1([{Key,Value}|T], Acc) ->
-    Prop = [atom_to_list(Key), $:, js_prop_value(Key, Value)],
-    js_object1(T, [Prop|Acc]).
+js_object1([{Key,Value}|T], Acc, OptContext) ->
+    Prop = [atom_to_list(Key), $:, js_prop_value(Key, Value, OptContext)],
+    js_object1(T, [Prop|Acc], OptContext).
 
-js_prop_value(_, undefined) -> <<"null">>;
-js_prop_value(_, true) -> <<"true">>;
-js_prop_value(_, false) -> <<"true">>;
-js_prop_value(_, Atom) when is_atom(Atom) -> [$",js_escape(erlang:atom_to_list(Atom)), $"];
-js_prop_value(pattern, [$/|T]=List) ->
+js_prop_value(_, undefined, _OptContext) -> <<"null">>;
+js_prop_value(_, true, _OptContext) -> <<"true">>;
+js_prop_value(_, false, _OptContext) -> <<"true">>;
+js_prop_value(_, Atom, _OptContext) when is_atom(Atom) -> [$",js_escape(erlang:atom_to_list(Atom)), $"];
+js_prop_value(pattern, [$/|T]=List, OptContext) ->
     %% Check for regexp
     case length(T) of
         Len when Len =< 2 ->
-            [$",js_escape(List),$"];
+            [$",js_escape(List, OptContext),$"];
         _Len ->
             case string:rchr(T, $/) of
                 0 ->
-                    [$",js_escape(List),$"];
+                    [$",js_escape(List, OptContext),$"];
                 N ->
                     {_Re, [$/|Options]} = lists:split(N-1,T),
                     case only_letters(Options) of
                         true -> List;
-                        false -> [$",js_escape(List),$"]
+                        false -> [$",js_escape(List, OptContext),$"]
                     end
             end
     end;
-js_prop_value(_, Int) when is_integer(Int) -> integer_to_list(Int);
-js_prop_value(_, Value) -> [$",js_escape(Value),$"].
+js_prop_value(_, Int, _OptContext) when is_integer(Int) -> integer_to_list(Int);
+js_prop_value(_, Value, OptContext) -> [$",js_escape(Value, OptContext),$"].
 
 
-%%% ESCAPE JSON %%%
-
-%% @doc JSON escape for safe quoting of JSON strings. Subtly different
-%% from JS escape, see http://www.json.org/
-json_escape(undefined) -> [];
-json_escape([]) -> [];
-json_escape(<<>>) -> [];
-json_escape(Value) when is_integer(Value) -> integer_to_list(Value);
-json_escape(Value) when is_atom(Value) -> json_escape(atom_to_list(Value), []);
-json_escape(Value) when is_binary(Value) -> json_escape(binary_to_list(Value), []);
-json_escape(Value) -> json_escape(Value, []).
-
-json_escape([], Acc) -> lists:reverse(Acc);
-json_escape([$" |T], Acc) -> json_escape(T, [$" ,$\\|Acc]);
-json_escape([$\\|T], Acc) -> json_escape(T, [$\\,$\\|Acc]);
-json_escape([$/ |T], Acc) -> json_escape(T, [$/ ,$\\|Acc]);
-json_escape([$\b|T], Acc) -> json_escape(T, [$b ,$\\|Acc]);
-json_escape([$\f|T], Acc) -> json_escape(T, [$f ,$\\|Acc]);
-json_escape([$\n|T], Acc) -> json_escape(T, [$n ,$\\|Acc]);
-json_escape([$\r|T], Acc) -> json_escape(T, [$r ,$\\|Acc]);
-json_escape([$\t|T], Acc) -> json_escape(T, [$t ,$\\|Acc]);
-json_escape([H|T], Acc) when is_integer(H) ->
-    json_escape(T, [H|Acc]);
-json_escape([H|T], Acc) ->
-    H1 = json_escape(H),
-    json_escape(T, [H1|Acc]).
+% @doc Deprecated: moved to z_json.
+json_escape(A) ->
+    z_json:escape(A).
 
 
 only_letters([]) ->
@@ -885,7 +753,9 @@ are_equal(_Arg1, _Arg2) ->
 
 
 %% @doc Return the name used in the context of a hostname
-%% @spec name_for_host(atom(), atom()) -> atom()
+-spec name_for_host(Name :: atom(), atom() | #context{}) -> atom().
+name_for_host(Name, #context{} = Host) ->
+    name_for_host(Name, z_context:site(Host));
 name_for_host(Name, Host) ->
     z_convert:to_atom(z_convert:to_list(Name) ++ [$$, z_convert:to_list(Host)]).
 

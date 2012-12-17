@@ -1,24 +1,17 @@
 {% extends "page.tpl" %}
 
-{% block content %}
+{% block html_head_extra %}
+	{% inherit %}
+	{% lib "css/survey.css" %}
+{% endblock %}
 
+{% block content_attributes %}{% include "_language_attrs.tpl" id=id %} id="survey-question"{% endblock %}
 
-<style type="text/css">
-	.survey-question {
-		border: 1px solid white;
-		background-color: #f8f8f8;
-		padding: 4px;
-		margin-bottom: 4px;
-	}
+{% block body %}
+	{{ id.body|show_media }}
+{% endblock %}
 
-	.survey-missing {
-		background-color: #fee;
-		border: 1px solid #fcc;
-	}
-</style>
-
-<div id="survey-question">
+{% block below_body %}
 	{% include "_survey_start.tpl" %}
-</div>
-
+	{% inherit %}
 {% endblock %}

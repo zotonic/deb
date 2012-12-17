@@ -27,19 +27,22 @@
 
 %% @doc The request context, session information and other
 -record(context, {
-        %% Webmachine request data
-        wm_reqdata,
-        
-        %% The resource responsible for handling this request
-        resource_module,
-        
-        %% The page (comet) and session processes associated with the current request
-        session_pid=undefined,  % one session per browser (also manages the persistent data)
-        page_pid=undefined,     % multiple pages per session
-        page_id=undefined,
-
-        %% The host (also the id of the database used) 
+        %% The host
         host=default,
+
+        %% Webmachine request data (only set when this context is used because of a request)
+        wm_reqdata=undefined :: #wm_reqdata{} | undefined,
+        
+        %% The controller responsible for handling this request
+        controller_module=undefined :: atom(),
+        
+        %% The page and session processes associated with the current request
+        session_pid=undefined :: pid() | undefined,  % one session per browser (also manages the persistent data)
+        page_pid=undefined :: pid() | undefined,     % multiple pages per session, used for pushing information to the browser
+        page_id=undefined :: string() | undefined,
+
+        %% About the user-agent this context is used with.
+        ua_class=undefined :: ua_classifier:device_type() | undefined,
         
         %% Servers and supervisors for the site/host
         depcache,
@@ -54,14 +57,14 @@
         translation_table,
         
         %% The database connection used for (nested) transactions, see z_db
-        dbc=undefined,
+        dbc=undefined :: pid() | undefined,
 
         %% The language selected, used by z_trans and others
-        language=en,
+        language=en :: atom(),
         
         %% The current logged on person, derived from the session and visitor
         acl=undefined,      %% opaque placeholder managed by the z_acl module
-        user_id=undefined,
+        user_id=undefined :: integer() | undefined,
 
         %% The state below is the render state, can be cached and/or merged
         
@@ -112,6 +115,21 @@
                      period_retry=600, period_retries=10, eternal_retry=7200,
                      shutdown=5000}).
 
+
+%% Used for storing templates/scomps etc. in the lookup ets table
+-record(module_index_key, {site, type, name, ua_class=generic}).
+-record(module_index, {key, filepath, module, erlang_module, tag}).
+
+%% Name of the global module index table
+-define(MODULE_INDEX, 'zotonic$module_index').
+
+%% Index record for the mediaclass ets table.
+-record(mediaclass_index_key, {site, mediaclass, ua_class=generic}).
+-record(mediaclass_index, {key, props=[], checksum, tag}).
+
+%% Name of the global mediaclass index table
+-define(MEDIACLASS_INDEX, 'zotonic$mediaclass_index').
+
 %% For the z_db definitions
 -record(column_def, {name, type, length, is_nullable=true, default, primary_key}).
 
@@ -120,7 +138,7 @@
 
 %% ACL administrator user id
 -define(ACL_ADMIN_USER_ID, 1).
--define(ACL_ANONYMOUS_USER_ID, -1).
+-define(ACL_ANY_USER_ID, -1).
 
 %% ACL visibility levels
 -define(ACL_VIS_USER, 3).
@@ -204,3 +222,8 @@
 -define(zDebug(Msg, Context), z:debug(Msg, [{module, ?MODULE}, {line, ?LINE}], Context)).
 -define(zInfo(Msg, Context), z:info(Msg, [{module, ?MODULE}, {line, ?LINE}], Context)).
 -define(zWarning(Msg, Context), z:warning(Msg, [{module, ?MODULE}, {line, ?LINE}], Context)).
+
+-define(zDebug(Msg, Args, Context), z:debug(Msg, Args, [{module, ?MODULE}, {line, ?LINE}], Context)).
+-define(zInfo(Msg, Args, Context), z:info(Msg, Args, [{module, ?MODULE}, {line, ?LINE}], Context)).
+-define(zWarning(Msg, Args, Context), z:warning(Msg, Args, [{module, ?MODULE}, {line, ?LINE}], Context)).
+

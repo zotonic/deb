@@ -1,22 +1,44 @@
 {% if medium.filename %}
-	<p>
-		{{ medium.mime }} 
+    <p>
+        {{ medium.mime }} 
         {% if medium.width and medium.height %}
-		&mdash; {{ medium.width }} x {{ medium.height }} {_ pixels _}
+        &ndash; {{ medium.width }} x {{ medium.height }} {_ pixels _}
         {% endif %}
-		&mdash; {{ medium.filename }}
-		&mdash; {_ uploaded on _} {{ medium.created|date:"Y-m-d H:i:s" }}
-	</p>
+        &ndash; {{ medium.filename }}
+        &ndash; {_ uploaded on _} {{ medium.created|date:"Y-m-d H:i:s" }}
+    </p>
+
     {% if medium.width and medium.height %}
-    <div class="edit_media">
-	{% if medium.width < 606  %}
-		{% media medium %}
-	{% else %}
-		{% media medium width=606 height=606 %}
-	{% endif %}
-	</div>
-	{% endif %}
-	<div>
-		<a href="{% url media_attachment star=medium.filename %}" class="button">{_ download _}</a>
-	</div>
+    <div class="edit-media">
+        {% if medium.width < 597  %}
+        {% media medium %}
+        {% else %}
+        {% media medium width=597 height=597 %}
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="save-buttons">
+        <div class="pull-right">
+            <a class="btn" href="{% url media_attachment star=medium.filename %}" class="button">{_ Download _}</a>
+            {% button   text=_"Replace this media item"
+                class="btn btn-primary"
+    	    action={dialog_media_upload id=id action={update target="media-edit-view" template="_admin_edit_media_view.tpl" id=id}} 
+    	    disabled=not id.is_editable %}
+
+        </div>
+    </div>
+{% else %}
+    <p>
+        {_ uploaded on _} {{ medium.created|date:"Y-m-d H:i:s" }}
+    </p>
+    <div class="save-buttons">
+        <div class="pull-right">
+            {% button   text=_"Replace this media item"
+                class="btn btn-primary"
+    	    action={dialog_media_upload id=id action={update target="media-edit-view" template="_admin_edit_media_view.tpl" id=id}} 
+    	    disabled=not id.is_editable %}
+
+        </div>
+    </div>
 {% endif %}

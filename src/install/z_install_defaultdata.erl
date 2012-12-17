@@ -29,8 +29,23 @@
 ]).
 
 
+install(basesite, Context) ->
+    Datamodel = #datamodel{
+         resources =
+             [
+              {page_home,
+               text,
+               [{title, <<"Home">>},
+                {summary, <<"Welcome to your new site!">>},
+                {page_path, <<"/">>}]
+              }
+             ]
+        },
+    ?DEBUG("Installing basesite data"),
+    z_datamodel:manage(?MODULE, Datamodel, Context);
+
 install(blog, Context) ->
-    Now = {{2010,04,03},{9,12,0}},
+    Now = {{2012,12,14},{9,12,0}},
     Datamodel = 
         #datamodel{
       resources =
@@ -64,7 +79,7 @@ install(blog, Context) ->
         article,
         [{title, <<"Welcome to Zotonic!">>},
          {publication_start, Now},
-         {summary, <<"Zotonic is the content management system for people that want a fast, extensible, flexible and complete system for dynamic web sites. It is built from the ground up with rich internet applications ánd web publishing in mind.">>},
+         {summary, <<"Zotonic is the content management system for people that want a fast, extensible, flexible and complete system for dynamic web sites. It is built from the ground up with rich internet applications and web publishing in mind.">>},
          {body, {file, datafile(blog, "welcome.html")}}
         ]
        },
@@ -114,8 +129,8 @@ install(blog, Context) ->
          {summary, <<"Taken by Grant MacDonald from Flickr, CC licensed Attribution-Noncommercial 2.0.">>}]
        },
        {media_video,
-        {<<"vimeo">>, <<"<object width=\"400\" height=\"225\"><param name=\"allowfullscreen\" value=\"true\" /><param name=\"allowscriptaccess\" value=\"always\" /><param name=\"movie\" value=\"http://vimeo.com/moogaloop.swf?clip_id=7630916&amp;server=vimeo.com&amp;show_title=1&amp;show_byline=0&amp;show_portrait=0&amp;color=&amp;fullscreen=1\" /><embed src=\"http://vimeo.com/moogaloop.swf?clip_id=7630916&amp;server=vimeo.com&amp;show_title=1&amp;show_byline=0&amp;show_portrait=0&amp;color=&amp;fullscreen=1\" type=\"application/x-shockwave-flash\" allowfullscreen=\"true\" allowscriptaccess=\"always\" width=\"400\" height=\"225\"></embed></object>">>},
-          [{title, <<"Zotonic introduction video">>}]
+        [{title, <<"Zotonic introduction video">>},
+         {oembed_url, <<"http://vimeo.com/7630916">>}]
        }
       ],
 
@@ -137,7 +152,7 @@ install(blog, Context) ->
       ]
      },
 
-    ?DEBUG("Installin blog data"),
+    ?DEBUG("Installing blog data"),
     z_datamodel:manage(?MODULE, Datamodel, Context);
 
 
@@ -146,14 +161,24 @@ install(_, _) ->
     ok.
 
 
-%% @doc Retrieve the default menu structure for a given skeleton site. Used by mod_menu to create the menu.
-default_menu(blog) ->
-    [{page_home, []}, {page_about, []}, {page_contact, []}];
+%% @doc Retrieve the default menu structure for a given site. Used by mod_menu to create the menu.
+%% The menu can be defined in the site config file as a list of menu items under the key <tt>install_menu</tt>.
+%% If that is not defined, a default menu for the skeleton is used, if any.
+-spec default_menu(#context{}) -> MenuItems | undefined when
+      MenuItems :: [MenuItem],
+      MenuItem :: {PageName, MenuItems},
+      PageName :: atom().
+default_menu(Context) ->
+    case m_site:get(install_menu, Context) of
+        Menu when is_list(Menu) -> Menu;
+        _ -> default_skeleton_menu(m_site:get(skeleton, Context))
+    end.
 
-default_menu(_) ->
+default_skeleton_menu(blog) ->
+    [{page_home, []}, {page_about, []}, {page_contact, []}];
+default_skeleton_menu(_) ->
     %% no/unknown skeleton = no default menu
     undefined.
-
 
 %% @doc Helper function for getting an absolute path to a data file
 %%      that is part of the default data for a site skeleton.

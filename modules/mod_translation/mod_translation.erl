@@ -34,7 +34,10 @@
     observe_url_rewrite/3,
     observe_dispatch_rewrite/3,
     observe_scomp_script_render/2,
-    
+    observe_admin_menu/3,
+
+    url_strip_language/1,
+    set_user_language/2,
     try_set_language/2,
     
     init/1, 
@@ -45,6 +48,7 @@
 ]).
 
 -include("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
 
 
 %% @doc Make sure that we have the i18n.language_list setting when the site starts up.
@@ -58,9 +62,10 @@ init(Context) ->
                     m_config:set_prop(i18n, language_list, list, [
                             {ar, [ {language, <<"العربية">>}, {is_enabled, false}]},
                             {en, [ {language, <<"English">>}, {is_enabled, true}]},
-                            {ee, [ {language, <<"Eesti">>}, {is_enabled, true}]},
+                            {et, [ {language, <<"Eesti">>}, {is_enabled, true}]},
                             {es, [ {language, <<"Español">>}, {is_enabled, true}]},
                             {fr, [ {language, <<"Français">>}, {is_enabled, true}]},
+                            {de, [ {language, <<"Deutsch">>}, {is_enabled, true}]},
                             {nl, [ {language, <<"Nederlands">>}, {is_enabled, true}]},
                             {tr, [ {language, <<"Türkçe">>}, {is_enabled, true}]},
                             {pl, [ {language, <<"Polski">>}, {is_enabled, true}]}
@@ -152,15 +157,20 @@ observe_url_rewrite(#url_rewrite{args=Args}, Url, Context) ->
     
 observe_dispatch_rewrite(#dispatch_rewrite{is_dir=IsDir}, {Parts, Args} = Dispatch, Context) ->
     case Parts of
-        [First|Rest] when IsDir orelse Rest /= [] ->
-            case z_trans:is_language(First) of
-                true ->
-                    case lists:keyfind(list_to_atom(First), 1, get_enabled_languages(Context)) of
-                        false -> Dispatch;
-                        _ -> {Rest, [{z_language, First}|Args]}
-                    end;
+        % Special case for the 'id' controller
+        ["id",Other] ->
+            case z_utils:only_digits(Other) of
+                true -> Dispatch;
                 false ->
-                    Dispatch
+                    case is_enabled_language("id", Context) of
+                        true -> {[Other], [{z_language, "id"}|Args]};
+                        false -> Dispatch
+                    end
+            end;
+        [First|Rest] when IsDir orelse Rest /= [] ->
+            case is_enabled_language(First, Context) of
+                true -> {Rest, [{z_language, First}|Args]};
+                false -> Dispatch
             end;
         _ ->
             Dispatch
@@ -177,18 +187,7 @@ event(#postback{message={set_language, Args}}, Context) ->
                 undefined -> z_context:get_q("triggervalue", Context);
                 ArgCode -> ArgCode
             end,
-    List = get_language_config(Context),
-    Context1 = set_language(z_convert:to_list(Code), List, Context),
-    z_context:set_persistent(language, z_context:language(Context1), Context1),
-    case z_acl:user(Context1) of
-        undefined -> 
-            nop;
-        UserId ->
-            case m_rsc:p_no_acl(UserId, pref_language, Context1) of
-                Code -> nop;
-                _ -> catch m_rsc:update(UserId, [{pref_language, z_context:language(Context1)}], Context1)
-            end
-    end,
+    Context1 = set_user_language(Code, Context),
     z_render:wire({reload, [{z_language,z_context:language(Context1)}]}, Context1);
 
 %% @doc Set the default language.
@@ -253,6 +252,37 @@ event(#postback{message={language_enable, Args}}, Context) ->
             z_render:growl_error("Sorry, you don't have permission to change the language list.", Context)
     end.
 
+
+%% @doc Strip any language from the URL (iff the first part of the url is a known language)
+url_strip_language([$/,A,B,$/ | Rest] = Url) ->
+    case z_trans:is_language([A,B]) of
+        true -> [$/|Rest];
+        false -> Url
+    end;
+url_strip_language(<<$/,A,B,$/, Rest/binary>> = Url) ->
+    case z_trans:is_language([A,B]) of
+        true -> <<$/, Rest/binary>>;
+        false -> Url
+    end;
+url_strip_language(Url) ->
+    Url.
+
+
+%% @doc Set the language, as selected by the user. Persist this choice.
+set_user_language(Code, Context) ->
+    List = get_language_config(Context),
+    Context1 = set_language(z_convert:to_list(Code), List, Context),
+    z_context:set_persistent(language, z_context:language(Context1), Context1),
+    case z_acl:user(Context1) of
+        undefined -> 
+            nop;
+        UserId ->
+            case m_rsc:p_no_acl(UserId, pref_language, Context1) of
+                Code -> nop;
+                _ -> catch m_rsc:update(UserId, [{pref_language, z_context:language(Context1)}], Context1)
+            end
+    end,
+    Context1.
 
 
 %% @doc Set the language of the user. Only done when the found language is a known language.
@@ -325,6 +355,18 @@ language_enable(Code, IsEnabled, Context) ->
 
 is_multiple_languages_config(Context) ->
     length(get_enabled_languages(Context)) > 1.
+
+
+is_enabled_language(Lang, Context) ->
+    case z_trans:is_language(Lang) of
+        true ->
+            case lists:keyfind(list_to_atom(Lang), 1, get_enabled_languages(Context)) of
+                false -> false;
+                _ -> true
+            end;
+        false ->
+            false
+    end.
 
 get_enabled_languages(Context) ->
     case z_memo:get('mod_translation$enabled_languages') of
@@ -413,3 +455,13 @@ build_conneg_list([Acc|AccRest], Result) ->
     end,
     build_conneg_list(AccRest,[Pair|Result]).
 
+
+observe_admin_menu(admin_menu, Acc, Context) ->
+    [
+     #menu_item{id=admin_translation,
+                parent=admin_structure,
+                label=?__("Translation", Context),
+                url={admin_translation},
+                visiblecheck={acl, use, ?MODULE}}
+     
+     |Acc].

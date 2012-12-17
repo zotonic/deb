@@ -5,92 +5,120 @@
 
 {% block content %}
 {% with m.rsc[id] as r %}
-    {% with r.is_editable as is_editable %}
-	{% with m.config.i18n.language_list.list as languages %}
-	<div id="content" class="zp-85">
-		<div class="block clearfix">
+{% with r.is_editable as is_editable %}
+{% with m.config.i18n.language_list.list as languages %}
 
-			{% if not is_editable %}
-				<h2>
-					{_ You are not allowed to edit the _} {{ m.rsc[r.category_id].title|lower }} “<span {% include "_language_attrs.tpl" %}>{{ r.title|striptags }}</span>”
-				</h2>
-			{% else %}
-				<p class="admin-chapeau">{_ editing _}:
-					<span class="right" style="text-align: right">
-						{_ Modified _} {{ r.modified|timesince }}
-						{_ by _} {{ m.rsc[r.modifier_id].title }}.<br/>
-						{_ Created by _} {{ m.rsc[r.creator_id].title }}.<br/>
-					</span>
-				</p>
-				<h2 {% include "_language_attrs.tpl" %}>{{ r.title|striptags|default:_"<em>untitled</em>" }}
-                    {% if m.acl.insert[r.category.name|as_atom] and not r.is_a.meta %}
-					<span>{{ m.rsc[r.category_id].title|lower }} <a href="javascript:;" id="changecategory">{_ change _}</a></span>
-                    {% wire id="changecategory" action={dialog_open title=_"Change category" template="_action_dialog_change_category.tpl" id=id} %}
-                    {% endif %}
-				</h2>
-			{% endif %}
+<div class="edit-header">
+	<div class="pull-right span4">
+		<p class="admin-chapeau">
+		{_ Modified _} {{ r.modified|timesince }}
+		{_ by _} <nobr><a href="{% url admin_edit_rsc id=r.modifier_id %}">{{ m.rsc[r.modifier_id].title }}</a>.</nobr>
+		{_ Created by _}
+			<nobr><a href="{% url admin_edit_rsc id=r.creator_id %}">{{ m.rsc[r.creator_id].title }}</a>.</nobr>
+		</p>
+	</div>
 
-			{% block admin_edit_form_pre %}{% endblock %}
+	{% if not is_editable %}
+	<h2>
+	{_ You are not allowed to edit the _} {{ m.rsc[r.category_id].title|lower }} “<span {% include "_language_attrs.tpl" %}>{{ r.title|striptags }}</span>”
+	</h2>
+	{% else %}
+	<p class="admin-chapeau">
+		{_ editing _}
+		{% if m.acl.insert[r.category.name|as_atom] and not r.is_a.category and not r.is_a.predicate %}
+		<a	href="javascript:;" id="changecategory" title="{_ Change category _}">{{ m.rsc[r.category_id].title|lower }}</a>:
+		{% wire id="changecategory" action={dialog_open title=_"Change category" template="_action_dialog_change_category.tpl" id=id} %}
+		{% else %}
+		{{ m.rsc[r.category_id].title|lower }}:
+		{% endif %}
+	</p>
+	
+	<h2 {% include "_language_attrs.tpl" %}>
+		{{ r.title|striptags|default:_"<em>untitled</em>" }}
+	</h2>
+	{% endif %}{# editable #}
+</div>
 
-			{% wire id="rscform" type="submit" postback="rscform" %}
-			<form id="rscform" method="post" action="postback">
-                <button style="display:none"></button><!-- for saving on press enter -->
-				<input type="hidden" name="id" value="{{ id }}" />
+{% block admin_edit_form_pre %}{% endblock %}
 
-				<div class="zp-67" id="poststuff">
-					<div class="padding">
+{% wire id="rscform" type="submit" postback="rscform" %}
+<form id="rscform" method="post" action="postback" class="row">
+	<button style="display:none" type="submit"></button><!-- for saving on press enter -->
+	<input type="hidden" name="id" value="{{ id }}" />
 
-						{% all catinclude "_admin_edit_basics.tpl" id is_editable=is_editable languages=languages %}
-						{% all catinclude "_admin_edit_content.tpl" id is_editable=is_editable languages=languages %}
+	<div class="span8" id="poststuff">
+		{% block admin_edit_form_top %}{% endblock %}
 
-						{% if r.is_a.media or r.medium %}
-							{% include "_admin_edit_content_media.tpl" %}
+		{% all catinclude "_admin_edit_basics.tpl" id is_editable=is_editable languages=languages %}
+        {% catinclude "_admin_edit_content_address.tpl" id is_editable=is_editable languages=languages %}
+		{% all catinclude "_admin_edit_content.tpl" id is_editable=is_editable languages=languages %}
 
-							{% if is_editable %}
-								{% include "_admin_edit_content_website.tpl" %}
-							{% endif %}
-						{% endif %}{# medium #}
+		{% if r.is_a.media or r.medium %}
+			{% include "_admin_edit_content_media.tpl" %}
+		{% endif %}
 
+		{% catinclude "_admin_edit_body.tpl" id is_editable=is_editable languages=languages %}
+		{% catinclude "_admin_edit_blocks.tpl" id is_editable=is_editable languages=languages %}
+		{% catinclude "_admin_edit_depiction.tpl" id is_editable=is_editable languages=languages %}
 
-						{% catinclude "_admin_edit_body.tpl" id is_editable=is_editable languages=languages %}
+{#
+		{% catinclude "_admin_edit_haspart.tpl" id is_editable=is_editable languages=languages %}
+#}
 
-						{% catinclude "_admin_edit_depiction.tpl" id is_editable=is_editable languages=languages %}
+		{% include "_admin_edit_content_advanced.tpl" %}
+		{% include "_admin_edit_content_seo.tpl" %}
+	</div>
 
-						{% include "_admin_edit_content_advanced.tpl" %}
-						{% include "_admin_edit_content_seo.tpl" %}
-					</div>
-				</div>
+	<div class="span4" id="sidebar">
+		<div id="sort"> {# also sidebar #}
 
-				<div class="zp-33" id="sidebar">
-					<div class="padding" id="sort">	{# also sidebar #}
+		{# Publish page #}
+		{% include "_admin_edit_content_publish.tpl" headline="simple" %}
 
-						{# Publish page #}
-						{% include "_admin_edit_content_publish.tpl" headline="simple" %}
+		{# Access control #}
+		{% include "_admin_edit_content_acl.tpl" %}
 
-						{# Access control #}
-						{% include "_admin_edit_content_acl.tpl" %}
+		{% if not r.is_a.meta %}
+				{# Publication period #}
+		{% include "_admin_edit_content_pub_period.tpl" %}
 
-						{% if not r.is_a.meta %}
-							{# Publication period #}
-							{% include "_admin_edit_content_pub_period.tpl" %}
+		{# Date range #}
+		{% include "_admin_edit_content_date_range.tpl" %}
+		{% endif %} {# not r.is_a.meta #}
 
-							{# Date range #}
-							{% include "_admin_edit_content_date_range.tpl" %}
-						{% endif %}	{# not r.is_a.meta #}
+		{% all catinclude "_admin_edit_sidebar.tpl" id languages=languages %}
 
-						{% all catinclude "_admin_edit_sidebar.tpl" id languages=languages %}
-
-						{# Page connections #}
-						{% include "_admin_edit_content_page_connections.tpl" %}
-					</div>
-				</div>
-			</form>
-
-		{% block admin_edit_form_post %}{% endblock %}
-
+		{# Page connections #}
+		{% include "_admin_edit_content_page_connections.tpl" %}
 		</div>
 	</div>
-	{% endwith %}
-    {% endwith %}
+</form>
+
+{% block admin_edit_form_post %}{% endblock %}
+
+</div>
+
+<script>
+	$(function() {
+		setTimeout(function() {
+		$({{ m.session['admin_widgets']|to_json }}).each(function() {
+			for (var k in this) {
+				$("#"+k).adminwidget("setVisible", this[k] == "true", true);
+			}});
+		}, 1);
+		
+		$('.language-tabs > li > a[data-toggle="tab"]').live('shown', function (e) {
+			if (e.target != e.relatedTarget) {
+				var lang = $(e.target).parent().attr('lang');
+				$("li[lang='"+lang+"']:visible > a").tab('show');
+			}
+		});
+	});
+</script>
+
+
 {% endwith %}
+{% endwith %}
+{% endwith %}
+
 {% endblock %}

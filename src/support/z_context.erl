@@ -54,8 +54,8 @@
 
     get_reqdata/1,
     set_reqdata/2,
-    get_resource_module/1,
-    set_resource_module/2,
+    get_controller_module/1,
+    set_controller_module/2,
 
     get_q/2,
     get_q/3,
@@ -107,6 +107,10 @@
 
     get_req_path/1,
 
+    set_nocache_headers/1,
+    set_noindex_header/1,
+    set_noindex_header/2,
+
     set_cookie/3,
     set_cookie/4,
     get_cookie/2,
@@ -122,9 +126,11 @@
 %% @doc Return a new empty context, no request is initialized.
 %% @spec new(HostDescr) -> Context2
 %%      HostDescr = Context | atom() | ReqData
+-spec new( #context{} | #wm_reqdata{} | atom() ) -> #context{}.
 new(#context{} = C) ->
     #context{
         host=C#context.host,
+        ua_class=C#context.ua_class,
         language=C#context.language,
         depcache=C#context.depcache,
         notifier=C#context.notifier,
@@ -149,7 +155,12 @@ new(ReqData) ->
     %% This is the requesting thread, enable simple memo functionality.
     z_memo:enable(),
     z_depcache:in_process(true),
-    Context = set_server_names(#context{wm_reqdata=ReqData, host=site(ReqData)}),
+    Context = set_server_names(
+                    #context{
+                        host=site(ReqData),
+                        wm_reqdata=ReqData,
+                        ua_class=z_user_agent:get_class(ReqData)
+                    }),
     set_dispatch_from_path(Context#context{language=z_trans:default_language(Context)}).
 
 
@@ -162,7 +173,7 @@ new(ReqData, Module) ->
     %% This is the requesting thread, enable simple memo functionality.
     z_memo:enable(),
     z_depcache:in_process(true),
-    Context = set_server_names(#context{wm_reqdata=ReqData, resource_module=Module, host=site(ReqData)}),
+    Context = set_server_names(#context{wm_reqdata=ReqData, controller_module=Module, host=site(ReqData)}),
     set_dispatch_from_path(Context#context{language=z_trans:default_language(Context)}).
 
 
@@ -194,7 +205,6 @@ set_server_names(#context{host=Host} = Context) ->
         module_indexer=list_to_atom("z_module_indexer"++HostAsList),
         translation_table=z_trans_server:table(Host)
     }.
-
 
 
 %% @doc Maps the host in the request to a site in the sites folder.
@@ -396,6 +406,8 @@ output1([C|Rest], Context, Acc) ->
         case proplists:get_value(format, Args, "html") of
             "html" ->
                 [ <<"\n\n<script type='text/javascript'>\n$(function() {\n">>, Script, <<"\n});\n</script>\n">> ];
+            "js" ->
+                [ $\n, Script, $\n ];
             "escapejs" ->
                 z_utils:js_escape(Script)
         end.
@@ -486,7 +498,7 @@ ensure_session(Context) ->
             {ok, Context1} = z_session_manager:ensure_session(Context),
             Context2 = z_auth:logon_from_session(Context1),
             Context3 = z_notifier:foldl(session_context, Context2, Context2),
-            add_nocache_headers(Context3);
+            set_nocache_headers(Context3);
         _ ->
             Context
     end.
@@ -541,14 +553,14 @@ set_reqdata(ReqData = #wm_reqdata{}, Context) ->
     Context#context{wm_reqdata=ReqData}.
 
 
-%% @spec get_resource_module(Context) -> term()
+%% @spec get_controller_module(Context) -> term()
 %% @doc Get the resource module handling the request.
-get_resource_module(Context) ->
-    Context#context.resource_module.
+get_controller_module(Context) ->
+    Context#context.controller_module.
 
-%% @spec set_resource_module(Module::atom(), Context) -> NewContext
-set_resource_module(Module, Context) ->
-    Context#context{resource_module=Module}.
+%% @spec set_controller_module(Module::atom(), Context) -> NewContext
+set_controller_module(Module, Context) ->
+    Context#context{controller_module=Module}.
 
 
 %% @spec get_q(Key::string(), Context) -> Value::string() | undefined
@@ -838,11 +850,10 @@ get_resp_header(Header, #context{wm_reqdata=ReqData}) ->
     wrq:get_resp_header(Header, ReqData).
 
 
-%% @doc Get a request header
+%% @doc Get a request header. The header MUST be in lower case.
 %% @spec get_req_header(Header, Context) -> Value
-get_req_header(Header, Context) ->
-    ReqData = get_reqdata(Context),
-    wrq:get_req_header(Header, ReqData).
+get_req_header(Header, #context{wm_reqdata=ReqData}) ->
+    wrq:get_req_header_lc(Header, ReqData).
 
 
 %% @doc Return the request path
@@ -937,14 +948,29 @@ parse_form_urlencoded(Context) ->
 %% the content generated has a session. You can prevent addition of
 %% these headers by not calling z_context:ensure_session/1, or
 %% z_context:ensure_all/1.
-%% @spec add_nocache_headers(#context{}) -> #context{}
-add_nocache_headers(Context = #context{wm_reqdata=ReqData}) ->
+%% @spec set_nocache_headers(#context{}) -> #context{}
+set_nocache_headers(Context = #context{wm_reqdata=ReqData}) ->
     RD1 = wrq:set_resp_header("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0", ReqData),
     RD2 = wrq:set_resp_header("Expires", httpd_util:rfc1123_date({{2008,12,10}, {15,30,0}}), RD1),
     % This let IE6 accept our cookies, basically we tell IE6 that our cookies do not contain any private data.
     RD3 = wrq:set_resp_header("P3P", "CP=\"NOI ADM DEV PSAi COM NAV OUR OTRo STP IND DEM\"", RD2),
     Context#context{wm_reqdata=RD3}.
 
+%% @doc Set the noindex header if the config is set, or the webmachine resource opt is set.
+-spec set_noindex_header(#context{}) -> #context{}.
+set_noindex_header(Context) ->
+    set_noindex_header(false, Context).
+
+%% @doc Set the noindex header if the config is set, the webmachine resource opt is set or Force is set.
+-spec set_noindex_header(Force::term(), #context{}) -> #context{}.
+set_noindex_header(Force, Context) ->
+    case z_convert:to_bool(m_config:get_value(seo, noindex, Context))
+         orelse get(seo_noindex, Context, false)
+         orelse z_convert:to_bool(Force)
+    of
+       true -> set_resp_header("X-Robots-Tag", "noindex", Context);
+       _ -> Context
+    end.
 
 %% @doc Set a cookie value with default options.
 set_cookie(Key, Value, Context) ->
@@ -957,8 +983,9 @@ set_cookie(Key, Value, Options, Context) ->
                    {domain, _} -> Options;
                    none -> [{domain, z_context:cookie_domain(Context)}|Options]
                end,
+    Options2 = z_notifier:foldl(#cookie_options{name=Key, value=Value}, Options1, Context),
     RD = Context#context.wm_reqdata,
-    Hdr = mochiweb_cookies:cookie(Key, Value, Options1),
+    Hdr = mochiweb_cookies:cookie(Key, Value, Options2),
     RD1 = wrq:merge_resp_headers([Hdr], RD),
     z_context:set_reqdata(RD1, Context).
 

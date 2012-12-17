@@ -32,10 +32,24 @@ find_value(Key, [N|_], Context) when is_atom(Key), is_integer(N) ->
     m_rsc:p(N, Key, Context);
 
 %% Property of a resource, just assume an integer is a rsc id
-find_value(Key, Id, Context) when is_integer(Id) ->
+find_value(Key, Id, Context) when is_atom(Key), is_integer(Id) ->
     m_rsc:p(Id, Key, Context);
 
+%% Property of a resource, just assume an integer is a rsc id
+find_value(Key, RscName, Context) when is_atom(Key), is_atom(RscName) ->
+    m_rsc:p(RscName, Key, Context);
+
+%% List of proplists - blocks in the rsc
+find_value(Name, [[{A,_}|_]|_] = Blocks, _Context ) when is_atom(A), not is_integer(Name) ->
+    NameB = z_convert:to_binary(Name),
+    case lists:dropwhile(fun(Ps) -> proplists:get_value(name, Ps) =/= NameB end, Blocks) of
+        [] -> undefined;
+        [Block|_] -> Block
+    end;
+
 %% Regular proplist lookup
+find_value(Key, [{B,_}|_] = L, _Context) when is_binary(B) ->
+    proplists:get_value(z_convert:to_binary(Key), L);
 find_value(Key, L, _Context) when is_list(L) ->
     proplists:get_value(Key, L);
 
@@ -50,6 +64,17 @@ find_value(Key, #rsc_list{list=[H|_T]}, Context) ->
     find_value(Key, H, Context);
 find_value(_Key, #rsc_list{list=[]}, _Context) ->
     undefined;
+
+%% Translations lookup
+find_value(IsoAtom, {trans, Tr}, _Context) ->
+    proplists:get_value(IsoAtom, Tr, <<>>);
+find_value(IsoAtom, Text, _Context) when is_atom(IsoAtom), is_binary(Text) ->
+    case z_trans:is_language(atom_to_list(IsoAtom)) of
+        true ->
+            Text;
+        false ->
+            undefined
+    end;
 
 %% JSON-decoded proplist structure
 find_value(Key, {obj, Props}, _Context) ->
@@ -141,9 +166,21 @@ fetch_value(Key, Data, Context) ->
 are_equal(Arg1, Arg2) ->
     z_utils:are_equal(Arg1, Arg2).
     
-is_false(A) ->
-    not z_convert:to_bool(A).
+is_false(A, Context) ->
+    not is_true(A, Context).
 
+is_false(A) ->
+    not is_true(A).
+
+is_true({trans, _} = T, Context) ->
+    not z_utils:is_empty(z_trans:lookup_fallback(T, Context));
+is_true(A, _Context) ->
+    is_true(A).
+
+is_true(#m{value=V}) -> is_true(V);
+is_true(#rsc_list{list=[]}) -> false;
+is_true(#m_search_result{result=V}) -> is_true(V);
+is_true(#search_result{result=[]}) -> false;
 is_true(A) ->
     z_convert:to_bool(A).
 
@@ -230,4 +267,4 @@ do_cache1(false, _VisibleFor, _Args, _Context) ->
     false.
 
 get_bool_value(Key, Args, Default) ->
-    z_convert:to_bool(proplists:get_value(Key, Args, Default)).
+    is_true(proplists:get_value(Key, Args, Default)).
