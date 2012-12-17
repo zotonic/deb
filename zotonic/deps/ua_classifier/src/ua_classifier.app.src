@@ -1,0 +1,12 @@
+{application, ua_classifier,
+ [
+  {description, "User Agent Classifier - NIF for WeatherChannel dClass"},
+  {vsn, "0.1"},
+  {registered, []},
+  {applications, [
+                    kernel, 
+                    stdlib
+                 ]},
+  {env, []},
+  {modules, [ua_classifier]}
+]}.

@@ -1,3 +1,0 @@
-[
-	{home, [],         resource_zotonic_status, [{template, "home.tpl"}]}
-].

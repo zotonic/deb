@@ -1,3 +1,0 @@
-[
-	{admin_user,  	["admin", "users"],			resource_admin,			[{template, "admin_users.tpl"}, {selected, "users"}]}
-].
