@@ -15,7 +15,7 @@ setup_zotonic()
     test -L zotonic || ln -s ../zotonic/bin/zotonic
     cd ../zotonic
     test -d ebin || mkdir ebin
-    make -j3 -f GNUmakefile
+    make -j3
     cd ..
     chown zotonic:zotonic . -R
 }
