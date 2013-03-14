@@ -1,3 +1,9 @@
+zotonic (0.9.1-1) quantal; urgency=low
+
+  * Import new release 0.9.1
+
+ -- Arjan Scherpenisse <arjan@scherpenisse.net>  Thu, 14 Mar 2013 20:03:03 +0100
+
 zotonic (0.9.0-3) quantal; urgency=low
 
   * Compile lager first so parse transform is available
