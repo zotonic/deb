@@ -1,7 +1,7 @@
 {application, mimetypes,
  [
   {description, "mimetypes"},
-  {vsn, "0.9"},
+  {vsn, "1.0"},
   {registered, [mimetypes]},
   {applications, [
                   kernel,

@@ -19,6 +19,13 @@ Then this will output the text ``Hello Peter's world.``.
 When the template name is a string literal then the template will be inlined. When it is
 an expression then the template will be included during runtime.
 
+.. versionadded:: 0.9.1
+   Added the `optional` keyword.
+
+If the included template is not required, a `optional` keyword may be used::
+
+   {% optional include "might-not-exist.tpl" %}
+
 .. note::
    About unique ids
       :index:`Automatically generated ids` (``{{ #name }}``) are :index:`unique <pair: unique; id>` within an included template and do not clash with similarly named ids in the including template.
@@ -48,7 +55,7 @@ Caching is enabled by defining one of the caching arguments:
 |            |will share the output of the rendering.                 |                    |
 |            |                                                        |                    |
 +------------+--------------------------------------------------------+--------------------+
-|vary        |Dependency keys for the cached output. When a cache key |vary="news"         |
+|vary        |Dependency keys for the cached output. If a cache key   |vary="news"         |
 |            |with the same name is flushed or invalidated then the   |                    |
 |            |cached output of this template is also invalidated. You |                    |
 |            |can use category names here.                            |                    |
@@ -61,11 +68,16 @@ Caching is enabled by defining one of the caching arguments:
 |            |"public", 0                                             |                    |
 |            |                                                        |                    |
 +------------+--------------------------------------------------------+--------------------+
-|sudo        |When supplied then access control is disabled whilst    |sudo                |
+|sudo        |If supplied then access control is disabled whilst      |sudo                |
 |            |rendering the included template. This will show any     |                    |
 |            |content not visible for the current user.  Use with     |                    |
 |            |care.                                                   |                    |
 |            |                                                        |                    |
++------------+--------------------------------------------------------+--------------------+
+|runtime     |If supplied then the included template is not inlined   |runtime             |
+|            |but included during evaluation of the calling template. |                    |
+|            |Only the supplied arguments are available as variables  |                    |
+|            |in the included template.                               |                    |
 +------------+--------------------------------------------------------+--------------------+
 
 .. versionadded:: 0.6

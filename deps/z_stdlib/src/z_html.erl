@@ -35,12 +35,14 @@
     sanitize/1,
     sanitize/2,
     noscript/1,
+    sanitize_uri/1,
     escape_link/2,
     escape_link/1,
     nl2br/1,
     br2nl/1,
     scrape_link_elements/1,
-    ensure_escaped_amp/1
+    ensure_escaped_amp/1,
+    abs_links/2
 ]).
 
 
@@ -68,9 +70,14 @@ escape_props1([{summary, Summary}|T], Acc, Options) ->
 escape_props1([{blocks, V}|T], Acc, Options) when is_list(V) ->
     V1 = [ escape_props1(L, [], Options) || L <- V ],
     escape_props1(T, [{blocks, V1}|Acc], Options);
+escape_props1([{website, V}|T], Acc, Options) ->
+    V1 = escape_value(sanitize_uri(V)),
+    escape_props1(T, [{website, V1} | Acc], Options);
 escape_props1([{K, V}|T], Acc, Options) ->
     EscapeFun = case lists:reverse(z_convert:to_list(K)) of
                     "lmth_" ++ _ -> fun(A) -> sanitize(A, Options) end; %% prop ends in '_html'
+                    "iru_" ++ _ -> fun(A) -> escape_value(sanitize_uri(A)) end; %% prop ends in '_uri'
+                    "lru_" ++ _ -> fun(A) -> escape_value(sanitize_uri(A)) end; %% prop ends in '_url'
                     _ -> fun escape_value/1
                 end,
     escape_props1(T, [{K, EscapeFun(V)} | Acc], Options).
@@ -248,25 +255,26 @@ unescape(B) when is_binary(B) ->
 
 unescape(<<>>, Acc) -> 
     Acc;
-unescape(<<"&amp;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "&">>);
-unescape(<<"&quot;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "\"">>);
-unescape(<<"&#39;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "'">>);
-unescape(<<"&#x27;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "'">>);
-unescape(<<"&#x2F;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "/">>);
-unescape(<<"&lt;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "<">>);
-unescape(<<"&gt;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, ">">>);
-unescape(<<"&euro;", T/binary>>, Acc) ->
-    unescape(T, <<Acc/binary, "€">>);
+unescape(<<"&", Rest/binary>>, Acc) ->
+    unescape_in_charref(Rest, <<>>, Acc);
 unescape(<<C, T/binary>>, Acc) ->
     unescape(T, <<Acc/binary, C>>).
 
+unescape_in_charref(<<>>, CharAcc, ContAcc) ->
+    <<ContAcc/binary, $&, CharAcc/binary>>; %% premature end of string; keep.
+unescape_in_charref(<<$;, Rest/binary>>, CharAcc, ContAcc) ->
+    case z_html_charref:charref(CharAcc) of
+        undefined ->
+            %% keep original code
+            unescape(Rest, <<ContAcc/binary, $&, CharAcc/binary, $;>>);
+        Ch ->
+            %% replace the real char
+            unescape(Rest, <<ContAcc/binary, Ch>>)
+    end;
+
+unescape_in_charref(<<Ch/integer, Rest/binary>>, CharAcc, ContAcc) ->
+    unescape_in_charref(Rest, <<CharAcc/binary, Ch>>, ContAcc).
+    
 
 %% @doc Escape a text. Expands any urls to links with a nofollow attribute.
 -spec escape_link(list()|binary()|{trans, list()}, Options::list()|context()) -> binary() | undefined.
@@ -313,6 +321,10 @@ ensure_protocol("www" ++ Rest) ->
 ensure_protocol(Link) ->
     Link.
 
+
+%% @doc Ensure that an uri is (quite) harmless by removing any script reference
+sanitize_uri(Uri) ->
+    ensure_protocol(noscript(Uri)).
 
 
 %% @doc Strip all html elements from the text. Simple parsing is applied to find the elements. Does not escape the end result.
@@ -825,3 +837,26 @@ is_valid_ent_char(C) ->
 is_valid_ent_val(C) -> 
     (C >= $a andalso C =< $f) orelse (C >= $A andalso C =< $F)
     orelse (C >= $0 andalso C =< $9).
+
+%% @doc Make all links (href/src) in the html absolute to the base URL
+%%      For now this takes a shortcut by checking all ' (src|href)=".."'
+abs_links(Html, Base) ->
+    case re:run(Html, 
+                <<"(src|href)=\"([^\"]*)\"">>,
+                [global, notempty, {capture, all, binary}])
+    of
+        {match, Matches} -> replace_matched_links(Html, Matches, Base);
+        nomatch -> Html
+    end.
+
+replace_matched_links(Html, [], _Base) ->
+    Html;
+replace_matched_links(Html, [[Found, Attr, Link]|Matches], Base) ->
+    Html1 = case z_url:abs_link(Link, Base) of
+                Link -> 
+                    Html;
+                AbsLink ->
+                    New = iolist_to_binary([Attr, $=, $", AbsLink, $"]),
+                    binary:replace(Html, Found, New)
+            end,
+    replace_matched_links(Html1, Matches, Base).
