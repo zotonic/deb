@@ -28,6 +28,7 @@
              dialogAdd: function(options)
              {
                  $('#zmodal').remove();
+                 $(".modal-backdrop").remove();
 
                  options = $.extend({}, $.ui.dialog.defaults, options);
                                      
@@ -35,7 +36,7 @@
 
                  var title = $("<div>").addClass("modal-header")
                      .append($("<a>").addClass("close").attr("data-dismiss", "modal").html("&times;"))
-                     .append($("<h3>").text(options.title));
+                     .append($("<h3>").html(options.title));
 
                  var body = $("<div>").addClass("modal-body")
                      .html(options.text);
@@ -46,13 +47,22 @@
 
                  var dialog = $("<div>")
                      .attr("id", "zmodal")
-                     .attr("style", "width: "+width)
                      .addClass(dialogClass)
                      .append(title)
                      .append(body)
                      .appendTo($("body"));
 
                  dialog.modal({backdrop: true});
+
+                 if (width > 0) {
+                     dialog.css({
+                         width: width,
+                         'margin-left': function () {
+                             return -($(this).width() / 2);
+                         }
+                     });
+                 }
+                 
                  if ($(window).width() <= 480) {
                     dialog.css({top: ($(window).scrollTop() + 10) + "px"});
                  } else if (dialog.height() > 0.8 * $(window).height()) {

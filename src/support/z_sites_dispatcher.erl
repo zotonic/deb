@@ -89,15 +89,21 @@ dispatch(Host, Path, ReqData) ->
             case z_notifier:first(DispReq#dispatch{path=RewrittenPath}, Context#context{wm_reqdata=ReqDataHost}) of
                 {ok, Id} when is_integer(Id) ->
                     %% Retry with the resource's default page uri
-                    DefaultPagePath = binary_to_list(m_rsc:p_no_acl(Id, default_page_url, Context)),
-                    case gen_server:call(?MODULE, DispReq#dispatch{path=DefaultPagePath}) of
-                        {no_dispatch_match, _, _, _} = M ->
-                            {M, ReqDataHost};
-                        {redirect, ProtocolAsString, Hostname} ->
-                            {handled, redirect(false, ProtocolAsString, Hostname, ReqDataUA)};
-                        {Match, MatchedHost} ->
-                            {ok, ReqDataHost} = webmachine_request:set_metadata(zotonic_host, MatchedHost, ReqDataUA),
-                            {Match, ReqDataHost}
+                    case m_rsc:p_no_acl(Id, default_page_url, Context) of
+                        undefined ->
+                            {{no_dispatch_match, MatchedHost, NonMatchedPathTokens}, ReqDataHost};
+                        DefaultPagePathBin ->
+                            DefaultPagePath = binary_to_list(DefaultPagePathBin),
+                            case gen_server:call(?MODULE, DispReq#dispatch{path=DefaultPagePath}) of
+                                {no_dispatch_match, MatchedHost1, NonMatchedPathTokens1, _} ->
+                                    {ok, ReqDataHost1} = webmachine_request:set_metadata(zotonic_host, MatchedHost1, ReqDataUA),
+                                    {{no_dispatch_match, MatchedHost1, NonMatchedPathTokens1}, ReqDataHost1};
+                                {redirect, ProtocolAsString, Hostname} ->
+                                    {handled, redirect(false, ProtocolAsString, Hostname, ReqDataUA)};
+                                {Match1, MatchedHost1} ->
+                                    {ok, ReqDataHost1} = webmachine_request:set_metadata(zotonic_host, MatchedHost1, ReqDataUA),
+                                    {Match1, ReqDataHost1}
+                            end
                     end;
                 {ok, #dispatch_match{
                         dispatch_name=SDispatchName,
@@ -118,8 +124,13 @@ dispatch(Host, Path, ReqData) ->
                     {{no_dispatch_match, MatchedHost, NonMatchedPathTokens}, ReqDataHost}
             end;
 
-        {redirect, ProtocolAsString, Hostname} ->
-            {handled, redirect(false, ProtocolAsString, Hostname, ReqDataUA)};
+        {redirect, MatchedHost} ->
+            RawPath = wrq:raw_path(ReqDataUA),
+            Uri = z_context:abs_url(RawPath, z_context:new(MatchedHost)), 
+            {handled, redirect(true, z_convert:to_list(Uri), ReqDataUA)};
+
+        {redirect, NewProtocol, NewHost} ->
+            {handled, redirect(false, z_convert:to_list(NewProtocol), NewHost, ReqDataUA)}; 
 
         {Match, MatchedHost} ->
             {ok, ReqDataHost} = webmachine_request:set_metadata(zotonic_host, MatchedHost, ReqDataUA),
@@ -175,12 +186,10 @@ handle_call(#dispatch{host=HostAsString, path=PathAsString, method=Method, proto
                               AppRoot, StringPath}, 
                              Host}
                     end;
-                {redirect, Hostname} ->
-                    ProtocolAsString = case Protocol of
-                                           https ->"https";
-                                           http -> "http"
-                                       end,
-                    {redirect, ProtocolAsString, Hostname};
+                {redirect, _Host} = Redirect ->
+                    Redirect;
+                {redirect, _NewProtocol, _NewHost} = Redirect -> 
+                    Redirect;
                 no_host_match ->
                     no_host_match
             end,
@@ -270,7 +279,7 @@ redirect(IsPermanent, Location, ReqData) ->
             _ -> webmachine_logger
         end,
     spawn(LogModule, log_access, [LogData]),
-    RD2.
+    handled.
 
 
 %% @doc Fetch the host for the given domain
@@ -293,7 +302,7 @@ handle_host_for_domain(Domain, DispatchList) ->
 get_host_dispatch_list(WMHost, DispatchList, Fallback, Method) ->
     case DispatchList of
         [#wm_host_dispatch_list{}|_] ->
-            {Host, Port} = split_host(WMHost),
+            {Host, _Port} = split_host(WMHost),
             case get_dispatch_host(Host, DispatchList) of
                 {ok, DL} ->
                     {ok, DL#wm_host_dispatch_list.host, DL#wm_host_dispatch_list.dispatch_list};
@@ -310,14 +319,7 @@ get_host_dispatch_list(WMHost, DispatchList, Fallback, Method) ->
                                 andalso Method =:= 'GET' 
                             of
                                 true ->
-                                    % Redirect, keep the port number
-                                    Hostname = DL#wm_host_dispatch_list.hostname,
-                                    Hostname1 = case Port of
-                                                    "80" -> Hostname;
-                                                    "443" -> Hostname;
-                                                    _ -> Hostname ++ [$:|Port]
-                                                end,
-                                    {redirect, Hostname1};
+                                    {redirect, DL#wm_host_dispatch_list.host};
                                 false ->
                                     {ok, DL#wm_host_dispatch_list.host, DL#wm_host_dispatch_list.dispatch_list}
                             end;
@@ -502,7 +504,7 @@ wm_dispatch(Protocol, HostAsString, Host, PathAsString, DispatchList) ->
     Context = z_context:new(Host),
     Path = string:tokens(PathAsString, [?SEPARATOR]),
     IsDir = lists:last(PathAsString) == ?SEPARATOR,
-    {Path1, Bindings} = z_notifier:foldl(#dispatch_rewrite{is_dir=IsDir, path=PathAsString}, {Path, []}, Context),
+    {Path1, Bindings} = z_notifier:foldl(#dispatch_rewrite{is_dir=IsDir, path=PathAsString, host=HostAsString}, {Path, []}, Context),
     try_path_binding(Protocol, HostAsString, Host, DispatchList, Path1, Bindings, extra_depth(Path1, IsDir), Context).
 
 % URIs that end with a trailing slash are implicitly one token
