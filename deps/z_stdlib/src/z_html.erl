@@ -209,9 +209,9 @@ escape_check1(<<"&euro;", T/binary>>, Acc) ->
 escape_check1(<<"&amp;", T/binary>>, Acc) ->
     escape_check1(T, <<Acc/binary, "&amp;">>);
 escape_check1(<<"&lt;", T/binary>>, Acc) ->
-    escape_check1(T, <<Acc/binary, "&amp;">>);
+    escape_check1(T, <<Acc/binary, "&lt;">>);
 escape_check1(<<"&gt;", T/binary>>, Acc) ->
-    escape_check1(T, <<Acc/binary, "&amp;">>);
+    escape_check1(T, <<Acc/binary, "&gt;">>);
 escape_check1(<<"&quot;", T/binary>>, Acc) ->
     escape_check1(T, <<Acc/binary, "&quot;">>);
 escape_check1(<<"&#39;", T/binary>>, Acc) ->
@@ -269,7 +269,8 @@ unescape_in_charref(<<$;, Rest/binary>>, CharAcc, ContAcc) ->
             unescape(Rest, <<ContAcc/binary, $&, CharAcc/binary, $;>>);
         Ch ->
             %% replace the real char
-            unescape(Rest, <<ContAcc/binary, Ch>>)
+            ChBin = unicode:characters_to_binary([Ch]),
+            unescape(Rest, <<ContAcc/binary, ChBin/binary>>)
     end;
 
 unescape_in_charref(<<Ch/integer, Rest/binary>>, CharAcc, ContAcc) ->

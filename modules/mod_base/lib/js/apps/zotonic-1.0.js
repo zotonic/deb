@@ -313,22 +313,33 @@ function z_ajax(triggerID, params)
 
 function z_unmask(id)
 {
-	if (id)
-	{
-		var trigger = $('#'+id).get(0);
-		try { $(trigger).unmask(); } catch (e) {};
-		$(trigger).removeClass("z_error_upload");
-	}
+    if (id)
+    {
+        var trigger;
+        if (id.charAt(0) == ' ') {
+            trigger = $(id);
+        } else {
+            trigger = $('#'+id);
+        }
+        trigger.each(function() { try { $(this).unmask(); } catch (e) {}});
+        trigger.each(function() { $(this).removeClass("z_error_upload"); });
+    }
 }
-
 
 function z_unmask_error(id)
 {
-	if (id)
-	{
-		z_unmask(id);
-		$('#'+id).addClass("z_error_upload");
-	}
+    if (id)
+    {
+        var trigger;
+        if (id.charAt(0) == ' ') {
+            trigger = $(id);
+        } else {
+            trigger = $('#'+id);
+        }
+        z_unmask(id);
+        trigger.each(function() { try { $(this).unmask(); } catch (e) {}});
+        trigger.each(function() { $(this).addClass("z_error_upload"); });
+    }
 }
 
 
@@ -877,10 +888,6 @@ function z_init_postback_forms()
 			if (use_post) 
 			{
 				$(theForm).postbackFileForm(form_id, postback, validations);
-                if ($(theForm).hasClass("z_logon_form")) {
-                    /* When a z_logon_form is posted, we post to a hidden iframe, to trick chrome into showing the "save password" option. The logon form submit cannot be cancelled because that blocks the form-remembering. */
-                    return true;
-                }
 			}
 			else
 			{

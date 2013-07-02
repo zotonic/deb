@@ -42,6 +42,9 @@
     get_rsc_by_type/3,
     get_rsc/3,
 
+    is_valid_key/3,
+    normalize_key/2,
+
 	lookup_by_username/2,
 	lookup_by_verify_key/2,
     lookup_by_type_and_key/3,
@@ -53,8 +56,6 @@
 	
     insert/4,
     insert/5,
-    ensure/4,
-    ensure/5,
     insert_unique/4,
     insert_unique/5,
 
@@ -306,12 +307,13 @@ hash_is_equal(_, _) ->
 insert(RscId, Type, Key, Context) ->
     insert(RscId, Type, Key, [], Context).
 insert(RscId, Type, Key, Props, Context) ->
-    Props1 = [{rsc_id, RscId}, {type, Type}, {key, Key} | Props],
-    z_db:insert(identity, Props1, Context).
+    KeyNorm = normalize_key(Type, Key),
+    case is_valid_key(Type, KeyNorm, Context) of
+        true -> insert_1(RscId, Type, KeyNorm, Props, Context);
+        false -> {error, invalid_key}
+    end.
 
-ensure(RscId, Type, Key, Context) ->
-    ensure(RscId, Type, Key, [], Context).
-ensure(RscId, Type, Key, Props, Context) ->
+insert_1(RscId, Type, Key, Props, Context) ->
     case z_db:q1("select id 
                   from identity 
                   where rsc_id = $1
@@ -320,9 +322,28 @@ ensure(RscId, Type, Key, Props, Context) ->
                 [RscId, Type, Key],
                 Context)
     of
-        undefined -> insert(RscId, Type, Key, Props, Context);
-        IdnId -> {ok, IdnId}
+        undefined -> 
+            Props1 = [{rsc_id, RscId}, {type, Type}, {key, Key} | Props],
+            z_db:insert(identity, Props1, Context);
+        IdnId ->
+            case proplists:get_value(is_verified, Props, false) of
+                true -> set_verified_trans(RscId, Type, Key, Context);
+                false -> nop
+            end,
+            {ok, IdnId}
     end.
+
+
+is_valid_key(email, Key, _Context) ->
+    z_email_utils:is_email(Key);
+is_valid_key(_Type, _Key, _Context) ->
+    true.
+
+normalize_key(email, Key) ->
+    z_convert:to_binary(z_string:trim(z_string:to_lower(Key)));
+normalize_key(_Type, Key) ->
+    Key.
+
 
 %% @doc Create an unique identity record.
 insert_unique(RscId, Type, Key, Context) ->
@@ -360,13 +381,13 @@ set_verified_trans(RscId, Type, Key, Context) ->
                 [RscId, Type, Key], 
                 Context)
     of
-        1 -> 
-            ok;
         0 ->
             1 = z_db:q("insert into identity (rsc_id, type, key, is_verified) 
                         values ($1,$2,$3,true)", 
                        [RscId, Type, Key], 
                        Context),
+            ok;
+        N when N > 0 -> 
             ok
     end.
 
@@ -381,8 +402,8 @@ is_verified(RscId, Context) ->
 set_by_type(RscId, Type, Key, Context) ->
 	F = fun(Ctx) -> 
 		case z_db:q("update identity set key = $3 where rsc_id = $1 and type = $2", [RscId, Type, Key], Ctx) of
-			1 -> ok;
-			0 -> z_db:q("insert into identity (rsc_id, type, key) values ($1,$2,$3)", [RscId, Type, Key], Ctx)
+			0 -> z_db:q("insert into identity (rsc_id, type, key) values ($1,$2,$3)", [RscId, Type, Key], Ctx);
+            N when N > 0 -> ok
 		end
 	end,
 	z_db:transaction(F, Context).

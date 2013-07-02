@@ -3,10 +3,11 @@
 					template="_action_dialog_connect.tpl" 
 					title=(in_sorter == 'category')|if:_"Add category":_"Add menu item"
 					callback="window.zMenuEditDone"
+					cat=cat_id
 					in_sorter=in_sorter}
 %}
 {% wire name="admin-menu-edit" 
-		action={dialog_edit_basics callback="window.zMenuEditDone"} 
+		action=admin_menu_edit_action|default:{dialog_edit_basics callback="window.zMenuEditDone"} 
 %}
 
 {% javascript %}
@@ -54,7 +55,7 @@ $('#{{ menu_id }}').on('click', '.dropdown-menu a', function(e) {
 
 			z_notify("menu-item-render", {id: v.object_id, callback: "window.zMenuNewItem", z_delegate:"mod_menu"});
 		};
-		z_event("admin-menu-select");
+		z_event("admin-menu-select", {tab: "{{ connect_tab|default:"find" }}"});
 	}
 	e.preventDefault();
 });
