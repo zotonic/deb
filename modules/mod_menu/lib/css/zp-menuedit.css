@@ -37,11 +37,21 @@ ul.tree-list li {
 }
 
 ul.tree-list li img.grippy {
-    cursor: move;
     padding-right: 2px;
 }
 
+ul.tree-list .active {
+    font-weight: bold;
+}
+ul.tree-list .active .menu-edit {
+    opacity: 0.5;
+    font-weight: normal;
+}
+
+
 ul.tree-list li div {
+    cursor: move;
+    clear: both;
     border: 1px solid #E0E0E0;
     margin-bottom: -1px;
     position: relative;
@@ -55,6 +65,16 @@ ul.tree-list li div {
     background: linear-gradient(top, #ffffff 0%,#f5f5f5 50%); /* W3C */
     filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#ffffff', endColorstr='#f5f5f5',GradientType=0 ); /* IE6-9 */
     border-radius: 4px;
+    position: relative;
+}
+
+ul.tree-list li .btns {
+    position: absolute;
+    right: 4px;
+}
+ul.tree-list li .btns .btn-group {
+    margin-left: 4px;
+    display: inline-block;
 }
 
 .menu-edit a {

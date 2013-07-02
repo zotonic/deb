@@ -1,11 +1,10 @@
 #!/bin/sh
-exec sed -f - -- "$@" <<'EOF'
-
+echo '
 # operate on the first lines of the identifier_to_keyword fun
 # that mentions open_tag (guard clause), and down until the
 # the line containing "Type ="
 /identifier_to_keyword.*open_tag/,/Type =/ {
-    # delete lines that doesn't have any " in them
+    # delete lines that does not have any " in them
     /^[^"]*$/ d
 
     # delete everyting upto the next quoted word, and the quotes
@@ -15,7 +14,7 @@ exec sed -f - -- "$@" <<'EOF'
     # strip out spurious erlang syntax scrap
     s/[],]//g
 
-    # get rid of all close tags (those prefixed with 'end')
+    # get rid of all close tags (those prefixed with "end")
     s/end[a-z]*//g
 
     # print whats left
@@ -24,4 +23,8 @@ exec sed -f - -- "$@" <<'EOF'
 
 # delete everything else
 d
-EOF
+' > /tmp/ztgsed$$
+
+exec sed -f /tmp/ztgsed$$ -- "$@"
+
+rm /tmp/ztgsed$$

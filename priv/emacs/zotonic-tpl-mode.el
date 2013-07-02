@@ -1,6 +1,6 @@
 ;;; zotonic-tpl-mode.el --- Support for the zotonic template language
 
-;; Copyright (C) 2012 Andreas Stenius
+;; Copyright (C) 2012-2013 Andreas Stenius
 
 ;; Author: Andreas Stenius <git@astekk.se>
 ;; Created: 27 Nov 2012
@@ -38,7 +38,8 @@
 ;;; Tag soup support:
 
 ;; Tag soup, a.k.a html, is supported directly in this mode. It ought to
-;; be supported by an accompanying sub-mode. But I can't be bothered with it.
+;; be supported by an accompanying sub-mode. But I can't be bothered with
+;; it at the moment.
 
 ;;; Code:
 
@@ -214,7 +215,7 @@
     ;; find next {% ... %} tag (notice: we need to keep the captures in sync)
     (concat
      "\\({%\\) *" zotonic-tpl-identifer-re ; open tag followed by identifier
-     "\\([^%]\\|\n\\|\\(?:%[^}]\\)\\)*\\(%}\\)") ; skip tag contents up to close
+     "\\(\\(?:.\\|\n\\)*?\\)\\(%}\\)") ; skip tag contents up to close
     ;; captures: 1. {%  2. tag/keyword 3. tag contents  4. %}
     (list
      '(1 font-lock-constant-face)
@@ -229,16 +230,18 @@
      ))
    (cons
     ;; find next {{ ... }} tag (notice: we need to keep the captures in sync)
-    "\\({{\\)\\( *\\)\\([^}]\\|\n\\|\\(}[^}]\\)\\)*\\(}}\\)"
-    ;; captures: 1. {{  2. dummy (leading space) 3-4. tag contents  5. }}
+    "\\({{\\)\\(\\(?:.\\|\n\\)*?\\)\\(}}\\)"
+    ;; captures: 1. {{  2. tag contents  3. }}
     (list
      '(1 font-lock-constant-face)
-     '(5 font-lock-constant-face)
+     '(3 font-lock-constant-face)
      zotonic-tpl-filters-matcher
      zotonic-tpl-lookup-matcher
      zotonic-tpl-index-matcher
      ))
+
    ;; this does NOT work - emacs hangs with this construct
+   ;; need a more efficient regexp
    ;; (cons
    ;;  ;; find comment blocks
    ;;  "{%[ \t]*comment[ \t]*%}\\(.*\\|\n*\\)*{%[ \t]*endcomment[ \t]*%}"
@@ -296,6 +299,29 @@ Returns t if point was moved, otherwise nil."
     (and
      (zotonic-tpl-prev-tag-boundary (point-min))
      (looking-at-p "{"))))
+
+(defun zotonic-tpl-find-open-tag (limit)
+  "Search backwards for an un-closed open template tag.
+If found, returns t, and match-string 1 captures the tag name."
+  (interactive (list (point-min)))
+  (let ((found nil))
+    (while (and
+            (not found)
+            (re-search-backward "{%" limit t))
+      (if (looking-at (concat "{%[ \t\n]*" zotonic-tpl-end-keywords-re))
+          ;; found end keyword, recurse unless it's also a begin keyword
+          (or (looking-at-p (concat
+                             "{%[ \t\n]*"
+                             zotonic-tpl-begin-keywords-re))
+              (zotonic-tpl-find-open-tag limit))
+        ;; not an end keyword, look for begin keyword
+        (if (looking-at (concat
+                         "{%[ \t\n]*\\("
+                         zotonic-tpl-begin-keywords-re
+                         "\\)"))
+            ;; found begin keyword, bail
+            (setq found t))))
+    found))
 
 (defun zotonic-tpl-goto-indent-column (offset)
   "Move point to the first character (i.e. the indentation column) of line,
@@ -404,107 +430,134 @@ looking at lines going in OFFSET direction. -1 or 1 is sensible offset values."
    ))
 
 (defun zotonic-tpl-tag-soup-find-open-tag (limit)
-  "Search backwards for the open tag that is being closed by the tag at point."
+  "Search backwards for an un-closed open soup tag.
+If found, returns t, and match-string 2 captures the tag name."
   (interactive (list (point-min)))
-  (save-match-data
-    (if (looking-at "[ \t]*</\\([^>]*\\)>")
-        (let ((res)
-              (tag (match-string 1)))
-          (while
-              (if (re-search-backward (concat "</?" tag) limit t)
-                  (if  (looking-at-p "</")
-                      (zotonic-tpl-tag-soup-find-open-tag limit)
-                    (setq res (point))
-                    nil)))
-          res)
-      )))
+  (let ((found nil))
+    (while
+        (and
+         (not found)
+         (re-search-backward
+          "<\\(/?\\)\\([^ />]+\\)\\(?:[^/>]\\|\\(?:/[^>]\\)\\|\n\\)*\\(/?\\)>"
+          limit t))
+      (if (string= "/" (match-string 1))
+          ;; found a close tag, recursive search to find it's open tag
+          (zotonic-tpl-tag-soup-find-open-tag limit)
+        (or
+         ;; self closed, continue search
+         (string= "/" (match-string 3))
+         ;; else it's a open tag, bail search
+         (setq found t))
+        ))
+    found))
 
 (defun zotonic-tpl-tag-soup-get-indent-for-line (offset)
   "Calculate the indentation to use for the line following the line
  offset lines from the current line."
   (save-excursion
-    (if (zotonic-tpl-goto-indent-column offset)
-        (progn
-          ;; don't indent relative to the middle of a template tag
-          (if (zotonic-tpl-within-tag (point))
-              (zotonic-tpl-prev-tag-boundary (point-min)))
-          ;; go through line, looking for indentation modifiers
-          ;; such as opening and closing soup tags or
-          ;; template block tags (those that has matching pairs)
-          ;; like block .. endblock or if .. endif, etc.
-          (let ((start (point))
-                (indent (current-column))
-                (end (progn
-                       (end-of-line)
-                       (point))))
-            ;; look for the last closing soup tag
-            (if (re-search-backward "</" start t)
-                (save-excursion
-                  (if (zotonic-tpl-tag-soup-find-open-tag (point-min))
-                      (setq indent (current-column))))
-              (goto-char start))
-            ;; look for ending multiline soup tag
-            (if (looking-at-p ">")
-                (setq indent (+ indent tab-width)))
-            ;; look at the rest of line (either the enitre line,
-            ;; or that following the soup close tag
-            (while (not (eolp))
-              ;; indent after block begin tags
-              (if (looking-at-p (concat "{%[ \t\n]*"
-                                        zotonic-tpl-begin-keywords-re))
-                  (progn
-                    (setq indent (+ indent tab-width))
-                    (forward-char)
-                    (zotonic-tpl-next-tag-boundary end))
-                  ;;; else
-                ;; un-indent after block end tags (or close tag)
-                ;; that has junk in front of it
-                (if (looking-at-p (concat "\\(%}\\)\\|\\({%[ \t\n]*"
+    (if (not (zotonic-tpl-goto-indent-column offset))
+        0 ;; default indent when we couldn't goto it
+      ;; else
+
+      ;; don't indent relative to the middle of a template tag
+      ;; TODO: this won't work if the tpl tags are chained on the same line
+      (if (zotonic-tpl-within-tag (point))
+          (zotonic-tpl-prev-tag-boundary (point-min)))
+
+      ;; go through line, looking for indentation modifiers
+      ;; such as opening and closing soup tags or
+      ;; template block tags (those that has matching pairs)
+      ;; like block .. endblock or if .. endif, etc.
+      (let ((start (point))
+            (indent (current-column)))
+
+        ;; look for ending multiline soup tag
+        (if (looking-at-p ">")
+            (setq indent (+ indent tab-width)))
+
+        ;; walk through line
+        (while (not (eolp))
+
+          ;; using and here, to get an implicit continue on the first
+          ;; if yielding nil
+          (and
+
+           ;; indent after tpl block begin tags
+           (if (not (looking-at-p (concat "{%[ \t\n]*"
+                                          zotonic-tpl-begin-keywords-re)))
+               t
+             (setq indent (+ indent tab-width))
+             (forward-char)
+             ;; skip over tpl tag contents
+             (if (not (zotonic-tpl-next-tag-boundary (point-at-eol)))
+                 (end-of-line))
+             nil)
+
+           ;; un-indent after block end tags (or close tag)
+           ;; that has junk in front of it
+           (if (not (looking-at-p (concat "\\(%}\\)\\|\\({%[ \t\n]*"
                                           zotonic-tpl-end-keywords-re
-                                          "\\)"))
-                    (progn
-                      (unless (eq start (point))
-                        (setq indent (- indent tab-width)))
-                      (forward-char)
-                      (zotonic-tpl-next-tag-boundary end))
-                    ;;; else
-                  ;; skip over other tags
-                  (if (looking-at-p "{%")
-                      (progn
-                        (forward-char)
-                        (zotonic-tpl-next-tag-boundary end))
-                      ;;; else
-                    ;; indent after opening soup tags (or multiline open tags)
-                    (if (looking-at-p
-                         "<\\w+\\(?:[^/>]\\|\\(?:/[^>]\\)\\)*\\(?:>\\|\n\\)")
-                        (setq indent (+ indent tab-width)))
-                    ;; unindent after self closing multiline soup tag
-                    (if (looking-at-p "/>")
-                        (save-excursion
-                          (if (not (re-search-backward "<\\w+" start t))
-                              (setq indent (- indent tab-width)))))
-                    (forward-char)))))
-            indent))
-      0)))
+                                          "\\)")))
+               t
+             (unless (eq start (point))
+               (setq indent (- indent tab-width)))
+             (forward-char)
+             (if (not (zotonic-tpl-next-tag-boundary (point-at-eol)))
+                 (end-of-line))
+             nil)
+
+           ;; skip over other tags
+           (if (not (looking-at-p "{%"))
+               t
+             (forward-char)
+             (if (not (zotonic-tpl-next-tag-boundary (point-at-eol)))
+                 (end-of-line))
+             nil)
+
+           ;; indent after opening soup tags (or multiline open tags)
+           (if (not (looking-at
+                     "<\\w+\\(?:[^/>]\\|\\(?:/[^>]\\)\\)*\\(?:>\\|\n\\)"))
+               t
+             (setq indent (+ indent tab-width))
+             (goto-char (match-end 0))
+             nil)
+
+           ;; unindent after closing soup tags with junk in front of it
+           (if (not (looking-at "</"))
+               t
+             (unless (eq start (point))
+               (setq indent (- indent tab-width)))
+             (goto-char (match-end 0))
+             nil)
+
+           ;; unindent after self closing multiline soup tag
+           (if (not (looking-at-p "/>"))
+               t
+             (save-excursion
+               (if (not (re-search-backward "<\\w+" start t))
+                   (setq indent (- indent tab-width))))
+             t)
+
+           ;; move to next char
+           (forward-char)
+           ) ; and
+          ) ; while
+
+        ;; return indent
+        indent))))
 
 (defun zotonic-tpl-tag-soup-indent ()
   "Indent zotonic line in midst of a tag soup (e.g. html, xml, et. al.).
 Returns the column the line was indented to."
   (save-excursion
     (beginning-of-line)
-    (let ((indent
-           (if (looking-at-p "[ \t]*</")
-               ;; indent closing tag matching it's open tag
-               (save-excursion
-                 (zotonic-tpl-tag-soup-find-open-tag (point-min))
-                 (current-column))
-             ;; indent tag soup
-             (zotonic-tpl-tag-soup-get-indent-for-line -1))))
-      ;; un-indent block end tags and ending multiline soup tags
+    (let ((indent (zotonic-tpl-tag-soup-get-indent-for-line -1)))
+      ;; un-indent block end/close tags and ending multiline soup tags
       (if (or
            (looking-at-p (concat "[ \t]*{%[ \t\n]*"
                                  zotonic-tpl-end-keywords-re))
-           (looking-at-p "[ \t]*/?>"))
+           (looking-at-p "[ \t]*/?>")
+           (looking-at-p "[ \t]*</"))
           (setq indent (- indent tab-width)))
       (indent-line-to indent)
       indent)
@@ -525,7 +578,9 @@ Returns the column the line was indented to."
           (actual (zotonic-tpl-indent-line)))
       (if (equal expect actual) t
         ;; restore indentation on mismatch
-        (indent-line-to expect) nil))))
+        (indent-line-to expect)
+        ;; edge case for empty lines
+        (equal (point-at-bol) (point-at-eol))))))
 
 (defun zotonic-tpl-test-report-error (prefix)
   "Returns a formatted error message with PREFIX."
@@ -583,6 +638,44 @@ Returns the column the line was indented to."
       errors)))
 
 ;;;
+;;; Tag complete functions
+;;;
+
+(defun zotonic-tpl-tag-complete (string)
+  "Complete tag soup at point"
+  (save-excursion
+    (pcase string
+      (`"</"
+       (if (zotonic-tpl-tag-soup-find-open-tag (point-min))
+           (cons (match-string 2) ">")
+         nil))
+      (`"{%"
+       (if (zotonic-tpl-find-open-tag (point-min))
+           (cons (match-string 1) " %}")
+         nil)
+       )
+      )))
+
+(defun zotonic-tpl-tag-close (tag)
+  "Close a template tag (or soup tag).
+tag is a list where car is the tag name and cdr the closing string.
+i.e. (tagname . endtag), (\"div\" . \">\")."
+  (insert (car tag))
+  (if (not (re-search-forward (cdr tag) (point-at-eol) t))
+      (insert (cdr tag)))
+  (if (looking-at-p "}\\|>")
+      (delete-char 1)))
+
+(defun zotonic-tpl-post-insert ()
+  "Hook function to do special processing on input."
+  (if (looking-back "\\(?:{%[ \t\n]*end\\)\\|\\(?:</\\)")
+      (pcase (zotonic-tpl-tag-complete
+              (substring (match-string 0) 0 2))
+        (`nil)
+        (tag (zotonic-tpl-tag-close tag))))
+  (zotonic-tpl-indent-line))
+
+;;;
 ;;; Define zotonic major mode
 ;;;
 
@@ -616,6 +709,7 @@ Keys defined in this mode are:
   (setq font-lock-extend-region-functions
         (append font-lock-extend-region-functions
                 '(zotonic-tpl-font-lock-extend-region)))
+  (add-hook 'post-self-insert-hook 'zotonic-tpl-post-insert t t)
   )
 
 (provide 'zotonic-tpl-mode)

@@ -124,6 +124,7 @@ restart(Site) ->
 %% @doc Initiates the server.
 init([]) ->
     {ok, Sup} = z_supervisor:start_link([]),
+    z_supervisor:set_manager_pid(Sup, self()), 
     ets:new(?MODULE_INDEX, [set, public, named_table, {keypos, #module_index.key}]),
     ets:new(?MEDIACLASS_INDEX, [set, public, named_table, {keypos, #mediaclass_index.key}]),
     add_sites_to_sup(Sup, scan_sites()),
@@ -181,13 +182,24 @@ handle_cast({stop, Site}, State) ->
 
 %% @doc Start a site, assume it is a known site.
 handle_cast({start, Site}, State) ->
-    z_supervisor:start_child(State#state.sup, Site),
+    z_supervisor:start_child(State#state.sup, Site, infinity),
     {noreply, State};
 
 %% @doc Start a site, assume it is a known site.
 handle_cast({restart, Site}, State) ->
     z_supervisor:restart_child(State#state.sup, Site),
     {noreply, State};
+
+%% @doc A site started - report
+handle_cast({supervisor_child_started, Child, SitePid}, State) ->
+    lager:info("Site started: ~p (~p)", [Child#child_spec.name, SitePid]),
+    {noreply, State};
+
+%% @doc A site stopped - report
+handle_cast({supervisor_child_stopped, Child, SitePid}, State) ->
+    lager:info("Site stopped: ~p (~p)", [Child#child_spec.name, SitePid]),
+    {noreply, State};
+
 
 %% @doc Trap unknown casts
 handle_cast(Message, State) ->
@@ -279,7 +291,7 @@ add_sites_to_sup(Sup, [SiteProps|Rest]) ->
             Spec = #child_spec{name=Name, mfa={z_site_sup, start_link, [Name]}},
             ok = z_supervisor:add_child(Sup, Spec),
             case proplists:get_value(enabled, SiteProps, false) of
-                true -> z_supervisor:start_child(Sup, Name);
+                true -> z_supervisor:start_child(Sup, Name, infinity);
                 false -> leave_in_stop_state
             end;
         _ ->

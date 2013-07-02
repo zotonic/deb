@@ -1,3 +1,4 @@
+{% with blocks|if_undefined:(m.admin_blocks.list[id]) as blocks %}
 <div id="edit-blocks-wrapper">
     <input type="hidden" id="block-" name="block-" value="" /> 
     {% include "_admin_edit_block_addblock.tpl" %}
@@ -7,6 +8,7 @@
     {% endfor %}
     </ul>
 </div>
+{% endwith %}
 
 {% javascript %}
 $('#edit-blocks').sortable({ 
@@ -22,7 +24,8 @@ $('#edit-blocks').sortable({
         z_tinymce_add($(this));
     }
 })
-.on('click', '.icon-remove', function() { 
+.on('click', '.icon-remove', function(event) { 
+    event.stopPropagation();
     var block = $(this).closest('li');
     z_dialog_confirm({
         title: '{_ Confirm block removal _}',
@@ -75,7 +78,12 @@ window.zAdminBlockConnectDone = function(v) {
 
 $('#edit-blocks-wrapper').on('click', '.rsc-item h5 a', function(event) {
     var rsc_id = $(this).attr('href').replace('#', '');
-    z_event("admin-edit-basics", {id: rsc_id, element_id: $(this).closest(".rsc-item").attr('id'), template: "_rsc_item.tpl"});
+    z_event("admin-edit-basics", {
+                        id: rsc_id, 
+                        element_id: $(this).closest(".rsc-item").attr('id'), 
+                        template: "_rsc_item.tpl", 
+                        edit_dispatch: "{{ edit_dispatch }}"
+                });
     event.preventDefault();
 });
 

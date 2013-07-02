@@ -58,8 +58,8 @@ parse_po_file(List) ->
     lists:reverse(
       lists:foldl(fun ({"", R}, AccIn) ->
                           [{?GETTEXT_HEADER_INFO, R}|AccIn];
-                      ({T, ""}, AccIn) ->
-                          [{T,T}|AccIn];
+                      ({_, ""}, AccIn) ->
+                          AccIn;
                       (R, AccIn) ->
                           [R|AccIn]
                   end,
