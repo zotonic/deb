@@ -113,7 +113,8 @@ tag(Name, Options, Context, Visited) when is_atom(Name) ->
         {ok, Id} -> tag(Id, Options, Context, Visited);
         _ -> {ok, []}
     end;
-tag(Id, Options, Context, Visited) when is_integer(Id) ->
+tag(Id, Options0, Context, Visited) when is_integer(Id) ->
+    Options = opt_crop_center(Id, Options0, Context),
     case m_media:get(Id, Context) of
         Props when is_list(Props) ->
             case mediaprops_filename(Id, Props, Context) of
@@ -245,7 +246,8 @@ filename_to_urlpath(Filename) ->
 %% @doc Generate the url for the image with the filename and options
 url(undefined, _Options, _Context) ->
     {error, enoent};
-url(Id, Options, Context) when is_integer(Id) ->
+url(Id, Options0, Context) when is_integer(Id) ->
+    Options = opt_crop_center(Id, Options0, Context),
     case m_media:get(Id, Context) of
         Props when is_list(Props) ->
             url(Props, Options, Context);
@@ -308,7 +310,7 @@ url2(File, Options, Context) ->
     {TagOpts, ImageOpts} = lists:partition(fun is_tagopt/1, Options),
     % Map all ImageOpts to an opt string
     MimeFile = z_media_identify:guess_mime(Filename),
-    {_Mime,Extension} = z_media_preview:out_mime(MimeFile, ImageOpts),
+    {_Mime,Extension} = z_media_preview:out_mime(MimeFile, ImageOpts, Context),
     case props2url(ImageOpts, Context) of
         {no_checksum, UrlProps} ->
             PropsQuoted = mochiweb_util:quote_plus(UrlProps),
@@ -421,7 +423,7 @@ url2props(Url, Context) ->
                            _ -> string:tokens(Props, ")(")
                        end,
             FileMime = z_media_identify:guess_mime(Rest),
-            {_Mime, Extension} = z_media_preview:out_mime(FileMime, PropList),
+            {_Mime, Extension} = z_media_preview:out_mime(FileMime, PropList, Context),
             case {Check1,PropList} of
                 {"mediaclass-"++_, []} ->
                     % shorthand with only the mediaclass
@@ -460,4 +462,12 @@ url2props1([P|Rest], Acc) ->
     url2props1(Rest, [Filter|Acc]).
 
 
-    
+
+opt_crop_center(Id, Options, Context) ->
+    case {proplists:get_value(crop, Options), m_rsc:p(Id, crop_center, Context)} of
+        {true, <<"+",_/binary>> = C} ->
+            z_utils:prop_replace(crop, C, Options);
+        {_, _} ->
+            Options
+    end.
+
