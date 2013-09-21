@@ -11,7 +11,7 @@ Package: zotonic
 Architecture: all
 Depends: build-essential, bash, adduser, ${erlang:Depends},
  ${erlang-abi:Depends}, ${misc:Depends}, ${shlibs:Depends},
- imagemagick, erlang-nox, postgresql, python, openssl
+ imagemagick, erlang-nox, erlang-dev, postgresql, python, openssl
 Description: distributed, fault-tolerant CMS and web framework
  This package contains Zotonic, an Erlang-based web development 
  framework and content management system.

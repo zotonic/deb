@@ -1,3 +1,9 @@
+zotonic (0.9.3-1) raring; urgency=low
+
+  * Import new release 0.9.3
+
+ -- Arjan Scherpenisse <arjan@scherpenisse.net>  Sat, 21 Sep 2013 10:28:39 +0200
+
 zotonic (0.9.2-1) raring; urgency=low
 
   * Import new release 0.9.2
