@@ -1,6 +1,6 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2013 Marc Worrell
-%% @doc Zotonic: admin blocks model and interface
+%% @doc Exceptions and simple geo lookups, corrects or prevents consulting apis
 
 %% Copyright 2013 Marc Worrell
 %%
@@ -16,29 +16,13 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(m_admin_blocks).
--author("Marc Worrell <marc@worrell.nl>").
+-module(geomap_precoded).
+-author('Marc Worrell <marc@worrell.nl>').
 
--include_lib("include/zotonic.hrl").
-
-
-%% interface functions
 -export([
-    m_find_value/3,
-    m_to_list/2,
-    m_value/2
-]).
+	find_geocode/2
+	]).
 
-%% @spec m_find_value(Key, Source, Context) -> term()
-m_find_value(list, #m{value=undefined} = M, _Context) ->
-    M#m{value=list};
-m_find_value(Id, #m{value=list}, Context) ->
-    lists:sort(z_notifier:foldr(#admin_edit_blocks{id=Id}, [], Context)).
 
-%% @spec m_to_list(Source, Context) -> List
-m_to_list(_, Context) ->
-    undefined.
-
-%% @spec m_value(Source, Context) -> term()
-m_value(#m{value=undefined}, _Context) ->
-    undefined.
+find_geocode(<<"de">>, country) -> {ok, {51.0834196, 10.4234469}};
+find_geocode(_, _) -> {error, notfound}.
