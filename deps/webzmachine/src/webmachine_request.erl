@@ -51,7 +51,6 @@
      merge_response_headers/2,
      append_to_response_body/2,
      send_response/1,
-     send_response/2,
      response_code/1,
      set_response_code/2,
      set_resp_body/2,
@@ -77,7 +76,7 @@
      ]).
 
 -include("webmachine_logger.hrl").
--include_lib("include/wm_reqdata.hrl").
+-include("wm_reqdata.hrl").
 
 -define(IDLE_TIMEOUT, infinity).
 
@@ -183,7 +182,7 @@ send_response(ReqData) ->
         Code -> send_response(Code, ReqData)
     end,
     LogData = RD1#wm_reqdata.log_data,
-    NewLogData = LogData#wm_log_data{finish_time=now()},
+    NewLogData = LogData#wm_log_data{finish_time=os:timestamp()},
     {Reply, RD1#wm_reqdata{log_data=NewLogData}}.
 
 send_ok_response(ReqData) ->
@@ -715,5 +714,5 @@ load_dispatch_data(Bindings, HostTokens, Port, PathTokens, AppRoot, DispPath, Re
     {ok, RD1}.
 
 
-log_data(ReqData) ->
-    ReqData#wm_reqdata.log_data.
+log_data(#wm_reqdata{log_data=LogData, metadata=MetaData}) ->
+    LogData#wm_log_data{metadata=MetaData}.

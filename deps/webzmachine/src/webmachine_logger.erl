@@ -21,7 +21,7 @@
 -export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
--export([log_access/1, refresh/0]).
+-export([log_access/1, refresh/0, get_metadata/2]).
 -include("webmachine_logger.hrl").
 -record(state, {hourstamp, filename, handle}).
 
@@ -40,7 +40,7 @@ init([BaseDir]) ->
     {ok, #state{filename=FileName, handle=Handle, hourstamp=DateHour}}.
 
 refresh() ->
-    refresh(now()).
+    refresh(os:timestamp()).
 
 refresh(Time) ->
     gen_server:cast(?MODULE, {refresh, Time}).
@@ -51,7 +51,7 @@ log_access(#wm_log_data{}=D) ->
 handle_call(_Msg,_From,State) -> {noreply,State}.
 
 handle_cast({log_access, LogData}, State) ->
-    NewState = maybe_rotate(State, now()),
+    NewState = maybe_rotate(State, os:timestamp()),
     Msg = format_req(LogData),
     log_write(NewState#state.handle, Msg),
     {noreply, NewState};
@@ -96,6 +96,12 @@ maybe_rotate(State, Time) ->
 	    Handle = log_open(State#state.filename, ThisHour),
 	    State#state{hourstamp=ThisHour, handle=Handle}
     end.    
+
+get_metadata(Key, #wm_log_data{metadata=MetaData}) ->
+    case dict:find(Key, MetaData) of
+        {ok, Value} -> Value;
+        error -> undefined
+    end.
 
 format_req(#wm_log_data{req_id=ReqId,
                         method=Method, 
@@ -146,7 +152,7 @@ defer_refresh() ->
     timer:apply_after(Time, ?MODULE, refresh, []).
 
 datehour() ->
-    datehour(now()).
+    datehour(os:timestamp()).
 
 datehour(Now) ->
     {{Y, M, D}, {H, _, _}} = calendar:now_to_universal_time(Now),
