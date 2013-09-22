@@ -1,7 +1,7 @@
 %% -*- mode: erlang -*-
 {application, zotonic,
  [{description, "zotonic"},
-  {vsn, "0.9.3"},
+  {vsn, "0.9.4"},
   {modules,
    [
     zotonic,
@@ -13,4 +13,7 @@
   {registered, []},
   {mod, {zotonic_app, []}},
   {env, []},
-  {applications, [kernel, stdlib, crypto, lager, webzmachine, mnesia]}]}.
+  {applications, [kernel, stdlib, crypto, mnesia,
+                  bert, dh_date, eiconv, lager,
+                  mimetypes, webzmachine, z_stdlib]}
+ ]}.

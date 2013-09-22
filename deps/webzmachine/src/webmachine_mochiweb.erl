@@ -61,7 +61,7 @@ init_reqdata(MochiReq) ->
     {Peer, ReqData} = webmachine_request:get_peer(ReqData0),
     PeerState = wrq:set_peer(Peer, ReqData),
     LogData = #wm_log_data{req_id=webmachine_id:generate(),
-                           start_time=now(),
+                           start_time=os:timestamp(),
                            method=Method,
                            headers=Headers,
                            peer=PeerState#wm_reqdata.peer,
@@ -70,6 +70,7 @@ init_reqdata(MochiReq) ->
                            response_code=404,
                            response_length=0},
     PeerState#wm_reqdata{log_data=LogData}.
+
 
 loop(MochiReq, LoopOpts) ->
     reset_process_dictionary(),
@@ -81,54 +82,49 @@ loop(MochiReq, LoopOpts) ->
     Path = wrq:path(ReqData),
     {Dispatch, ReqDispatch} = case proplists:get_value(dispatcher, LoopOpts) of
                                   undefined ->
-                                      DispatchList = proplists:get_vaule(dispatch_list, LoopOpts, []),
+                                      DispatchList = proplists:get_value(dispatch_list, LoopOpts, []),
                                       {webmachine_dispatcher:dispatch(Host, Path, DispatchList), ReqData};
                                   Dispatcher ->
                                       Dispatcher:dispatch(Host, Path, ReqData)                                      
                               end,
     case Dispatch of
+        {no_dispatch_match, undefined, undefined} ->
+            {ErrorHTML,ReqState1} = webmachine_error_handler:render_error(404, ReqDispatch, {none, none, []}),
+            ReqState2 = webmachine_request:append_to_response_body(ErrorHTML, ReqState1),
+            {ok,ReqState3} = webmachine_request:send_response(ReqState2#wm_reqdata{response_code=404}),
+            LogData = webmachine_request:log_data(ReqState3),
+            webmachine_decision_core:do_log(LogData);
         {no_dispatch_match, _UnmatchedHost, _UnmatchedPathTokens} ->
             {ok, ErrorHandler} = application:get_env(webzmachine, error_handler),
             {ErrorHTML,ReqState1} = ErrorHandler:render_error(404, ReqDispatch, {none, none, []}),
             ReqState2 = webmachine_request:append_to_response_body(ErrorHTML, ReqState1),
-            {ok,ReqState3} = webmachine_request:send_response(404, ReqState2),
+            {ok,ReqState3} = webmachine_request:send_response(ReqState2#wm_reqdata{response_code=404}),
             LogData = webmachine_request:log_data(ReqState3),
-            case application:get_env(webzmachine,webmachine_logger_module) of
-                {ok, LogModule} ->
-                    spawn(LogModule, log_access, [LogData]);
-                _ -> nop
-            end;
+            webmachine_decision_core:do_log(LogData);
         {Mod, ModOpts, HostTokens, Port, PathTokens, Bindings, AppRoot, StringPath} ->
-            BootstrapResource = webmachine_controller:new(x,x,x,x),
-            {ok, Resource} = BootstrapResource:wrap(ReqData, Mod, ModOpts),
+            {ok, Resource} = webmachine_controller:init(ReqData, Mod, ModOpts),
             {ok,RD1} = webmachine_request:load_dispatch_data(Bindings,HostTokens,Port,PathTokens,AppRoot,StringPath,ReqDispatch),
             {ok,RD2} = webmachine_request:set_metadata('controller_module', Mod, RD1),
             try 
                 case webmachine_decision_core:handle_request(Resource, RD2) of
                     {_, RsFin, RdFin} ->
-                        EndTime = now(),
                         {_, RdResp} = webmachine_request:send_response(RdFin),
-                        RsFin:stop(RdResp),                       
+                        webmachine_controller:stop(RsFin, RdResp),                       
                         LogData0 = webmachine_request:log_data(RdResp),
-                        spawn(fun() -> webmachine_decision_core:do_log(LogData0#wm_log_data{controller_module=Mod, end_time=EndTime}) end),                        
+                        webmachine_decision_core:do_log(LogData0#wm_log_data{controller_module=Mod}),                        
                         ok;
                     {upgrade, UpgradeFun, RsFin, RdFin} ->
                         %%TODO: wmtracing 4xx result codes should ignore protocol upgrades? (because the code is 404 by default...)
-                        RsFin:stop(RdFin),
-                        Mod:UpgradeFun(RdFin, RsFin:modstate()),
+                        webmachine_controller:stop(RsFin, RdFin),
+                        Mod:UpgradeFun(RdFin, webmachine_controller:modstate(RsFin)),
                         erlang:put(mochiweb_request_force_close, true)
                 end
             catch
-                error:_ -> 
-                    ?WM_DBG({error, erlang:get_stacktrace()}),
-                    {ok,RD3} = webmachine_request:send_response(500, RD2),
-                    Resource:stop(RD3),
-                    case application:get_env(webzmachine, webmachine_logger_module) of
-                        {ok, LogModule} -> 
-                            spawn(LogModule, log_access, [webmachine_request:log_data(RD3)]);
-                        _ ->
-                            nop
-                    end
+                error:Error -> 
+                    ?WM_DBG({error, Error, erlang:get_stacktrace()}),
+                    {ok,RD3} = webmachine_request:send_response(RD2#wm_reqdata{response_code=500}),
+                    webmachine_controller:stop(Resource, RD3),
+                    webmachine_decision_core:do_log(RD3)
             end;
         handled ->
             nop
