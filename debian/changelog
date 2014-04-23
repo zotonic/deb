@@ -1,3 +1,9 @@
+zotonic (0.10.0-1) saucy; urgency=low
+
+  * Import new release 0.10.0
+
+ -- Arjan Scherpenisse <arjan@scherpenisse.net>  Wed, 23 Apr 2014 21:33:15 +0200
+
 zotonic (0.9.4-1) raring; urgency=low
 
   * Import new release 0.9.4
