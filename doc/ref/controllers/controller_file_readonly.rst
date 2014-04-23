@@ -26,7 +26,7 @@ controller_file_readonly has the following dispatch options:
 |root                 |List of root directories where files |{root, [lib]}           |
 |                     |are located. Use 'lib' for the       |                        |
 |                     |library files. This defaults to the  |                        |
-|                     |site's “files/archive” directory,    |                        |
+|                     |site’s “files/archive” directory,    |                        |
 |                     |unless “is_meda_preview” is set then |                        |
 |                     |it defaults to the sites’s           |                        |
 |                     |“files/preview” directory.           |                        |
@@ -70,6 +70,13 @@ controller_file_readonly has the following dispatch options:
 |                     |when a proxy cache like Varnish is   |                        |
 |                     |used. Defaults to false.             |                        |
 +---------------------+-------------------------------------+------------------------+
+|acl                  |Extra authorization checks to be     |See `ACL options`_.     |
+|                     |performed.                           |                        |
+|                     |                                     |                        |
+|                     |.. versionadded:: 0.10               |                        |
++---------------------+-------------------------------------+------------------------+
 
-controller_file_readonly does not handles any query arguments other than the file path.
+.. note:: ``controller_file_readonly`` does not handle any query
+          arguments other than the file path.
 
+.. include:: acl_options.rst

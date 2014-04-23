@@ -55,8 +55,12 @@ else
     starttime=$now
 
     # Only build zotonic the first time, not for restarts
-    echo  "Starting Zotonic $NODENAME@$NODEHOST" 
-    ${MAKE} >/dev/null
+    if [ ! -e $ZOTONIC/ebin/zotonic.app ]; then
+        echo "Building Zotonic, please wait."
+        ${MAKE} >/dev/null
+    fi
+
+    echo -n "Starting Zotonic $NODENAME@$NODEHOST.." 
 fi
 
 ENV=`which env`
@@ -64,3 +68,22 @@ HEART_COMMAND="${ENV} HEART=true ZOTONIC_HEART_RESTARTS=$restarts ZOTONIC_HEART_
 export HEART_COMMAND
 
 $ERL -env ERL_MAX_PORTS $MAX_PORTS +P $MAX_PROCESSES +K $KERNEL_POLL -pa $PA $NAME_ARG $NODENAME@$NODEHOST -boot start_sasl -config $ZOTONIC/priv/erlang.config -heart -detached -s zotonic
+ERLEXIT=$?
+
+MAXTRIES=20
+TRY=0
+while [ $TRY -lt $MAXTRIES -a "$PONG" != "pong" ]; do
+    sleep 0.5
+    echo -n .
+    PONG=$($ZOTONIC_CALL -a "zotonic ping" 2>&1)
+    TRY=$((TRY+1))
+done
+
+if [ "$PONG" = "pong" ]; then
+    echo "OK"
+    exit 0
+else
+    echo 
+    echo "Something went wrong while starting Zotonic. Please check the log files in $ZOTONIC/priv/log." 1>&2
+    exit 1
+fi

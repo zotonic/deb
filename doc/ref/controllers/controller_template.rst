@@ -37,6 +37,9 @@ The following options can be given to the dispatch rule:
 |Option               |Description                           |Example                 |
 +=====================+======================================+========================+
 |template             |Name of the template to be rendered.  |{template, "home.tpl"}  |
+|                     |Can also be a tuple of the following  |{template, {cat, "home. |
+|                     |form: `{cat, Name}`.                  |tpl"}}                  |
+|                     |See also: :ref:`tag-catinclude`.      |                        |
 +---------------------+--------------------------------------+------------------------+
 |anonymous            |Render the template always as the     |{anonymous, true}       |
 |                     |anonymous user, even when an user is  |                        |
@@ -45,6 +48,11 @@ The following options can be given to the dispatch rule:
 |content_type         |The content type provided by the      |{content_type,          |
 |                     |dispatch rule. Defaults to            |"application/json"}     |
 |                     |“text/html”.                          |                        |
++---------------------+--------------------------------------+------------------------+
+|maxage               |The number of seconds of how long to  |{maxage, 3600}          |
+|                     |cache this file in the browser. Sets  |                        |
+|                     |the response header: `Cache-control:  |                        |
+|                     |public; maxage=X`.                    |                        |
 +---------------------+--------------------------------------+------------------------+
 |acl_action           |What ACL action will be               |{acl_action, edit}      |
 |                     |checked. Defaults to 'view'; but can  |                        |

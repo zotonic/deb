@@ -103,23 +103,35 @@ init({Name, Size, Opts}) ->
 handle_call(get_connection, From, #state{connections = Connections, waiting = Waiting, opts=Opts} = State) ->
     case Connections of
         [{C,_} | T] -> 
-            % Return existing unused connection
+            %% Return existing unused connection
             {noreply, deliver(From, C, State#state{connections = T})};
         [] ->
-            case length(State#state.monitors) < State#state.size of
-                true ->
-                    % Allocate a new connection and return it.
+            case length(State#state.monitors) of
+                MonitorCount when MonitorCount < State#state.size ->
+                    %% Allocate a new connection and return it.
                     case connect(State#state.opts) of
                         {ok, C} -> 
                             {noreply, deliver(From, C, State)};
-                        {error, Reason} ->
-                            % Could not connect, wait for other established connections
-                            error_logger:info_msg("~p: could not connect to database ~p. Error: ~p~n", 
-                                                  [?MODULE, proplists:get_value(database, Opts), Reason]),
-                            {noreply, State#state{waiting = queue:in(From, Waiting)}}
+                        {error, {invalid_authorization_specification, invalid_password}}=Error ->
+                            error_logger:error_msg(
+                              "~p:~p invalid password to database ~s@~s:~p/~s.~s",
+                              [proplists:get_value(Key, [{module, ?MODULE}, {line, ?LINE}|Opts], "<undefined>")
+                               || Key <- [module, line, username, host, port, schema, database]]),
+                            {reply, Error, State};
+                        {error, _Reason}=Error ->
+                            %% Could not connect, wait for other established connections, if (and only if) there are any
+                            error_logger:info_msg(
+                              "~p:~p could not connect to database ~s@~s:~p/~s.~s. Error: ~p~n", 
+                              [proplists:get_value(Key, [{module, ?MODULE}, {line, ?LINE}, Error|Opts], "<undefined>")
+                               || Key <- [module, line, username, host, port, schema, database, error]]),
+                            if MonitorCount > 0 ->
+                                    {noreply, State#state{waiting = queue:in(From, Waiting)}};
+                               true ->
+                                    {reply, Error, State}
+                            end
                     end;
-                false ->
-                    % Reached max connections, let the requestor wait
+                _TooManyMonitors ->
+                    %% Reached max connections, let the requestor wait
                     {noreply, State#state{waiting = queue:in(From, Waiting)}}
             end
     end;
@@ -131,7 +143,7 @@ handle_call({get_database_opt, Opt}, _From, State=#state{opts=Opts}) ->
 %% Return the status of the connection pool
 handle_call(status, _From, State) ->
     {reply, [{free, length(State#state.connections)}, {in_use, length(State#state.monitors)}], State};
-    
+
 %% Trap unsupported calls
 handle_call(Request, _From, State) ->
     {stop, {unsupported_call, Request}, State}.
@@ -238,5 +250,5 @@ return(C, #state{connections = Connections, waiting = Waiting} = State) ->
 
 %% Return the current time in seconds, used for timeouts.
 now_secs() ->
-    {M,S,_M} = erlang:now(),
+    {M,S,_M} = os:timestamp(),
     M*1000000 + S.

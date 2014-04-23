@@ -340,7 +340,7 @@ msgstr ""
 #: modules/mod_admin/templates/_admin_edit_content_date_range.tpl:12
 msgid ""
 "Every page can have a date range. For example if the page is an event or "
-"description of someone\\'s life."
+"description of someone’s life."
 msgstr ""
 "Toda página puede tener un rango de fechas. Por ejemplo, si la página "
 "corresponde a un event o descripción de la vida de alguien."
@@ -1015,7 +1015,7 @@ msgid "Visible till"
 msgstr "Visible hasta"
 
 #: modules/mod_admin/templates/_action_dialog_edit_basics.tpl:58
-msgid "Visit full editpage"
+msgid "Visit full edit page"
 msgstr "Visitar página de edición completa"
 
 #: modules/mod_admin/templates/_admin_edit_content_address.tpl:56

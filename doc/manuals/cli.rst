@@ -32,42 +32,38 @@ Currently, the following subcommands are implemented:
   Update the server.  Compiles and loads any new code, flushes caches and rescans all modules.
 
 ``zotonic addsite [options] <site_name>``
-  Create a new site with [site_name] as its name.  This new site will be based on a so-called skeleton site. Currently there are two skeletons: 'blog' and 'empty'. "blog" is the default.
+  Creates a new site with [site_name] as its name.  See :ref:`manual-cli-addsite` for a full overview of this command.
 
-``zotonic addsite -s empty yoursite``
-  creates a new site called "yoursite" based on the skeleton called "empty". It has the following options:
-
-  -s <skel>    Skeleton site ('blog' or 'empty'; default: blog)
-
-  -h <host>    Database host (default: 127.0.0.1)
-  -p <port>    Database port (default: 5432)
-  -u <user>    Database user (default: zotonic)
-  -P <pass>    Database password (default: zotonic)
-  -d <name>    Database name (default: zotonic)
-  -n <schema>  Database schema (default: public)
-  -a <pass>    Admin password (default: admin)
-  -L           Create the site in the current directory instead of in `zotonic/priv/sites`.
+``zotonic modules <subcommand> [options]``
+  Manages modules. It has the following subcommands:
   
-  The "addsite" subcommand checks a file called
-  $HOME/.zotonic-defaults for the default values to these
-  options. This file is a file in bash-syntax which can define the
-  following variables: ``SKEL``, ``DBHOST``, ``DBPORT``, ``DBUSER``, ``DBPASSWORD``,
-  ``DBDATABASE``, ``DBSCHEMA``, ``ADMINPASSWORD``, ``DO_LINK``.
+  ``install <module> [module2, ...]``  Installs a module from the http://modules.zotonic.com repository into your Zotonic instance. The module will be checked out using source control (either git or hg) into the priv/modules folder.
 
-``zotonic installmodule <module_name>``
-  Installs a module from the modules.zotonic.com repository into your Zotonic instance. The module will be checked out using source control (either git or hg) into the priv/modules folder::
+  ``uninstall <module> [module2, ...]``  Uninstall a module
 
-    ~$ zotonic installmodule mod_openid
-    Getting module index
-    ** Installing mod_openid ...
-    requesting all changes
-    adding changesets
-    adding manifests
-    adding file changes
-    added 11 changesets with 21 changes to 15 files
-    updating to branch default
-    14 files updated, 0 files merged, 0 files removed, 0 files unresolved
-    ** mod_openid OK
+  ``activate <module> [module2, ...]``  Activate a module
+
+  ``deactivate <module> [module2, ...]``  Deactivate a module
+
+  ``update <module> [module2, ...]``  Update a module
+
+  ``restart <module> [module2, ...]``  Restart a module
+
+  ``reinstall <module> [module2, ...]``  Reinstall a module
+
+  ``list``  List all modules available on the Zotonic Module Repository
+
+  ``search <query>``  Search for a module
+
+  subcommand options:
+
+  --version     show program's version number and exit
+  -h, --help    show this help message and exit
+  -z ZMR, --zmr=ZMR  Zotonic modules repository
+  -s SITE, --site=SITE  affected Zotonic site
+  -d, --debug   enable debugging
+  -n NODE, --node=NODE  Zotonic Erlang node
+  
 
 ``zotonic copysite [site_name] [source_server]``
   Copy [site_name] and its database content from the [source_server] over SSH and load its content into the filesystem and database of the local machine. You will need to have created the database zotonic_[site_name] for this to work.
@@ -108,6 +104,10 @@ Currently, the following subcommands are implemented:
              ))
 
 
+``zotonic logtail``
+  Starts a ``tail -F`` on the three Zotonic log files, console.log, error.log and crash.log
+
+             
 Legacy zotonic.sh script
 ------------------------
 

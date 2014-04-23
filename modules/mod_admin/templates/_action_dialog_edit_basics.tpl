@@ -17,7 +17,7 @@
         <div class="tab-content">
 	<div class="tab-pane active" id="{{ #main }}">
 
-	    {% all catinclude "_admin_edit_basics.tpl" id in_dialog is_editable=id.is_editable languages=languages %}
+	    {% catinclude "_admin_edit_basics.tpl" id in_dialog is_editable=id.is_editable languages=languages %}
 			
 	    {% if id.is_a.meta %}
 	    <div class="control-group">
@@ -26,14 +26,7 @@
 		    <input type="text" id="{{ #unique }}" name="name" value="{{ id.name }}" />
 		    {% validate id=#unique name="name" type={presence} %}
                 </div>
-	    </div>
-	    {% else %}
-	    <div class="control-group">
-		<label class="control-label" for="category_id">{_ Category _}</label>
-                <div class="controls">
-                    {% include "_admin_category_dropdown.tpl" id=id %}
-                </div>
-	    </div>
+	    </div>	
 	    {% endif %}
             
 	    <div class="control-group">
@@ -56,7 +49,7 @@
     <div class="modal-footer">
 
 	{% button class="btn" action={dialog_close} text=_"Cancel" tag="a" %}
-	{% button class="btn" text=_"Visit full editpage" action={redirect dispatch=q.edit_dispatch|default:`admin_edit_rsc` id=id} tag="a" %}
+	<a href="{% url admin_edit_rsc id=id %}" class="btn">{_ Visit full edit page _}</a>
 	{% button class="btn btn-primary" type="submit" text=_"Save" %}
     </div>
 </form>

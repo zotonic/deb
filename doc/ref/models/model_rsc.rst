@@ -1,4 +1,3 @@
-
 .. include:: meta-rsc.rst
 
 The main resource model, which is the central part of the
@@ -43,7 +42,7 @@ A resource has the following properties accessible from the templates:
 |                   |datetime tuple or undefined. When there is a start   |                                |
 |                   |date then there is also an end date.                 |                                |
 +-------------------+-----------------------------------------------------+--------------------------------+
-|name               |Unique name of the page. Returns a binary of         |<<"page_home">>                 |
+|name               |Unique name of the page. Returns a binary or         |<<"page_home">>                 |
 |                   |undefined. Valid characters are a-z, 0-9 and _       |                                |
 +-------------------+-----------------------------------------------------+--------------------------------+
 |page_path          |Unique path of the page, used for url                |<<"/">>                         |
@@ -135,6 +134,12 @@ A resource has the following properties accessible from the templates:
 +-------------------+-----------------------------------------------------+--------------------------------+
 |publication_end    |End date of the publication period. Returns a        |{{9999,8,17},{12,0,0}}          |
 |                   |datetime tuple.                                      |                                |
++-------------------+-----------------------------------------------------+--------------------------------+
+|is_published_date  |If this page is published and the current date/time  |true                            |
+|                   |is within the set publication_start/end range.       |                                |
+|                   |Note that no ACL checks are performed, use           |                                |
+|                   |`is_visible` to check if a resource is visible for   |                                |
+|                   |the current user.                                    |                                |
 +-------------------+-----------------------------------------------------+--------------------------------+
 |visible_for        |Visibility level. Returns an integer. 0 = world      |0                               |
 |                   |visible, 1 = only for logged on users, 2 = only for  |                                |

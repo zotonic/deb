@@ -120,7 +120,7 @@ render(File, Variables, Context) ->
                 case Module:render(Variables, Context) of
                     {ok, Output}   -> 
                         z_depcache:in_process(OldCaching),
-                        Output;
+                        runtime_wrap_debug_comments(FoundFile, Output, Context);
                     {error, Reason} ->
                         z_depcache:in_process(OldCaching),
                         lager:error("Error rendering template: ~p (~p)~n", [FoundFile, Reason]),
@@ -195,12 +195,16 @@ find_template_cat([$/|_] = File, _Id, _Context) ->
     {ok, File};
 find_template_cat(File, None, Context) when None =:= <<>>; None =:= undefined; None =:= [] ->
     find_template(File, Context);
+find_template_cat(File, [Item|_]=Stack, Context) when is_atom(Item) ->
+    find_template_cat_stack(File, Stack, Context);
 find_template_cat(File, Id, Context) ->
     Stack = case {m_rsc:is_a(Id, Context), m_rsc:p(Id, name, Context)} of
                 {L, undefined} -> L;
-                {[meta, category|_] = L, _Name} -> L;
                 {L, Name} -> L ++ [z_convert:to_atom(Name)]
             end,
+    find_template_cat_stack(File, Stack, Context).
+
+find_template_cat_stack(File, Stack, Context) ->
     Root = z_convert:to_list(filename:rootname(File)),
     Ext = z_convert:to_list(filename:extension(File)),
     case lists:foldr(fun(Cat, {error, enoent}) ->
@@ -265,7 +269,10 @@ handle_call({compile, File, FoundFile, Module, Context}, _From, State) ->
     ErlyResult = case erlydtl:compile(  FoundFile,
                                         File,
                                         Module, 
-                                        [{finder, FinderFun}, {template_reset_counter, State#state.reset_counter}],
+                                        [{finder, FinderFun}, {template_reset_counter, State#state.reset_counter},
+                                         {debug_includes, get_debug_includes(Context)},
+                                         {debug_blocks, get_debug_blocks(Context)}
+                                        ],
                                         Context) of
                     {ok, Module1} -> {ok, Module1};
                     Error -> Error
@@ -347,3 +354,25 @@ is_modified([{File, DateTime}|Rest]) ->
         _ ->
             is_modified(Rest)
     end.
+
+
+get_debug_includes(Context) ->
+    z_convert:to_bool(m_config:get_value(mod_development, debug_includes, Context)).
+    
+get_debug_blocks(Context) ->
+    z_convert:to_bool(m_config:get_value(mod_development, debug_blocks, Context)).
+    
+
+runtime_wrap_debug_comments(FilePath, Output, Context) ->
+    case get_debug_includes(Context) of
+        false ->
+            Output;
+        true ->
+            Start = "\n<!-- START " ++ relpath(FilePath) ++ " (runtime) -->\n",
+            End = "\n<!-- END " ++ relpath(FilePath) ++ " -->\n",
+            [Start, Output, End]
+    end.
+
+relpath(FilePath) ->
+    Base = os:getenv("ZOTONIC"),
+    lists:nthtail(1+length(Base), FilePath).

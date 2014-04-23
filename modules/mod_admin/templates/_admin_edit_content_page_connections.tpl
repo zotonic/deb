@@ -9,22 +9,25 @@
 {% block widget_content %}
 {% with m.rsc[id] as r %}
 
-
-<div id="unlink-undo-message" class="clearfix">
+<div id="unlink-undo-message">
     <div class="pull-right">
         <a href="javascript:void(0)" class="btn btn-primary btn-mini do_dialog" data-dialog="title: '{{ _"Help about page connections."|escapejs }}', text: '{{ _"This page is able to connect to others. For example you can connect it to an actor or a brand."|escapejs }}'" title="{_ Need more help? _}"><i class="icon-question-sign icon-white"></i></a>
     </div>
 </div>
 
-{% with r.predicates_edit as pred_shown %}
+{% with predicate_ids|default:r.predicates_edit as pred_shown %}
     {% for name, p in m.predicate %}
 	{% if p.id|member:pred_shown %}
 	    {% ifnotequal name "depiction" %}
 	    <h4>{{ p.title }}</h4>
 		
-	    <div class="unlink-wrapper clearfix">
-		{% sorter id=["links",id|format_integer,name]|join:"-" tag={object_sorter predicate=name id=id} group="edges" handle=".unlink-mover" %}
-		<ul id="links-{{ id }}-{{ name }}" class="connections-list" data-reload-template="_rsc_edge_list.tpl">
+	    <div class="unlink-wrapper">
+		{% sorter id=["links",id|format_integer,name]|join:"-" 
+				  tag={object_sorter predicate=name id=id} 
+				  group="edges"
+				  delegate=`controller_admin_edit`
+		%}
+		<ul id="links-{{ id }}-{{ name }}" class="tree-list connections-list" data-reload-template="_rsc_edge_list.tpl">
 			{% include "_rsc_edge_list.tpl" id=id predicate=name %}
 		</ul>
 	    </div>
@@ -45,9 +48,11 @@
     {% endfor %}
 {% endwith %}
 
+{% if not hide_referrers %}
 <div class="button-wrapper clearfix">
-	<a href="{% url admin_referrers id=id %}" class="button">{_ View all referrers _}</a>
+	<a class="btn btn-small" href="{% url admin_referrers id=id %}"><i class="icon-list"></i> {_ View all referrers _}</a>
 </div>
+{% endif %}
 
 {% endwith %}
 {% endblock %}

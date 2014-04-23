@@ -1,11 +1,10 @@
-
 .. include:: meta-menu.rst
 
 Show a page menu.
 
 This tag is part of the module mod_menu. The ``{% menu %}`` tag is used to generate the HTML for the menu defined in the admin.
 
-You can define multiple menu's in your site. By default there is one menu, called “main_menu”. If you want another one, create a page of type “page menu” (under “Categorization”) and start editing your menu. You can use the “menu_id” argument to select which menu you want to display.
+You can define multiple menus in your site. By default there is one menu, called “main_menu”. If you want another one, create a page of type “page menu” (under “Categorization”) and start editing your menu. You can use the “menu_id” argument to select which menu you want to display.
 
 Example::
 
@@ -35,7 +34,7 @@ The menu has the following features:
 * The class of the menu is always "clearfix at-menu do_superfish"
 * Menu items are a <li> with a single <a>
 * The first and last <li> are given the respective classes "first" and "last".
-* The link of the menu item referring to the current page has the class "current"
+* The link of the menu item referring to the current page has the class "active"
 * Every link also gets the unique name of the target as a class.
 * Every menu item can have single level submenus.  A submenu has the same properties as the menu.
 

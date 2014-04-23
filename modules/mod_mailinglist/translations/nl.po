@@ -1,16 +1,19 @@
-# SOME DESCRIPTIVE TITLE.
-# Copyright (C) YEAR Free Software Foundation, Inc.
-# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+# Zotonic - mod_translation
+# Copyright (C) 2011
+# This file is distributed under the same license as the zotonic package.
+# Arjan Scherpenisse <arjan@scherpenisse.net>, 2011
 #
-#, fuzzy
+#
 msgid ""
 msgstr ""
-"Project-Id-Version: PACKAGE VERSION\n"
-"PO-Revision-Date: 2013-04-10 16:50+0200\n"
+"Project-Id-Version: zotonic\n"
+"POT-Creation-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"PO-Revision-Date: 2013-04-10 16:34+0200\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
 #: modules/mod_mailinglist/templates/_admin_dialog_mailinglist_combine.tpl:15
@@ -101,16 +104,32 @@ msgstr ""
 "Alle ontvangers van de mailinglijst. Je kan deze lijst downloaden of "
 "uploaden. Elke regel van het bestand moet 1 e-mailadres bevatten."
 
-#: modules/mod_mailinglist/mod_mailinglist.erl:158
-msgid "No addresses selected"
-msgstr "Geen adres geselecteerd"
+#: modules/mod_mailinglist/templates/admin_mailinglist.tpl:9
+msgid ""
+"Any page can be sent as a mailing. You can send a mailing from any edit "
+"page. On this page you can add or remove mailing lists and their recipients."
+msgstr ""
+"Elke pagina kan als een mailing worden verstuurd. Je kan een mailing "
+"versturen vanaf elke bewerk-pagina. Op deze pagina kan je ontvangers "
+"toevoegen en verwijderen."
 
-#: modules/mod_mailinglist/mod_mailinglist.erl:160
-msgid "Resending bounced addresses..."
-msgstr "Deze adressen opnieuw aan het versturen..."
+#: modules/mod_mailinglist/templates/_dialog_mailing_cancel_confirm.tpl:1
+msgid "Are you sure you want to cancel the mailing to"
+msgstr "Weet je zeker dat je de volgende mailing wilt cancellen:"
 
-#~ msgid "<em>withheld</em>"
-#~ msgstr "<em>achtergehouden</em>"
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_delete_confirm.tpl:2
+msgid "Are you sure you want to delete the mailing list"
+msgstr "Weet je zeker dat je de volgende mailinglijst wilt verwijderen:"
+
+#: modules/mod_mailinglist/templates/_admin_mailing_status_overview.tpl:43
+msgid ""
+"Are you sure you want to reset the statistics for this mailing? This means "
+"that if you send the mailing again afterwards, recipients might have gotten "
+"the mailing twice."
+msgstr ""
+"Weet je zeker dat je de statistieken voor deze mailing wilt wissen?\n"
+"Dit betekent dat als je de mailing nog een keer verstuurt, ontvangers\n"
+"hem mogelijk dubbel zullen krijgen."
 
 #: modules/mod_mailinglist/templates/email_mailinglist_confirm.tpl:9
 msgid ""
@@ -150,6 +169,10 @@ msgstr "Wissen"
 msgid ""
 "Click <strong>unsubscribe</strong> to remove yourself from the mailing list."
 msgstr "Klik <strong>afmelden</strong> om je van de mailinglijst af te melden."
+
+#: modules/mod_mailinglist/templates/mailing_page.tpl:29
+msgid "Click here when you can’t read the message below."
+msgstr "Klik hier als je het onderstaande bericht niet kunt lezen."
 
 #: modules/mod_mailinglist/templates/mailinglist_confirm.tpl:14
 msgid ""
@@ -266,6 +289,42 @@ msgid ""
 msgstr ""
 "Geef het e-mailadres van de ontvanger. De naam van de ontvanger is optioneel."
 
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:33
+msgid "Externally managed list &mdash; no (un)subscribe links"
+msgstr "In extern beheer &mdash; geen aan- of afmeldlinks"
+
+#: modules/mod_mailinglist/templates/_mailinglist_subscribe_form.tpl:29
+msgid "First name"
+msgstr "Voornaam"
+
+#: modules/mod_mailinglist/templates/email_mailinglist_welcome.tpl:7
+msgid "From now on you will receive mail from our mailing list."
+msgstr "Vanaf nu ontvang je e-mail van deze mailinglijst."
+
+#: modules/mod_mailinglist/templates/_scomp_mailinglist_subscribe.tpl:6
+msgid "Give your e-mail address to subscribe to"
+msgstr "Geef je e-mailadres waarmee je je wilt aanmelden bij"
+
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.tpl:12
+msgid "Go to mailinglist page"
+msgstr "Ga naar mailingpagina"
+
+#: modules/mod_mailinglist/templates/_email_mailinglist_hello.tpl:6
+msgid "Hello,"
+msgstr "Hallo,"
+
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:8
+msgid "Help about mailing lists."
+msgstr "Hulp over mailinglijsten"
+
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:19
+msgid "Help about the mailing page."
+msgstr "Hulp over de mailingpagina."
+
+#: modules/mod_mailinglist/templates/email_mailinglist_goodbye.tpl:8
+msgid "Hope to see you again."
+msgstr "Hopelijk tot ziens"
+
 #: modules/mod_mailinglist/templates/_dialog_mailing_page.tpl:6
 msgid ""
 "It appears you have sent\n"
@@ -287,11 +346,38 @@ msgstr "Niet afmelden"
 msgid "Mailing Lists"
 msgstr "Mailinglijsten"
 
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.tpl:3
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:3
+msgid "Mailing list"
+msgstr "Mailinglijst"
+
 #: modules/mod_mailinglist/templates/admin_mailinglist.tpl:7
 #: modules/mod_mailinglist/templates/_admin_mailing_status_overview.tpl:10
 #: modules/mod_mailinglist/mod_mailinglist.erl:376
 msgid "Mailing lists"
 msgstr "Mailinglijsten"
+
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:3
+msgid "Mailing status"
+msgstr "Mailing status"
+
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:8
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:19
+msgid "Need more help?"
+msgstr "Meer hulp nodig?"
+
+#: modules/mod_mailinglist/templates/admin_mailinglist.tpl:13
+msgid "New mailing list"
+msgstr "Nieuwe mailinglijst"
+
+#: modules/mod_mailinglist/mod_mailinglist.erl:158
+msgid "No addresses selected"
+msgstr "Geen adres geselecteerd"
+
+#: modules/mod_mailinglist/templates/admin_mailinglist.tpl:53
+#: modules/mod_mailinglist/templates/_admin_mailing_status_overview.tpl:79
+msgid "No items found"
+msgstr "Geen ontvangers gevonden"
 
 #: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:68
 msgid "No recipients"
@@ -392,12 +478,30 @@ msgstr ""
 "De geaddresseerden van een mailinglijst zijn óf slechts een e-mailadres,\n"
 "óf een volledige persoon in het systeem."
 
-#~ msgid "Click here when you can’t read the message below."
-#~ msgstr "Klik hier als je het onderstaande bericht niet kunt lezen."
+#: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:3
+#: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:8
+msgid "Recipients for"
+msgstr "Ontvangers voor"
 
 #: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:56
 msgid "Remove this recipient. No undo possible."
 msgstr "Verwijder deze ontvanger."
+
+#: modules/mod_mailinglist/mod_mailinglist.erl:160
+msgid "Resending bounced addresses..."
+msgstr "Deze adressen opnieuw aan het versturen..."
+
+#: modules/mod_mailinglist/templates/admin_mailinglist.tpl:23
+msgid "Scheduled"
+msgstr "Ingepland"
+
+#: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:20
+msgid "See the"
+msgstr "Bekijk de"
+
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_recipients_upload.tpl:7
+msgid "Select file"
+msgstr "Kies bestand"
 
 #: modules/mod_mailinglist/templates/_admin_dialog_mailinglist_combine.tpl:32
 msgid "Select..."
@@ -408,35 +512,77 @@ msgstr "Selecteer..."
 msgid "Send e-mail"
 msgstr "Via e-mail"
 
-#~ msgid "Externally managed list &mdash; no (un)subscribe links"
-#~ msgstr "In extern beheer &mdash; geen aan- of afmeldlinks"
+#: modules/mod_mailinglist/templates/_dialog_mailing_page.tpl:29
+msgid "Send mailing"
+msgstr "Verstuur mailing"
 
-#~ msgid "First name"
-#~ msgstr "Voornaam"
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:16
+msgid "Send test mailing"
+msgstr "Verstuur testmailing"
 
-#~ msgid "From now on you will receive mail from our mailing list."
-#~ msgstr "Vanaf nu ontvang je mail van deze mailinglijst."
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:17
+msgid "Send test to address"
+msgstr "Verstuur test naar adres"
 
-#~ msgid "Give your e-mail address to subscribe to"
-#~ msgstr "Geef je email adres waarmee je je wilt aanmelden."
+#: modules/mod_mailinglist/templates/_dialog_mailing_page.tpl:22
+msgid "Send the mailing automatically after the publication start date of"
+msgstr "Verstuur de mailing automatisch op de publicatiedatum"
 
-#~ msgid "Go to mailinglist page"
-#~ msgstr "Ga naar mailingpagina"
+#: modules/mod_mailinglist/templates/_dialog_mailing_page.tpl:20
+msgid ""
+"Send the mailing immediately after the \"published\" checkbox has been "
+"checked in the edit page."
+msgstr ""
+"Verstuur de mailing direct nadat het \"gepubliceerd\" vakje is aangevinkt in "
+"de editpagina."
 
-#~ msgid "Goodbye,"
-#~ msgstr "Tot ziens,"
+#: modules/mod_mailinglist/templates/_dialog_mailing_page.tpl:17
+msgid ""
+"Send the mailing right now, but do not include a link back to the website."
+msgstr ""
+"Verstuur de mailing nu, maar neem geen link naar het artikel op de website "
+"op."
 
-#~ msgid "Hello,"
-#~ msgstr "Hallo,"
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.tpl:10
+msgid "Send this page to a mailinglist and view mailinglist statistics."
+msgstr ""
+"Verstuur deze pagina naar een mailinglijst en bekijk de mailingstatistieken."
 
-#~ msgid "Help about mailing lists."
-#~ msgstr "Hulp over mailinglijsten"
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:17
+msgid "Send this page to a single address"
+msgstr "Verstuur deze pagina naar een enkel e-mailadres."
 
-#~ msgid "Help about the mailing page."
-#~ msgstr "Hulp over de mailingpagina."
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:16
+msgid "Send this page to the test mailing list."
+msgstr "Verstuur deze pagina naar de testmailinglijst."
 
-#~ msgid "Hope to see you again."
-#~ msgstr "Hopelijk tot ziens"
+#: modules/mod_mailinglist/templates/_mailinglist_subscribe_form.tpl:57
+msgid "Send welcome"
+msgstr "Verstuur welkomstbericht"
+
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:23
+msgid "Sender address for e-mails (optional)"
+msgstr "Afzender adres voor mailings (optioneel)"
+
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:16
+msgid "Sender name for e-mails (optional)"
+msgstr "Afzendernaam voor mailings (optioneel)"
+
+#: modules/mod_mailinglist/actions/action_mailinglist_dialog_mail_page.erl:51
+msgid "Sending the e-mail..."
+msgstr "Email versturen..."
+
+#: modules/mod_mailinglist/actions/action_mailinglist_mailing_page_test.erl:47
+msgid "Sending the page to the test mailing list..."
+msgstr "De pagina naar de testmailinglijst aan het versturen..."
+
+#: modules/mod_mailinglist/templates/_admin_mailing_status_overview.tpl:19
+msgid "Sent on"
+msgstr "Verstuurd op"
+
+#: modules/mod_mailinglist/templates/_admin_edit_sidebar.mailinglist.tpl:11
+msgid "Show all recipients &raquo;"
+msgstr "Toon alle ontvangers &raquo;"
 
 #: modules/mod_mailinglist/templates/_scomp_mailinglist_subscribe.tpl:29
 msgid ""
@@ -488,18 +634,48 @@ msgid ""
 msgstr ""
 "De bevestigingssleutel is onbekend. Waarschijnlijk heeft u al bevestigd."
 
+#: modules/mod_mailinglist/actions/action_mailinglist_dialog_mailing_page.erl:57
+msgid "The e-mails are being sent..."
+msgstr "De e-mails worden verzonden..."
 
-#~ msgid "Mailing list overview"
-#~ msgstr "Mailinglijsten overzicht"
+#: modules/mod_mailinglist/templates/mailinglist_unsubscribe.tpl:20
+msgid ""
+"The key in your link does not match any subscription. Either you already "
+"unsubscribed, or the mailing list has been deleted."
+msgstr "De afmeldlink is ongeldig. Misschien ben je al afgemeld."
 
-#~ msgid "Mailing list settings."
-#~ msgstr "Mailinglijst instellingen"
+#: modules/mod_mailinglist/actions/action_mailinglist_dialog_mailing_page.erl:61
+msgid "The mailing will be send when the page becomes visible."
+msgstr ""
+"De mailing zal worden verstuurd wanneer deze pagina gepubliceerd wordt."
 
-#~ msgid "Mailing status"
-#~ msgstr "Mailing status"
+#: modules/mod_mailinglist/templates/_dialog_mailing_page.tpl:15
+msgid ""
+"The page you are trying to e-mail is not yet published. What do you want to "
+"do?"
+msgstr ""
+"Je probeert een pagina te versturen die nog niet is gepubliceerd. Wat\n"
+"wil je doen?"
 
-#~ msgid "Need more help?"
-#~ msgstr "Meer hulp nodig?"
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_delete_confirm.tpl:3
+msgid "The recipients list of the mailing list will be deleted as well."
+msgstr "De lijst met ontvangers wordt ook verwijderd."
+
+#: modules/mod_mailinglist/templates/_dialog_mailing_bounces.tpl:32
+msgid ""
+"There are no addresses eligible for re-sending. You seem to have already "
+"processed all bouncing addresses."
+msgstr ""
+"Er zijn geen e-mailadressen gevonden die opnieuw kunnen worden\n"
+"verstuurd. De bounces zijn blijkbaar al eerder afgehandeld."
+
+#: modules/mod_mailinglist/actions/action_mailinglist_mailing_page_test.erl:53
+msgid "There is no mailing list with the name ‘mailinglist_test’."
+msgstr "Er is geen mailinglijst met de naam 'mailinglist_test'."
+
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_delete_confirm.tpl:6
+msgid "This can not be undone"
+msgstr "Deze actie kan niet ongedaan worden gemaakt."
 
 #: modules/mod_mailinglist/templates/_admin_dialog_mailinglist_combine.tpl:2
 msgid ""
@@ -516,24 +692,131 @@ msgstr ""
 "Dit is een extern beheerde lijst. Ontvangers zullen geen aan- of "
 "afmeldberichten ontvangen."
 
-#~ msgid "New mailing list"
-#~ msgstr "Nieuwe mailinglijst"
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:19
+msgid ""
+"This overview allows you to send the current page to a group of recipients, "
+"grouped into mailing lists. Choose 'preview mailing' to open a popup window "
+"which shows how the mailing will look like when it is sent; choose 'send "
+"test mailing' to send it to the predefined list of test e-mail addresses. "
+"Choose 'edit' to go back to editing the page.  Each mailinglist is listed in "
+"the table below, together with statistics on when it was sent and to how "
+"many recipients."
+msgstr ""
+"Dit overzicht stelt je in staat de huidige pagina naar een groep\n"
+"ontvangers, een zng. mailinglijst, te sturen. Kies \"voorbeeld\" om een\n"
+"venster te openen met een voorbeeld hoe de mail eruit komt te zien\n"
+"wanneer deze verstuurd is; kies \"verstuur testmailing\" om de mailing\n"
+"te testen (wordt verstuurd naar de speciale \"test mailing\"\n"
+"lijst). Kies \"bewerk\" om terug te gaan naar de editpagina. Elke\n"
+"mailinglijst is in de onderstaande tabel te zien, samen met gegevens\n"
+"of hij al is verstuurd en naar hoeveel ontvangers."
 
-#~ msgid "No items found"
-#~ msgstr "Geen ontvangers gevonden"
+#: modules/mod_mailinglist/templates/admin_mailing_status.tpl:11
+msgid "This page can be sent to different mailing lists."
+msgstr ""
+"Deze pagina kan naar verschillende testmailinglijsten verzonden worden."
 
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_recipient.tpl:6
+msgid ""
+"Tick the checkbox if you want the recipient to receive a welcome e-mail "
+"message."
+msgstr ""
+"Kruis het vakje aan als je wilt dat de ontvanger een welkomstbericht\n"
+"toegestuurd krijg."
 
-#~ msgid "Recipients for"
-#~ msgstr "Ontvangers voor"
+#: modules/mod_mailinglist/templates/admin_mailinglist.tpl:20
+#: modules/mod_mailinglist/templates/_admin_mailing_status_overview.tpl:16
+msgid "Title"
+msgstr "Titel"
 
-#~ msgid "Scheduled"
-#~ msgstr "Ingepland"
+#: modules/mod_mailinglist/templates/mailinglist_unsubscribe.tpl:12
+msgid "Unsubscribe"
+msgstr "Afmelden"
 
-#~ msgid "See the"
-#~ msgstr "Bekijk de"
+#: modules/mod_mailinglist/templates/mailinglist_unsubscribe.tpl:9
+msgid "Unsubscribe from"
+msgstr "Meld je af van"
 
-#~ msgid "Select file"
-#~ msgstr "Kies bestand"
+#: modules/mod_mailinglist/templates/mailinglist_unsubscribe.tpl:3
+msgid "Unsubscribe from mailing list"
+msgstr "Afmelden van mailinglijst"
+
+#: modules/mod_mailinglist/scomps/scomp_mailinglist_mailinglist_subscribe.erl:100
+msgid "Updated the recipient."
+msgstr "Nieuwe ontvanger bijgewerkt."
+
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_recipients_upload.tpl:4
+msgid ""
+"Upload a file with recipients. The file must contain a single e-mail address "
+"per line. The file’s character set must be utf-8."
+msgstr ""
+"Upload de lijst met ontvangers. Het bestand moet één adres per regel "
+"bevatten, en de karakterset moet utf-8 zijn."
+
+#: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:27
+msgid "Upload a list of recipients."
+msgstr "Upload de lijst met ontvangers."
+
+#: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:27
+#: modules/mod_mailinglist/templates/_dialog_mailinglist_recipients_upload.tpl:25
+msgid "Upload file"
+msgstr "Bestand uploaden"
+
+#: modules/mod_mailinglist/templates/admin_mailinglist.tpl:41
+msgid "View"
+msgstr "Bekijk"
+
+#: modules/mod_mailinglist/templates/_admin_mailing_status_overview.tpl:34
+msgid "View and edit the bounced addresses and re-send the mailing."
+msgstr ""
+"Bekijk en bewerk de gebouncede adressen en verstuur de mailing opnieuw."
+
+#: modules/mod_mailinglist/templates/email_mailinglist_welcome.tpl:3
+msgid "Welcome to"
+msgstr "Welkom bij"
+
+#: modules/mod_mailinglist/templates/email_mailinglist_confirm.tpl:15
+msgid ""
+"When you don’t want to receive any mail then please ignore this message."
+msgstr ""
+"Wanneer je geen e-mail meer wenst te ontvangen kun je dit bericht negeren."
+
+#: modules/mod_mailinglist/templates/email_mailinglist_welcome.tpl:9
+msgid "When you don’t want to receive any more mail then"
+msgstr "Wanneer je geen e-mail meer wilt ontvangen kun je"
+
+#: modules/mod_mailinglist/scomps/scomp_mailinglist_mailinglist_subscribe.erl:79
+msgid "You are not allowed to add or enable recipients."
+msgstr ""
+"Je hebt geen toestemming om ontvangers toe te voegen of actief te maken."
+
+#: modules/mod_mailinglist/scomps/scomp_mailinglist_mailinglist_subscribe.erl:106
+msgid "You are not allowed to edit recipients."
+msgstr "Je hebt geen toestemming om ontvangers te bewerken."
+
+#: modules/mod_mailinglist/actions/action_mailinglist_mailing_page_test.erl:50
+msgid "You are not allowed to send mail to the test mailing list."
+msgstr "Je hebt geen toestemming om e-mail te sturen naar de testmailinglijst."
+
+#: modules/mod_mailinglist/templates/admin_mailinglist_recipients.tpl:11
+msgid ""
+"You are not allowed to view or edit the recipients list. You need to have "
+"edit permission on the mailing list to change and view the recipients."
+msgstr ""
+"U heeft geen toegang om de lijst met ontvangers te bekijken of te bewerken. "
+"Je moet de mailinglijst kunnen bewerken om dit te doen."
+
+#: modules/mod_mailinglist/templates/email_mailinglist_welcome.tpl:7
+msgid "You are now subscribed to our mailing list"
+msgstr "Je bent nu aangemeld bij de mailinglijst"
+
+#: modules/mod_mailinglist/templates/email_mailinglist_goodbye.tpl:3
+msgid "You are now unsubscribed from"
+msgstr "Je bent nu afgemeld van"
+
+#: modules/mod_mailinglist/templates/email_mailinglist_goodbye.tpl:8
+msgid "You are now unsubscribed from the mailing list"
+msgstr "Je bent nu afgemeld van deze mailinglijst"
 
 #: modules/mod_mailinglist/templates/mailinglist_confirm.tpl:27
 msgid ""
@@ -552,11 +835,13 @@ msgstr ""
 "We hebben je e-mailadres niet opgeslagen en zullen je geen andere e-mail "
 "meer sturen."
 
-#~ msgid "Send test to address"
-#~ msgstr "Verstuur test naar adres"
+#: modules/mod_mailinglist/templates/_mailing_footer.tpl:4
+msgid "You received this mail because you are subscribed to the mailing list"
+msgstr "Je ontvangt deze mailing omdat je lid bent van de mailinglijst"
 
-#~ msgid "Send the mailing automatically after the publication start date of"
-#~ msgstr "Verstuur de mailing automatisch op de publicatiedatum"
+#: modules/mod_mailinglist/templates/_scomp_mailinglist_subscribe.tpl:7
+msgid "You will receive a confirmation in your e-mail."
+msgstr "Je ontvangt een bevestigingsbericht in je mail."
 
 #: modules/mod_mailinglist/templates/email_mailinglist_confirm.tpl:8
 msgid "You, or someone else, added your e-mail address to our mailing list"
@@ -673,143 +958,28 @@ msgstr "met je e-mailadres"
 #~ msgid "Kind Regards,"
 #~ msgstr "Met vriendelijke groet,"
 
-#~ msgid "The e-mails are being sent..."
-#~ msgstr "De e-mails worden verzonden..."
+#~ msgid "<em>withheld</em>"
+#~ msgstr "<em>achtergehouden</em>"
 
 #~ msgid ""
-#~ "The key in your link does not match any subscription. Either you already "
-#~ "unsubscribed, or the mailing list has been deleted."
-#~ msgstr "De afmeldlink is ongeldig. Misschien ben je al afgemeld."
-
-#~ msgid "The mailing will be send when the page becomes visible."
+#~ "After publication this page will be send to the following mailing lists:"
 #~ msgstr ""
-#~ "De mailing zal worden verstuurd wanneer deze pagina gepubliceerd wordt."
+#~ "Na publicatie wordt deze pagina verzonden naar de volgende mailinglijsten:"
 
-#~ msgid ""
-#~ "The page you are trying to e-mail is not yet published. What do you want "
-#~ "to do?"
-#~ msgstr ""
-#~ "Je probeert een pagina te versturen die nog niet is gepubliceerd. Wat\n"
-#~ "wil je doen?"
+#~ msgid "Cancel this mailing."
+#~ msgstr "Annuleer deze mailing."
 
-#~ msgid "The recipients list of the mailing list will be deleted as well."
-#~ msgstr "De lijst met ontvangers wordt ook verwijderd."
+#~ msgid "Goodbye,"
+#~ msgstr "Tot ziens,"
 
-#~ msgid ""
-#~ "There are no addresses eligible for re-sending. You seem to have already "
-#~ "processed all bouncing addresses."
-#~ msgstr ""
-#~ "Er zijn geen e-mailadressen gevonden die opnieuw kunnen worden\n"
-#~ "verstuurd. De bounces zijn blijkbaar al eerder afgehandeld."
+#~ msgid "Mailing list overview"
+#~ msgstr "Mailinglijsten overzicht"
 
-#~ msgid "There is no mailing list with the name ‘mailinglist_test’."
-#~ msgstr "Er is geen mailinglijst met de naam 'mailinglist_test'."
-
-#~ msgid "This can not be undone"
-#~ msgstr "Deze actie kan niet ongedaan worden gemaakt."
-
-
-#~ msgid ""
-#~ "This overview allows you to send the current page to a group of "
-#~ "recipients, grouped into mailing lists. Choose 'preview mailing' to open "
-#~ "a popup window which shows how the mailing will look like when it is "
-#~ "sent; choose 'send test mailing' to send it to the predefined list of "
-#~ "test e-mail addresses. Choose 'edit' to go back to editing the page.  "
-#~ "Each mailinglist is listed in the table below, together with statistics "
-#~ "on when it was sent and to how many recipients."
-#~ msgstr ""
-#~ "Dit overzicht stelt je in staat de huidige pagina naar een groep\n"
-#~ "ontvangers, een zng. mailinglijst, te sturen. Kies \"voorbeeld\" om een\n"
-#~ "venster te openen met een voorbeeld hoe de mail eruit komt te zien\n"
-#~ "wanneer deze verstuurd is; kies \"verstuur testmailing\" om de mailing\n"
-#~ "te testen (wordt verstuurd naar de speciale \"test mailing\"\n"
-#~ "lijst). Kies \"bewerk\" om terug te gaan naar de editpagina. Elke\n"
-#~ "mailinglijst is in de onderstaande tabel te zien, samen met gegevens\n"
-#~ "of hij al is verstuurd en naar hoeveel ontvangers."
-
-#~ msgid "This page can be sent to different mailing lists."
-#~ msgstr ""
-#~ "Deze pagina kan naar verschillende testmailinglijsten verzonden worden."
-
-#~ msgid ""
-#~ "Tick the checkbox if you want the recipient to receive a welcome e-mail "
-#~ "message."
-#~ msgstr ""
-#~ "Kruis het vakje aan als je wilt dat de ontvanger een welkomstbericht\n"
-#~ "toegestuurd krijg."
-
-#~ msgid "Title"
-#~ msgstr "Titel"
-
-#~ msgid "Unsubscribe"
-#~ msgstr "Afmelden"
-
-#~ msgid "Unsubscribe from"
-#~ msgstr "Meld je af van"
-
-#~ msgid "Unsubscribe from mailing list"
-#~ msgstr "Afmelden van mailinglijst"
-
-#~ msgid ""
-#~ "Upload a file with recipients. The file must contain a single e-mail "
-#~ "address per line. The file’s character set must be utf-8."
-#~ msgstr ""
-#~ "Upload de lijst met ontvangers. Het bestand moet één adres per regel "
-#~ "bevatten, en de karakterset moet utf-8 zijn."
-
-#~ msgid "Upload a list of recipients."
-#~ msgstr "Upload de lijst met ontvangers."
-
-#~ msgid "Upload file"
-#~ msgstr "Bestand uploaden"
-
-#~ msgid "View and edit the bounced addresses and re-send the mailing."
-#~ msgstr ""
-#~ "Bekijk en bewerk de gebouncede adressen en verstuur de mailing opnieuw."
-
-#~ msgid "Welcome to"
-#~ msgstr "Welkom bij"
-
-#~ msgid ""
-#~ "When you don’t want to receive any mail then please ignore this message."
-#~ msgstr ""
-#~ "Wanneer je geen mail meer wenst te ontvangen kun je dit bericht negeren."
-
-#~ msgid "When you don’t want to receive any more mail then"
-#~ msgstr "Wanneer je geen mail meer wilt ontvangen kun je"
-
-#~ msgid "You are not allowed to send mail to the test mailing list."
-#~ msgstr ""
-#~ "Je hebt geen toestemming om mail te sturen naar de testmailinglijst."
-
-#~ msgid ""
-#~ "You are not allowed to view or edit the recipients list. You need to have "
-#~ "edit permission on the mailing list to change and view the recipients."
-#~ msgstr ""
-#~ "U heeft geen toegang om de lijst met ontvangers te bekijken of te "
-#~ "bewerken. Je moet de mailinglijst kunnen bewerken om dit te doen."
-
-#~ msgid "You are now subscribed to our mailing list"
-#~ msgstr "Je bent nu aangemeld bij deze mailinglijst."
-
-#~ msgid "You are now unsubscribed from"
-#~ msgstr "Je bent nu afgemeld van"
-
-#~ msgid "You are now unsubscribed from the mailing list"
-#~ msgstr "Je bent nu afgemeld van deze mailinglijst"
-
-#~ msgid ""
-#~ "You received this mail because you are subscribed to the mailing list"
-#~ msgstr "Je ontvangt deze mail omdat je lid bent van de mailinglijst"
-
-#~ msgid "You will receive a confirmation in your e-mail."
-#~ msgstr "Je ontvangt een bevestigingsbericht in je mail."
+#~ msgid "Mailing list settings."
+#~ msgstr "Mailinglijst instellingen"
 
 #~ msgid "e-Mail"
 #~ msgstr "email"
-
-#~ msgid "preview mailing"
-#~ msgstr "Mailingvoorbeeld"
 
 #~ msgid "recipients"
 #~ msgstr "ontvangers"
@@ -840,9 +1010,6 @@ msgstr "met je e-mailadres"
 #~ msgid "Send the page"
 #~ msgstr "Verstuur pagina"
 
-#~ msgid "Sent the e-mail."
-#~ msgstr "Email verstuurd."
-
 #~ msgid "to"
 #~ msgstr "naar:"
 
@@ -851,9 +1018,6 @@ msgstr "met je e-mailadres"
 
 #~ msgid "Mailinglist status"
 #~ msgstr "Mailinglijst status"
-
-#~ msgid "Email page"
-#~ msgstr "Email deze pagina"
 
 #~ msgid "Select a mailing list to send this page to."
 #~ msgstr "Kies een mailinglijst om deze pagina naartoe te sturen<"

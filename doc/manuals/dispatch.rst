@@ -12,8 +12,7 @@ of generating request URLs in Zotonic.
 
 When an URL is requested by the web browser, the dispatch system looks
 at that URL and matches it agains all dispatch rules that are
-loaded. Based on the match, it will call a :ref:`controller` to handle
-the request.
+loaded. Based on the match, it will call a :ref:`controller <controllers>` to handle the request.
 
 
 Defining dispatch rules
@@ -72,7 +71,7 @@ Where the elements are:
 Dispatch rule naming
 ....................
 
-Zotonic extends Basho's Webmachine by allowing (or actually,
+Zotonic extends Basho’s Webmachine by allowing (or actually,
 `requiring`) dispatch rules to be named. The name is the first element
 of the dispatch rule tuple, and consists of a simple atom. The
 ``z_dispatcher:url_for`` function takes a name and creates the URL for
@@ -99,6 +98,11 @@ no arguments were given. However when I add an argument::
 
 It will render the URL ``/foo/1``, matching the second dispatch rule
 and adding the argument in the creation of the URL.
+
+In a template the value of the argument can be retrieved with the `q` variable.
+In the example where the atom `var` is used::
+
+  {{ q.var }}
 
 Note that any `extra` arguments that are given, are added as query-string parameters::
 
@@ -169,6 +173,10 @@ file:consult/1 and see if it returns errors.
 top-to-bottom in the file.  Are any rules above your rule capturing
 the cases you are trying to match.  If so, move your rule up, but bear
 in mind that you don't want to break those rules either.
+
+**View which values are passed to the template** using tag `debug`:
+
+  {% debug %}
 
 
 .. _manual-dispatch-rewriting:
@@ -274,8 +282,8 @@ needs. ControllerArgs is effective for establishing implementation
 details like the template to be used, whether or not to do caching and
 where to load static resources from.
 
-Zotonic dispatch rules are identical to Webmachine's with the addition
-of RuleName. Webmachine's dispatch rules are described in detail at
+Zotonic dispatch rules are identical to Webmachine’s with the addition
+of RuleName. Webmachine’s dispatch rules are described in detail at
 http://webmachine.basho.com/dispatcher.html .
 
 .. seealso:: :ref:`mod_custom_redirect`, :ref:`mod_base`

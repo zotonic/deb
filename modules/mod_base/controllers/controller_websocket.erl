@@ -27,13 +27,14 @@
     content_types_provided/2,
     provide_content/2,
     websocket_start/2,    
-    websocket_send_data/2
+    websocket_send_data/2,
+    is_websocket_request/1
 ]).
 
 % websocket handler exports.
 -export([
     websocket_init/1,
-    websocket_message/2,
+    websocket_message/3,
     websocket_info/2,
     websocket_terminate/2
 ]).
@@ -41,14 +42,15 @@
 -include_lib("controller_webmachine_helper.hrl").
 -include_lib("zotonic.hrl").
 
-init(_Args) -> {ok, []}.
-
+init(DispatchArgs) -> {ok, DispatchArgs}.
 
 %% @doc The request must have a valid session cookie.
-forbidden(ReqData, _State) ->
+forbidden(ReqData, DispatchArgs) ->
     Context = z_context:new(ReqData),
-    Context1 = z_context:continue_session(Context),
-    ?WM_REPLY(not z_context:has_session(Context1), Context1).
+    Context1 = z_context:set(DispatchArgs, Context),
+    Context2 = z_context:continue_session(Context1),
+    ?WM_REPLY(not z_context:has_session(Context2) andalso
+              z_context:get(require_session, Context2, true), Context2).
 
 %% @doc Possible connection upgrades
 upgrades_provided(ReqData, Context) ->
@@ -79,23 +81,31 @@ websocket_start(ReqData, Context) ->
             z_context:set(ws_handler, ?MODULE, Context1);
         _Hdlr -> Context1
     end,
-    case z_context:get_req_header("sec-websocket-version", Context2) of
+    Context3 = z_context:set(ws_request, true, Context2),
+    case z_context:get_req_header("sec-websocket-version", Context3) of
         undefined ->
-            case z_context:get_req_header("sec-websocket-key1", Context2) of
+            case z_context:get_req_header("sec-websocket-key1", Context3) of
                 undefined ->
-                    z_websocket_hixie75:start(ReqData, Context2);
+                    z_websocket_hixie75:start(ReqData, Context3);
                 WsKey1 ->
-                    z_websocket_hybi00:start(WsKey1, ReqData, Context2)
+                    z_websocket_hybi00:start(WsKey1, ReqData, Context3)
             end;
         "7" ->
             % http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-07
-            z_websocket_hybi17:start(ReqData, Context2);
+            z_websocket_hybi17:start(ReqData, Context3);
         "8" ->
             % http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-10
-            z_websocket_hybi17:start(ReqData, Context2);
+            z_websocket_hybi17:start(ReqData, Context3);
         "13" ->
             % http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-17
-            z_websocket_hybi17:start(ReqData, Context2)
+            z_websocket_hybi17:start(ReqData, Context3)
+    end.
+
+%% @doc Returns true if this a websocket request
+is_websocket_request(Context) ->
+    case z_context:get(ws_request, Context, false) of
+        true -> true;
+        _ -> false
     end.
 
 %% @doc Send Data over websocket Pid to the client.
@@ -103,11 +113,23 @@ websocket_send_data(Pid, Data) ->
     Pid ! {send_data, Data}.
 
 %% Called during initialization of the websocket.
-websocket_init(Context) ->
-    z_session_page:websocket_attach(self(), Context).
+websocket_init(_Context) ->
+    ok.
 
 %% Handle a message from the browser, should contain an url encoded request. Sends result script back to browser.
-websocket_message(Msg, Context) ->
+websocket_message(<<"Z:PING:",PingId/binary>>, SenderPid, Context) ->
+    PageId = z_convert:to_binary(Context#context.page_id),
+    case PingId of
+        PageId ->
+            % Ping for this page-id, reply with a pong
+            z_session_page:websocket_attach(SenderPid, Context),
+            SenderPid ! {send_data, iolist_to_binary(["Z:PONG:",PageId])},
+            ok;
+        _Other ->
+            % Ping for wrong page-id, stay silent.
+            ok
+    end;
+websocket_message(Msg, _SenderPid, Context) ->
     Qs = mochiweb_util:parse_qs(Msg),
     Context1 = z_context:set('q', Qs, Context),
 

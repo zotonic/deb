@@ -24,7 +24,7 @@
 
 -compile([{parse_transform, lager_transform}]).
 
--define(MIN_OTP_VERSION, "R14B03").
+-define(MIN_OTP_VERSION, "15B03"). %% note -- *without* the initial R (since OTP 17.0 the R is dropped)
 
 
 ensure_started(App) ->
@@ -32,10 +32,21 @@ ensure_started(App) ->
         ok ->
             ok;
         {error, {not_started, Dep}} ->
-            ok = ensure_started(Dep),
-            ensure_started(App);
+            case ensure_started(Dep) of
+                ok ->
+                    ensure_started(App);
+                Error ->
+                    Error
+            end;
         {error, {already_started, App}} ->
-            ok
+            ok;
+        {error, {Tag, Msg}} when is_list(Tag), is_list(Msg) ->
+                io_lib:format("~s: ~s", [Tag, Msg]);
+        {error, {bad_return, {{M, F, Args}, Return}}} ->
+                A = string:join([io_lib:format("~p", [A])|| A <- Args], ", "),
+                io_lib:format("~s failed to start due to a bad return value from call ~s:~s(~s):~n~p", [App, M, F, A, Return]);
+        {error, Reason} ->
+            io_lib:format("~p", [Reason])
     end.
 
 %% @spec start() -> ok
@@ -58,6 +69,7 @@ start(_Args) ->
 %% @doc Stop the zotonic server.
 stop() ->
     Res = application:stop(zotonic),
+    application:stop(emqtt),
     application:stop(eiconv),
     application:stop(mnesia),
     application:stop(lager),
@@ -110,13 +122,19 @@ update([Node]) ->
 
 
 test_erlang_version() ->
-    Version = erlang:system_info(otp_release),
-    if
-        Version < ?MIN_OTP_VERSION ->
-            lager:error("Zotonic needs at least Erlang release ~p; this is ~p", [?MIN_OTP_VERSION, Version]),
+    case otp_version() of
+        Version when Version < ?MIN_OTP_VERSION ->
+            io:format("Zotonic needs at least Erlang release ~p; this is ~p~n", [?MIN_OTP_VERSION, erlang:system_info(otp_release)]),
             erlang:exit({minimal_otp_version, ?MIN_OTP_VERSION});
-        true ->
+        _ ->
             ok
+    end.
+
+%% @doc Strip the optional "R" from the OTP release because from 17.0 onwards it is unused
+otp_version() ->
+    case erlang:system_info(otp_release) of
+        [$R | V] -> V;
+        V -> V
     end.
 
 run_tests() ->

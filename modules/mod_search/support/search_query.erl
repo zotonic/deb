@@ -80,6 +80,7 @@ request_arg("cat_exclude")         -> cat_exclude;
 request_arg("creator_id")          -> creator_id;
 request_arg("modifier_id")         -> modifier_id;
 request_arg("custompivot")         -> custompivot;
+request_arg("filter")              -> filter;
 request_arg("id_exclude")          -> id_exclude;
 request_arg("hasobject")           -> hasobject;
 request_arg("hasobjectpredicate")  -> hasobjectpredicate;
@@ -133,6 +134,10 @@ parse_query([{cat_exclude, Cats}|Rest], Context, Result) ->
     Cats2 = add_or_append("rsc", Cats1, Result#search_sql.cats_exclude),
     Tables1 = Result#search_sql.tables,
     parse_query(Rest, Context, Result#search_sql{cats_exclude=Cats2, tables=Tables1});
+
+parse_query([{filter, R}|Rest], Context, Result) ->
+    Result1 = add_filters(R, Result),
+    parse_query(Rest, Context, Result1);
 
 %% id_exclude=resource-id
 %% Exclude an id from the result
@@ -569,3 +574,43 @@ assure_category(Name, Context) ->
     end.
 
 
+%% Add filters
+add_filters({'or', Filters}, Result) ->
+    {Exprs, Result1} = lists:foldr(
+                         fun([C,O,V], {Es, R}) ->
+                                 {E, R1} = create_filter(C, O, V, R),
+                                 {[E|Es], R1}
+                         end,
+                         {[], Result},
+                         Filters),
+    Or = "(" ++ string:join(Exprs, " OR ") ++ ")",
+    add_where(Or, Result1);
+    
+add_filters([Column, Value], R) ->
+    add_filters([Column, eq, Value], R);
+
+add_filters([Column, Operator, Value], Result) ->
+    {Expr, Result1} = create_filter(Column, Operator, Value, Result),
+    add_where(Expr, Result1).
+
+create_filter(Column, Operator, Value, Result) ->
+    {Arg, Result1} = add_arg(Value, Result),
+    Column1 = sql_safe(Column),
+    Operator1 = map_filter_operator(Operator),
+    {Column1 ++ " " ++ Operator1 ++ " " ++ Arg, Result1}.
+
+map_filter_operator(eq) -> "=";
+map_filter_operator('=') -> "=";
+map_filter_operator(ne) -> "<>";
+map_filter_operator('<>') -> "<>";
+map_filter_operator(gt) -> ">";
+map_filter_operator('>') -> ">";
+map_filter_operator(lt) -> "<";
+map_filter_operator('<') -> "<";
+map_filter_operator(gte) -> ">=";
+map_filter_operator('>=') -> ">=";
+map_filter_operator(lte) -> "<=";
+map_filter_operator('<=') -> "<=";
+map_filter_operator(Op) -> throw({error, {unknown_filter_operator, Op}}).
+
+                                                       

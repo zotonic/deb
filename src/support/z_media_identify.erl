@@ -1,11 +1,10 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009-2012 Marc Worrell
-%% Date: 2009-03-02
+%% @copyright 2009-2014 Marc Worrell
 %%
 %% @doc Identify files, fetch metadata about an image
 %% @todo Recognize more files based on magic number, think of office files etc.
 
-%% Copyright 2009-2012 Marc Worrell, Konstantin Nikiforov
+%% Copyright 2009-2014 Marc Worrell, Konstantin Nikiforov
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -31,6 +30,7 @@
 	identify_file_direct/2,
     extension/1,
     extension/2,
+    extension/3,
 	guess_mime/1,
     is_mime_compressed/1
 ]).
@@ -65,17 +65,30 @@ identify_file(File, Context) ->
 
 -spec identify_file(File::string(), OriginalFilename::string(), #context{}) -> {ok, Props::list()} | {error, term()}.
 identify_file(File, OriginalFilename, Context) ->
-    case z_notifier:first(#media_identify_file{filename=File}, Context) of
+    Extension = maybe_extension(File, OriginalFilename),
+    case z_notifier:first(#media_identify_file{filename=File, original_filename=OriginalFilename, extension=Extension}, Context) of
         {ok, Props} ->
 			{ok, Props};
         undefined -> 
-			identify_file_direct(File, OriginalFilename)
+            identify_file_direct(File, OriginalFilename)
 	end.
 
+maybe_extension(File, undefined) ->
+    maybe_extension(File);
+maybe_extension(_File, OriginalFilename) ->
+    maybe_extension(OriginalFilename).
+
+maybe_extension(undefined) ->
+    "";
+maybe_extension(Filename) ->
+    z_string:to_lower(filename:extension(Filename)). 
 
 %% @doc Fetch information about a file, returns mime, width, height, type, etc.
 -spec identify_file_direct(File::string(), OriginalFilename::string()) -> {ok, Props::list()} | {error, term()}.
 identify_file_direct(File, OriginalFilename) ->
+    maybe_identify_extension(identify_file_direct_1(File, OriginalFilename), OriginalFilename).
+
+identify_file_direct_1(File, OriginalFilename) ->
     {OsFamily, _} = os:type(),
 	case identify_file_os(OsFamily, File, OriginalFilename) of
 		{error, _} ->
@@ -91,6 +104,10 @@ identify_file_direct(File, OriginalFilename) ->
 			end
 	end.
 
+maybe_identify_extension({error, "identify error: "++_}, OriginalFilename) ->
+    {ok, [ {mime, guess_mime(OriginalFilename)} ]};
+maybe_identify_extension(Result, _OriginalFilename) ->
+    Result.
 
 %% @doc Identify the mime type of a file using the unix "file" command.
 -spec identify_file_os(win32|unix, File::string(), OriginalFilename::string()) -> {ok, Props::list()} | {error, term()}.
@@ -162,6 +179,11 @@ identify_file_os(unix, File, OriginalFilename) ->
                         "application/vnd.ms" ++ _ = M -> {ok, [{mime,M}]};
                         "application/msword" -> {ok, [{mime,"application/msword"}]};
                         _ -> {ok, [{mime, "application/vnd.ms-office"}]}
+                    end;
+                "audio/x-wav" ->
+                    case guess_mime(OriginalFilename) of
+                        "audio/" ++ _ = M -> {ok, [{mime,M}]};
+                        _ -> {ok, [{mime, "audio/x-wav"}]}
                     end;
                 _ ->
                     {ok, [{mime, Mime}]}
@@ -238,21 +260,34 @@ mime("PNG") -> "image/png";
 mime("PNG8") -> "image/png";
 mime("PNG24") -> "image/png";
 mime("PNG32") -> "image/png";
+mime("SVG") -> "image/svg+xml";
 mime(Type) -> "image/" ++ string:to_lower(Type).
 
 
 
 %% @doc Return the extension for a known mime type (eg. ".mov").
 -spec extension(string()|binary()) -> string().
-extension("image/jpeg") -> ".jpg";
-extension(<<"image/jpeg">>) -> ".jpg";
 extension(Mime) -> extension(Mime, undefined).
 
 %% @doc Return the extension for a known mime type (eg. ".mov"). When
 %% multiple extensions are found for the given mime type, returns the
 %% one that is given as the preferred extension. Otherwise, it returns
 %% the first extension.
+-spec extension(string()|binary(), string()|binary()|undefined, #context{}) -> string().
+extension(Mime, PreferExtension, Context) ->
+    case z_notifier:first(#media_identify_extension{mime=maybe_binary(Mime), preferred=maybe_binary(PreferExtension)}, Context) of
+        undefined ->
+            extension(Mime, PreferExtension);
+        Extension ->
+            z_convert:to_list(Extension)
+    end.
+
+maybe_binary(undefined) -> undefined;
+maybe_binary(L) -> z_convert:to_binary(L). 
+
 -spec extension(string()|binary(), string()|binary()|undefined) -> string().
+extension("image/jpeg", _PreferExtension) -> ".jpg";
+extension(<<"image/jpeg">>, _PreferExtension) -> ".jpg";
 extension(Mime, PreferExtension) ->
     Extensions = mimetypes:extensions(z_convert:to_binary(Mime)),
     case PreferExtension of
@@ -260,11 +295,10 @@ extension(Mime, PreferExtension) ->
             first_extension(Extensions);
         _ ->
             %% convert prefer extension to something that mimetypes likes
-            Ext1 = z_convert:to_list(PreferExtension),
+            Ext1 = z_convert:to_binary(z_string:to_lower(PreferExtension)),
             Ext2 = case Ext1 of
-                       [$.|Rest] ->
-                           z_convert:to_binary(Rest);
-                       _ -> z_convert:to_binary(Ext1)
+                       <<$.,Rest/binary>> -> Rest;
+                       _ -> Ext1
                    end,
             case lists:member(Ext2, Extensions) of
                 true ->
@@ -285,7 +319,7 @@ first_extension(Extensions) ->
 %% @doc  Guess the mime type of a file by the extension of its filename.
 -spec guess_mime(string() | binary()) -> string().
 guess_mime(File) ->
-	case mimetypes:filename(z_convert:to_binary(File)) of
+	case mimetypes:filename(z_convert:to_binary(z_string:to_lower(File))) of
 		[Mime|_] -> z_convert:to_list(Mime);
 		[] -> "application/octet-stream"
 	end.
@@ -295,7 +329,7 @@ guess_mime(File) ->
 -spec exif_orientation(string()) -> 1|2|3|4|5|6|7|8.
 exif_orientation(InFile) ->
     %% FIXME - don't depend on external command
-    case string:tokens(os:cmd("exif -m -t Orientation " ++ z_utils:os_filename(InFile)), "\n") of
+    case string:tokens(exif_orientation_cmd(InFile), "\n") of
         [] -> 
             1;
         [Line|_] -> 
@@ -313,6 +347,13 @@ exif_orientation(InFile) ->
             end
     end.
 
+exif_orientation_cmd(File) ->
+    exif_orientation_cmd_1(os:type(), File).
+
+exif_orientation_cmd_1({win32, _}, File) ->
+    os:cmd("exif -m -t Orientation " ++ z_utils:os_filename(File));
+exif_orientation_cmd_1({_Unix, _}, File) ->
+    os:cmd("LANG=en exif -m -t Orientation " ++ z_utils:os_filename(File)).
 
 %% @doc Given a mime type, return whether its file contents is already compressed or not.
 -spec is_mime_compressed(string()) -> boolean().

@@ -114,9 +114,10 @@ m_value(#m{value=V}, _Context) ->
 %% @doc Return the id of the resource with the name
 % @spec name_to_id(NameString, Context) -> {ok, int()} | {error, Reason}
 name_to_id(Name, Context) ->
-    case is_list(Name) andalso z_utils:only_digits(Name) of
+    case z_utils:only_digits(Name) of
         true ->
             {ok, z_convert:to_integer(Name)};
+        false when is_integer(Name) -> {ok, Name};
         false ->
             case name_lookup(Name, Context) of
                 Id when is_integer(Id) -> {ok, Id};
@@ -151,12 +152,24 @@ name_to_id_cat_check(Name, Cat, Context) ->
     {ok, Id} = name_to_id_cat(Name, Cat, Context),
     Id.
 
+%% @doc Given a page path, return {ok, Id} with the id of the found
+%% resource. When the resource does not have the page path, but did so
+%% once, this function will return {redirect, Id} to indicate that the
+%% page path was found but is no longer the current page path for the
+%% resource.
 page_path_to_id(Path, Context) ->
     Path1 = [ $/, string:strip(Path, both, $/)],
     case catch z_db:q1("select id from rsc where page_path = $1", [Path1], Context) of
         Id when is_integer(Id) -> {ok, Id};
-        undefined -> {error, {unknown_page_path, Path1}};
-        Other -> {error, {illegal_page_path, Path1, Other}}
+        undefined ->
+            case z_db:q1("select id from rsc_page_path_log where page_path = $1", [Path1], Context) of
+                OtherId when is_integer(OtherId) ->
+                    {redirect, OtherId};
+                undefined ->
+                    {error, {unknown_page_path, Path1}}
+            end;
+        Other ->
+            {error, {illegal_page_path, Path1, Other}}
     end.
 
 
@@ -238,7 +251,7 @@ insert(Props, Context) ->
     m_rsc_update:insert(Props, Context).
 
 %% @doc Delete a resource
-%% @spec delete(Props, Context) -> ok | {error, Reason}
+%% @spec delete(Id, Context) -> ok | {error, Reason}
 delete(Id, Context) when is_integer(Id) ->
     m_rsc_update:delete(Id, Context).
 
@@ -266,20 +279,6 @@ touch(Id, Context) when is_integer(Id) ->
     end.
     
 
-exists([C|_] = Name, Context) when is_list(Name) and is_integer(C) ->
-    case name_lookup(Name, Context) of
-        undefined -> 
-            case z_utils:only_digits(Name) of
-                true -> exists(list_to_integer(Name), Context);
-                false -> false
-            end;
-        _ -> true
-    end;
-exists(Name, Context) when is_binary(Name) ->
-    case name_lookup(Name, Context) of
-        undefined -> false;
-        _ -> true
-    end;
 exists(Id, Context) -> 
     case rid(Id, Context) of
         Rid when is_integer(Rid) ->
@@ -322,12 +321,29 @@ is_me(Id, Context) ->
             false
     end.
 
+is_published_date(Id, Context) ->
+    case rid(Id, Context) of
+        RscId when is_integer(RscId) ->
+            case m_rsc:p_no_acl(RscId, is_published, Context) of
+                true ->
+                    Date = calendar:local_time(),
+                    m_rsc:p_no_acl(RscId, publication_start, Context) =< Date 
+                      andalso m_rsc:p_no_acl(RscId, publication_end, Context) >= Date;
+                false ->
+                    false;
+                undefined ->
+                    false
+            end;
+        _ ->
+            false
+    end.
+
 
 %% @doc Fetch a property from a resource. When the rsc does not exist, the property does not
 %% exist or the user does not have access rights to the property then return 'undefined'.
 %% p(ResourceId, atom(), Context) -> term() | undefined
-p(Id, Property, Context) when is_list(Property) ->
-    p(Id, list_to_atom(Property), Context);
+p(Id, Property, Context) when is_list(Property); is_binary(Property) ->
+    p(Id, z_convert:to_atom(Property), Context);
 p(Id, Property, Context) 
     when   Property =:= category_id 
     orelse Property =:= page_url 
@@ -378,6 +394,7 @@ p_no_acl(Id, is_me, Context) -> is_me(Id, Context);
 p_no_acl(Id, is_visible, Context) -> is_visible(Id, Context);
 p_no_acl(Id, is_editable, Context) -> is_editable(Id, Context);
 p_no_acl(Id, is_deletable, Context) -> is_deletable(Id, Context);
+p_no_acl(Id, is_published_date, Context) -> is_published_date(Id, Context);
 p_no_acl(Id, is_a, Context) -> [ {C,true} || C <- is_a(Id, Context) ];
 p_no_acl(Id, exists, Context) -> exists(Id, Context);
 p_no_acl(Id, page_url_abs, Context) -> 
@@ -552,21 +569,18 @@ rid(#rsc_list{list=[R|_]}, _Context) ->
     R;
 rid(#rsc_list{list=[]}, _Context) ->
     undefined;
-rid([C|_] = UniqueName, Context) when is_integer(C) ->
-    case z_utils:only_digits(UniqueName) of
-        true -> list_to_integer(UniqueName);
-        false -> name_lookup(UniqueName, Context)
-    end;
-rid(UniqueName, Context) when is_binary(UniqueName) ->
-    name_lookup(binary_to_list(UniqueName), Context);
 rid(undefined, _Context) -> 
     undefined;
-rid(UniqueName, Context) when is_atom(UniqueName) -> 
-    name_lookup(atom_to_list(UniqueName), Context);
 rid(<<>>, _Context) -> 
     undefined;
 rid([], _Context) -> 
-    undefined.
+    undefined;
+rid(UniqueName, Context) ->
+    case z_utils:only_digits(UniqueName) of
+        true -> z_convert:to_integer(UniqueName);
+        false -> name_lookup(UniqueName, Context)
+    end.
+
 
 %% @doc Return the id of the resource with a certain unique name.
 %% name_lookup(Name, Context) -> int() | undefined

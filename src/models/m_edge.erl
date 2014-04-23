@@ -35,6 +35,7 @@
     insert/5,
     delete/2,
     delete/4,
+    delete/5,
     delete_multiple/4,
     replace/4,
     duplicate/3,
@@ -121,7 +122,7 @@ get_id(SubjectId, PredId, ObjectId, Context) when is_integer(PredId) ->
     z_db:q1("select id from edge where subject_id = $1 and object_id = $3 and predicate_id = $2", [SubjectId, PredId, ObjectId], Context);
 get_id(SubjectId, Pred, ObjectId, Context) ->
     PredId = m_predicate:name_to_id_check(Pred, Context),
-    z_db:q1("select id from edge where subject_id = $1 and object_id = $3 and predicate_id = $2", [SubjectId, PredId, ObjectId], Context).
+    get_id(SubjectId, PredId, ObjectId, Context).
 
 %% @doc Return the full description of all edges from a subject, grouped by predicate
 get_edges(SubjectId, Context) ->
@@ -209,12 +210,18 @@ delete(Id, Context) ->
 
 %% @doc Delete an edge by subject, object and predicate id
 delete(SubjectId, Pred, ObjectId, Context) ->
+    delete(SubjectId, Pred, ObjectId, [], Context).
+
+delete(SubjectId, Pred, ObjectId, Options, Context) ->
     PredId = m_predicate:name_to_id_check(Pred, Context),
     {ok, PredName} = m_predicate:id_to_name(PredId, Context),
     case z_acl:is_allowed(delete, #acl_edge{subject_id=SubjectId, predicate=PredName, object_id=ObjectId}, Context) of
         true ->
             F = fun(Ctx) ->
-                m_rsc:touch(SubjectId, Ctx),
+                case proplists:get_value(no_touch, Options) of
+                    true -> ok;
+                    _ -> m_rsc:touch(SubjectId, Ctx)
+                end,
                 z_db:q("delete from edge where subject_id = $1 and object_id = $2 and predicate_id = $3",  [SubjectId, ObjectId, PredId], Ctx)
             end,
 

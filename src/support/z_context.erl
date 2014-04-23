@@ -1,8 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009-2012  Marc Worrell
+%% @copyright 2009-2013  Marc Worrell
 %% @doc Request context for Zotonic request evaluation.
 
-%% Copyright 2009-2012 Marc Worrell
+%% Copyright 2009-2013 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@
 
     is_request/1,
 
+    prune_for_spawn/1,
     prune_for_async/1,
     prune_for_template/1,
     prune_for_database/1,
@@ -118,7 +119,9 @@
 
     cookie_domain/1,
     document_domain/1,
-    streamhost/1
+    streamhost/1,
+    websockethost/1,
+    has_websockethost/1
 ]).
 
 -include_lib("zotonic.hrl").
@@ -247,6 +250,12 @@ is_request(#context{wm_reqdata=undefined}) -> false;
 is_request(_Context) -> true.
 
 
+%% @doc Minimal prune, for ensuring that the context can safely used in two processes
+prune_for_spawn(#context{} = Context) ->
+    Context#context{
+        dbc=undefined
+    }.
+
 %% @doc Make the context safe to use in a async message. This removes buffers and the db transaction.
 prune_for_async(#context{} = Context) ->
     #context{
@@ -345,8 +354,13 @@ abs_url(Url, Context) ->
 %%      Useful when the site is behind a https proxy.
 site_protocol(Context) ->
     case z_convert:to_binary(m_config:get_value(site, protocol, Context)) of
-        <<>> -> <<"http">>;
-        P -> P
+        <<>> -> 
+            case m_req:get(is_ssl, Context) of
+                true -> <<"https">>;
+                _Other -> <<"http">>
+            end;
+        P ->
+            P
     end.
 
 %% @doc Pickle a context for storing in the database
@@ -724,8 +738,8 @@ persistent_id(Context) ->
 %% @spec set_persistent(Key, Value, Context) -> Context
 %% @doc Set the value of the visitor variable Key to Value
 set_persistent(Key, Value, Context) ->
-    z_session:set_persistent(Key, Value, Context),
-    Context.
+    z_session:set_persistent(Key, Value, Context).
+
 
 %% @spec get_persistent(Key, Context) -> Value
 %% @doc Fetch the value of the visitor variable Key
@@ -921,6 +935,21 @@ streamhost(Context) ->
             Domain
     end.
 
+%% @doc Fetch the domain and port for websocket connections
+%% @spec websockethost(Context) -> list()
+websockethost(Context) ->
+    case m_site:get(websockethost, Context) of
+        Empty when Empty == undefined; Empty == []; Empty == <<>> ->
+            hostname_port(Context);
+        Domain ->
+            Domain
+    end.
+
+%% @doc Return true iff this site has a separately configured websockethost
+%% @spec has_websockethost(Context) -> bool()
+has_websockethost(Context) ->
+    z_convert:to_bool(m_site:get(websockethost, Context)).
+
 
 %% ------------------------------------------------------------------------------------
 %% Local helper functions
@@ -985,16 +1014,25 @@ set_cookie(Key, Value, Context) ->
 
 %% @doc Set a cookie value with cookie options.
 set_cookie(Key, Value, Options, Context) ->
-    % Add domain to cookie if not set
-    Options1 = case proplists:lookup(domain, Options) of
-                   {domain, _} -> Options;
-                   none -> [{domain, z_context:cookie_domain(Context)}|Options]
-               end,
-    Options2 = z_notifier:foldl(#cookie_options{name=Key, value=Value}, Options1, Context),
-    RD = Context#context.wm_reqdata,
-    Hdr = mochiweb_cookies:cookie(Key, Value, Options2),
-    RD1 = wrq:merge_resp_headers([Hdr], RD),
-    z_context:set_reqdata(RD1, Context).
+    case controller_websocket:is_websocket_request(Context) of
+        true ->
+            %% Store the cookie in the session and trigger an ajax cookie fetch.
+            z_session:add_cookie(Key, Value, Options, Context),
+            add_script_page(<<"z_fetch_cookies();">>, Context),
+            Context;
+        false ->
+            % Add domain to cookie if not set
+            Options1 = case proplists:lookup(domain, Options) of
+                           {domain, _} -> Options;
+                           none -> [{domain, z_context:cookie_domain(Context)}|Options]
+                       end,
+            Options2 = z_notifier:foldl(#cookie_options{name=Key, value=Value}, Options1, Context),
+            RD = Context#context.wm_reqdata,
+            Hdr = mochiweb_cookies:cookie(Key, Value, Options2),
+            RD1 = wrq:merge_resp_headers([Hdr], RD),
+            z_context:set_reqdata(RD1, Context)
+    end.
+
 
 %% @doc Read a cookie value from the current request.
 get_cookie(Key, #context{wm_reqdata=RD}) ->

@@ -96,7 +96,7 @@ model_pgsql() ->
         id serial NOT NULL,
         module character varying(80) NOT NULL DEFAULT 'zotonic'::character varying,
         key character varying(80) NOT NULL DEFAULT ''::character varying,
-        value character varying(1000) NOT NULL DEFAULT ''::character varying,
+        value text NOT NULL DEFAULT ''::character varying,
         props bytea,
         created timestamp with time zone NOT NULL DEFAULT now(),
         modified timestamp with time zone NOT NULL DEFAULT now(),
@@ -554,10 +554,18 @@ model_pgsql() ->
     "
     CREATE TRIGGER medium_deleted_trigger AFTER DELETE
     ON medium FOR EACH ROW EXECUTE PROCEDURE medium_delete()
-    "
+    ",
+
+     %% Holds administration of previous page paths
+     "CREATE TABLE rsc_page_path_log ( 
+        id int not null,
+        page_path character varying(80),
+        created timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT rsc_page_path_log_pkey PRIMARY KEY (page_path),
+        CONSTRAINT rsc_page_path_log_fkey FOREIGN KEY (id) REFERENCES rsc(id)
+      )"
 
     ].
-
 
 %    -- Fulltext index of products
 %    -- TODO: Also mix in the shop product id, brand, group and properties

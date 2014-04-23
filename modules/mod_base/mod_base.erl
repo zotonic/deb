@@ -80,9 +80,13 @@ observe_scomp_script_render(#scomp_script_render{is_nostartup=true}, _Context) -
 
 %% @doc Check if there is a controller or template matching the path.
 observe_dispatch(#dispatch{path=Path}, Context) ->
-    case m_rsc:page_path_to_id(Path, Context) of
+    case m_rsc:page_path_to_id(z_utils:url_path_encode(Path), Context) of
         {ok, Id} ->
             {ok, Id};
+        {redirect, Id} ->
+            {ok, #dispatch_match{
+                    mod=controller_redirect,
+                    mod_opts=[{id, Id}, {is_permanent, true}]}};
         {error, _} ->
             Last = last(Path),
             Template= case Last of

@@ -8,7 +8,7 @@ Before running Zotonic, you must make sure your system meets the
 minimum requirements to do so. Zotonic needs the following software
 installed:
 
-1. **Erlang R14B03** or newer. Build it from source, or use
+1. **R15B03** or newer. Build it from source, or use
    packages.    
 
 2. **ImageMagick** (version 6.5 or higher) for the ``convert`` and
@@ -21,8 +21,8 @@ installed:
 
 4. **make** A recent version of the GNU ``make`` utility.
       
-5. **git** if you are planning to use the latest-and-greatest
-   development version of Zotonic.
+5. **git** Zotonic comes with a few subprojects which are pulled from
+   the web with the ``git`` command.
 
 If you meet these requirements, head straight on to :ref:`tutorial-install`,
 otherwise, read on below for the specifics on these.
@@ -37,13 +37,17 @@ command in a terminal::
 
 The output should be something like::
 
-  Erlang R15B02 (erts-5.9.2) [source] [64-bit] [smp:4:4] [async-threads:0] [hipe] [kernel-poll:false]
+  Erlang R16B03 (erts-5.9.2) [source] [64-bit] [smp:4:4] [async-threads:0] [hipe] [kernel-poll:false]
   Eshell V5.9.2  (abort with ^G)
   1>
 
 (Press ctrl+c twice to exit)
 
-If your version is below release **R14B03**, you need to upgrade.
+If your version is below release **R15B03**, you need to upgrade. If
+you don't have Erlang installed, we recommend downloading a build for
+your operating system from the Erlang Solutions website:
+
+https://www.erlang-solutions.com/downloads/download-erlang-otp
 
 
 ImageMagick
@@ -97,45 +101,25 @@ change.
 Platform-specific notes
 -----------------------
 
-Ubuntu ( >= 12.04)
-^^^^^^^^^^^^^^^^^^
+Ubuntu / Debian
+^^^^^^^^^^^^^^^
 
-You can install Erlang from the default Ubuntu repositories::
+We recommend you install Erlang from the Erlang solutions website:
 
-  sudo apt-get install build-essential postgresql imagemagick erlang-base erlang-tools \
-  erlang-parsetools erlang-inets erlang-ssl erlang-eunit erlang-dev erlang-xmerl erlang-src
+https://www.erlang-solutions.com/downloads/download-erlang-otp
 
+The other requirements are easily fetched with ``apt``::
 
-Ubuntu ( < 12.04)
-^^^^^^^^^^^^^^^^^^
+  sudo apt-get install build-essential postgresql imagemagick git
 
-A recent Erlang should be installed from a custom PPA by running::
-
-  sudo add-apt-repository ppa:scattino/ppa
-  sudo apt-get update
-  sudo apt-get install build-essential erlang-base erlang-ssl postgresql imagemagick
-
-
-Debian (lenny)
-^^^^^^^^^^^^^^
-
-You'll need to build erlang from source. Before building, make sure
-you install these packages::
-
-  sudo apt-get install build-essential libncurses5-dev m4
-  sudo apt-get install openssl libssl-dev
-  sudo apt-get install unixodbc-dev
-
-Alternatively, you can install a precompiled recent Erlang from the
-following PPA: https://launchpad.net/~scattino/+archive/ppa
 
 FreeBSD
 ^^^^^^^
 
-If you're running on FreeBSD, make sure you've got the 'GNU' 'make'
-(check with 'make --version', which should give you GNU, and version
-info) If you're not running GNU-make as a default, edit the Makefile
-to run with 'gmake' (make sure gmake is available first).
+If you’re running on FreeBSD, make sure you've got the 'GNU' 'make'
+(check with ``make --version``, which should give you GNU, and version
+info). If you don't have GNU make, Zotonic will give an error when
+trying to compile.
 
 
 Mac OS X
@@ -156,8 +140,10 @@ Windows
 
 Currently, Zotonic is not officially supported on the Windows
 platform. However, the main dependencies Erlang, PostgreSQL and
-ImageMagick do work on Windows, so, if you're adventurous, it should
+ImageMagick do work on Windows, so, if you’re adventurous, it should
 be possible to get it running.
 
 We have included user-contributed ``start.cmd`` and ``build.cmd``
-batch-scripts which are supposed to work on Windows.
+batch-scripts which used to work on Windows, but have not been kept
+up-to-date with recent changes. Expect some major tweaking to get this
+back on track.

@@ -28,7 +28,8 @@
 %% interface functions
 -export([
     observe_identity_verified/2,
-    observe_rsc_update_done/2,
+    observe_identity_password_match/2,
+    observe_rsc_update/3,
     observe_search_query/2,
     observe_admin_menu/3,
     event/2
@@ -41,16 +42,28 @@
 observe_identity_verified(#identity_verified{user_id=RscId, type=Type, key=Key}, Context) ->
     m_identity:set_verified(RscId, Type, Key, Context).
 
-observe_rsc_update_done(#rsc_update_done{action=Action, id=RscId, pre_props=Pre, post_props=Post}, Context) 
+
+observe_identity_password_match(#identity_password_match{password=Password, hash=Hash}, _Context) ->
+    case m_identity:hash_is_equal(Password, Hash) of
+        true -> 
+            ok;
+        false ->
+            {error, password}
+    end.
+    
+
+observe_rsc_update(#rsc_update{action=Action, id=RscId, props=Pre}, {_Modified, Post} = Acc, Context) 
     when Action =:= insert; Action =:= update ->
     case {proplists:get_value(email, Pre), proplists:get_value(email, Post)} of
-        {A, A} -> ok;
-        {_Old, undefined} -> ok;
-        {_Old, <<>>} -> ok;
-        {_Old, New} -> ensure(RscId, email, New, Context)
+        {A, A} -> Acc;
+        {_Old, undefined} -> Acc;
+        {_Old, <<>>} -> Acc;
+        {_Old, New} -> 
+            ensure(RscId, email, New, Context),
+            Acc
     end;
-observe_rsc_update_done(#rsc_update_done{}, _Context) ->
-    undefined.
+observe_rsc_update(#rsc_update{}, Acc, _Context) ->
+    Acc.
 
 
 observe_search_query({search_query, Req, OffsetLimit}, Context) ->
@@ -204,7 +217,26 @@ event(#postback{message={identity_add, Args}}, Context) ->
             end;
         false ->
             z_render:growl_error(?__("You are not allowed to edit identities.", Context), Context)
+    end;
+
+%% Log on as this user
+event(#postback{message={switch_user, [{id, Id}]}}, Context) ->
+    case z_acl:is_admin(Context) of
+        true ->
+            {ok, NewContext} = z_auth:switch_user(Id, Context),
+            %% find out redirect URL, if we can stay in the admin or not.
+            Url = case z_acl:is_allowed(use, mod_admin, NewContext) of
+                      true ->
+                          z_dispatcher:url_for(admin, NewContext);
+                      false ->
+                          <<"/">>
+                  end,
+            z_render:wire({redirect, [{location, Url}]}, NewContext);
+        false ->
+            z_render:growl_error(?__("You are not allowed to switch users.", Context), Context)
     end.
+
+
 
 
 is_existing_key(RscId, Type, Key, Context) ->

@@ -188,7 +188,7 @@ handle_call({restart_child, Name}, _From, State) ->
 %% @doc Return a full list of all children
 handle_call(which_children, _From, State) ->
     F = fun(C) ->
-        {C#child_state.name, #child_state.child, C#child_state.pid, C#child_state.time} 
+        {C#child_state.name, C#child_state.child, C#child_state.pid, C#child_state.time}
     end,
     {reply, [
             {waiting, [ F(C) || C <- State#state.waiting]},
@@ -371,6 +371,9 @@ do_start_child(#child_state{child=Child} = CS, State) ->
         {ok, Pid} ->
             CS1 = CS#child_state{state=running, pid=Pid, time=erlang:localtime()},
             notify_start(CS1, State),
+            State#state{running=[CS1|State#state.running]};
+        {error, {already_started, Pid}} ->
+            CS1 = CS#child_state{state=running, pid=Pid, time=erlang:localtime()},
             State#state{running=[CS1|State#state.running]};
         {error, _What} ->
             do_maybe_restart(CS, State)

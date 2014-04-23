@@ -77,7 +77,9 @@ render(Params, _Vars, Context) ->
 
     Text1 = case z_utils:is_empty(Icon) of
                 true -> Text;
-                false -> [<<"<i class=">>, Icon, "></i> ", Text]
+                false ->
+                    [z_tags:render_tag(<<"i">>, [{class, Icon}], ""),
+                     " ", Text]
             end,
     Context2 = z_tags:render_tag(
                         Tag,

@@ -193,11 +193,13 @@ handle_cast({restart, Site}, State) ->
 %% @doc A site started - report
 handle_cast({supervisor_child_started, Child, SitePid}, State) ->
     lager:info("Site started: ~p (~p)", [Child#child_spec.name, SitePid]),
+    z_sites_dispatcher:update_dispatchinfo(),
     {noreply, State};
 
 %% @doc A site stopped - report
 handle_cast({supervisor_child_stopped, Child, SitePid}, State) ->
     lager:info("Site stopped: ~p (~p)", [Child#child_spec.name, SitePid]),
+    z_sites_dispatcher:update_dispatchinfo(),
     {noreply, State};
 
 
@@ -241,20 +243,43 @@ scan_sites() ->
     [ C || C <- Configs, is_list(C) ].
 
 parse_config(C) ->
+    %% store host in site config
+    SitePath = filename:dirname(C),
+    Host = list_to_atom(
+             hd(lists:reverse(
+                  filename:split(
+                    SitePath
+                   )))),
+    case parse_config([C], [{host, Host}]) of
+        {error, _}=Error ->
+            Error;
+        SiteConfig ->
+            parse_config(config_d_files(SitePath), SiteConfig)
+    end.
+
+%% @doc Parse configurations from multiple files, merging results. The last file wins.
+parse_config([], SiteConfig) ->
+    SiteConfig;
+parse_config([C|T], SiteConfig) ->
     case file:consult(C) of
-        {ok, [SiteConfig|_]} -> 
-            %% store host in site config
-            Host = list_to_atom(
-                     hd(lists:reverse(
-                          filename:split(
-                            filename:dirname(C)
-                           )))),
-            lists:keystore(host, 1, SiteConfig, {host, Host});
+        {ok, [NewSiteConfig|_]} ->
+            SortedNewConfig = lists:ukeysort(1, NewSiteConfig),
+            MergedConfig = lists:ukeymerge(1, SortedNewConfig, SiteConfig),
+            parse_config(T, MergedConfig);
         {error, Reason} ->
             Message = io_lib:format("Could not consult site config: ~s: ~s", [C, file:format_error(Reason)]),
             ?ERROR("~s~n", [Message]),
             {error, Message}
     end.
+
+%% @doc Get site config.d contents in alphabetical order.
+%% Filter out files starting with '.' or ending with '~'.
+config_d_files(SitePath) ->
+    Path = filename:join([SitePath, "config.d", "*"]),
+    lists:sort([ F || F <- filelib:wildcard(Path),
+                      filelib:is_regular(F),
+                      lists:nth(1, filename:basename(F)) =/= $.,
+                      lists:last(filename:basename(F)) =/= $~ ]).
 
 %% @doc Fetch the configuration of a specific site.
 %% @spec get_site_config(Site::atom()) -> SiteProps::list() | {error, Reason}

@@ -50,7 +50,7 @@ html(Context) ->
             {blocks, lists:sort(Blocks)}
             | z_context:get_all(Context) 
            ],
-    Html = z_template:render({cat, "admin_edit.tpl"}, Vars, Context),
+    Html = z_template:render(z_context:get(template, Context, {cat, "admin_edit.tpl"}), Vars, Context),
     z_context:output(Html, Context).
 
 
@@ -71,18 +71,26 @@ ensure_id(Context) ->
 
 
 %% @doc Handle the submit of the resource edit form
-event(#submit{message=rscform}, Context) ->
+event(#submit{message=rscform} = Msg, Context) ->
+    event(Msg#submit{message={rscform, []}}, Context);
+event(#submit{message={rscform, Args}}, Context) ->
     Post = z_context:get_q_all_noz(Context),
     Props = filter_props(Post),
     Id = z_convert:to_integer(proplists:get_value("id", Props)),
     Props1 = proplists:delete("id", Props),
     CatBefore = m_rsc:p(Id, category_id, Context),
-    case m_rsc:update(Id, Props1, Context) of
+    Props2 = z_notifier:foldl(#admin_rscform{id=Id, is_a=m_rsc:is_a(Id, Context)}, Props1, Context),
+    case m_rsc:update(Id, Props2, Context) of
         {ok, _} -> 
             case proplists:is_defined("save_view", Post) of
                 true ->
-                    PageUrl = m_rsc:p(Id, page_url, Context),
-                    z_render:wire({redirect, [{location, PageUrl}]}, Context);
+                    case proplists:get_value(view_location, Args) of
+                        undefined ->
+                            PageUrl = m_rsc:p(Id, page_url, Context),
+                            z_render:wire({redirect, [{location, PageUrl}]}, Context);
+                        Location ->
+                            z_render:wire({redirect, [{location, Location}]}, Context)
+                    end;
                 false ->
                     case m_rsc:p(Id, category_id, Context) of
                         CatBefore ->
@@ -95,7 +103,7 @@ event(#submit{message=rscform}, Context) ->
                                            true ->  z_render:wire("delete-button", {disable, []}, Context4b);
                                            false -> z_render:wire("delete-button", {enable, []}, Context4b)
                                        end,
-                            Title = ?__(m_rsc:p(Id, title, Context5), Context5),
+                            Title = z_trans:lookup_fallback(m_rsc:p(Id, title, Context5), Context5),
                             Context6 = z_render:growl(["Saved “", Title, "”."], Context5),
                             case proplists:is_defined("save_duplicate", Post) of
                                 true ->
@@ -119,10 +127,10 @@ event(#submit{message=rscform}, Context) ->
             z_render:growl_error("Something went wrong. Sorry.", Context)
     end;
 
+% Opts: rsc_id, div_id, edge_template
 event(#postback{message={reload_media, Opts}}, Context) ->
-    RscId = proplists:get_value(rsc_id, Opts),
     DivId = proplists:get_value(div_id, Opts),
-    {Html, Context1} = z_template:render_to_iolist({cat, "_edit_media.tpl"}, [{id,RscId},{div_id,DivId}], Context),
+    {Html, Context1} = z_template:render_to_iolist({cat, "_edit_media.tpl"}, Opts, Context),
     z_render:update(DivId, Html, Context1);
 
 event(#sort{items=Sorted, drop={dragdrop, {object_sorter, Props}, _, _}}, Context) ->

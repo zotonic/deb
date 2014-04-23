@@ -192,8 +192,11 @@ with_connection(F, Context) ->
     with_connection(F, none, _Context) -> 
         F(none);
     with_connection(F, Connection, Context) when is_pid(Connection) -> 
+        Counter = #counter{name=requests},
+        From = [#stats_from{system=db}, #stats_from{host=Context#context.host, system=db}],
+        z_stats:update(Counter, From),
         try
-            F(Connection)
+            z_stats:timed_update(duration, F, [Connection], From)
         after
             return_connection(Connection, Context)
 	end.
@@ -400,13 +403,12 @@ update(Table, Id, Parameters, Context) ->
         UpdateProps1 = case proplists:is_defined(props, UpdateProps) of
             true ->
                 % Merge the new props with the props in the database
-                {ok, OldProps} = pgsql:equery1(C, "select props from \""++Table++"\" where id = $1", [Id]),
-                case is_list(OldProps) of
-                    true ->
+                case pgsql:equery1(C, "select props from \""++Table++"\" where id = $1", [Id]) of
+                    {ok, OldProps} when is_list(OldProps) ->
                         FReplace = fun ({P,_} = T, L) -> lists:keystore(P, 1, L, T) end,
                         NewProps = lists:foldl(FReplace, OldProps, proplists:get_value(props, UpdateProps)),
                         lists:keystore(props, 1, UpdateProps, {props, cleanup_props(NewProps)});
-                    false ->
+                    _ ->
                         UpdateProps
                 end;
             false ->

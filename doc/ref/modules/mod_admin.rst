@@ -61,7 +61,7 @@ This section contains examples of templates to create widgets for the
 from mod_admin. To write your own you need to drop example content and
 fill holes in these example widgets.
 
-You can use them as basis for your's site admin-related tasks.
+You can use them as basis for your site admin-related tasks.
 
 ``_admin_dashboard_example.tpl``
   Very simple example widget for admin dashboard. Contains blocks for title and body.
@@ -84,13 +84,13 @@ Making an admin widget conditionally visible
 .. highlight:: django
                
 To make an entire admin widget visible or not, depending on some
-condition that you want to calculate inside the widget's code, you can
+condition that you want to calculate inside the widget’s code, you can
 use the `widget_wrapper` block (which sits around the entire widget)
 in combination with the :ref:`tag-inherit` tag, wrapping that with a
 condition.
 
 For instance, :ref:`mod_backup` uses this technique to display the
-import/export sidebar widget. Excerpt from mod_backup's `_admin_edit_sidebar.tpl`::
+import/export sidebar widget. Excerpt from mod_backup’s `_admin_edit_sidebar.tpl`::
 
     {# Make the widget conditional, based on the config value mod_backup.admin_panel #}
     {% block widget_wrapper %}
@@ -111,7 +111,7 @@ properties (usually in the form of checkboxes) that decide what to
 show or hide on certain pages in the admin. To use this, create a
 ``_admin_features.category.tpl`` in your module.
 
-For instance, :ref:`mod_geodata` defines the following
+For instance, :ref:`mod_geomap` defines the following
 ``_admin_features.category.tpl`` to create an extra checkbox so that
 per category can be defined whether or not the geodata box should be
 shown::
@@ -133,4 +133,20 @@ And on the edit page there is this check to conditionally include the geodata bo
 The ``if_undefined`` is used so that the default value can be true
 when the checkbox has never been touched.
   
+
+Configuration keys
+------------------
+
+For the admin there are two configuration keys: ``mod_admin.rsc_dialog_tabs`` and ``mod_admin.rsc_dialog_is_published``.
+
+The ``mod_admin.rsc_dialog_tabs`` key defines which tabs are shown in the new resource, media-upload, and image-link dialogs.
+Per defauls these dialogs show all the possible tabs, with this configurarion key it is possible to change that.
+
+The tabs are: ``find,new,upload,url,embed,oembed,depiction``
+
+The ``depiction`` is used for the TinyMCE image-link dialog; it shows all media connected using the ``depiction`` predicate.
+
+The ``mod_admin.rsc_dialog_is_published`` defines the default *is_published* state for new resources being mad in the *new* tab.
+Setting this key to `1` will check the *is_published* checkbox.
+
 .. seealso:: :ref:`filter-if_undefined`
