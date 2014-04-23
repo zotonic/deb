@@ -1,4 +1,6 @@
 {% if inline %}
+	{% include "_survey_end.tpl" %}
+
 	<h2>{_ Results _}</h2>
 {% endif %}
 

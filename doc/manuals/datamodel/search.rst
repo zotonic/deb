@@ -12,7 +12,8 @@ You access the query model in the following way::
 
   {% for id in m.search[{query (options go here...) }] %}
 
-For instance, to select all news items, ordered by their modification date, newest first::
+For instance, to select all news items, ordered by their modification
+date, newest first::
 
   {% for id in m.search[{query cat='news' sort='-rsc.modified'}] %}
       {{ id }}
@@ -21,8 +22,8 @@ For instance, to select all news items, ordered by their modification date, newe
 Trying it out
 -------------
 
-Ofcourse you can create your own ``for``-loop in a template, but there
-are more easier ways to check out the inner workings of the
+Of course you can create your own ``for``-loop in a template, but
+there are easier ways to check out the inner workings of the
 query-model: through your browser.
 
 The query-model is exposed to the browser in (currently) 2 URLs: the
@@ -37,12 +38,14 @@ Get a feed of most recent documentation containing the word "filter"::
 
   http://zotonic.com/feed/search?cat=documentation&text=filter
 
-Note that ``mod_atom_feed`` automatically appends a sorting on
-last-modified date, something which ``api/search`` does not do.
+.. note::
+   
+   ``mod_atom_feed`` automatically sorts on last-modified date,
+   ``api/search`` doesn't.
 
 
 Query-model arguments
--------------------------
+---------------------
 
 **authoritative**
 
@@ -64,25 +67,55 @@ Query-model arguments
 
   ``cat_exclude='meta'``
 
+**id_exclude**
+
+  Filter resources to exclude the ones with the given ids.
+
+  ``id_exclude=123``
+
+**filter**
+
+  Filtering on columns.
+
+  ``filter=['pivot_title', 'Hello']``
+
+  In its most simple form, this does an 'equals' compare filter. The
+  "filter" keywords expects a list. If the list is two elements long,
+  we expect the first column to be the filter column name from the
+  database table, and the second column name to be the filter value.
+
+  ``filter=['numeric_value', `gt`, 10]``
+  
+  If the filter is a three-column list, the second column is the
+  operator. This must be an atom (surround it in backquotes!) and must
+  be one of the following: ``eq``, ``ne``, ``gt``, ``gte``, ``lt``,
+  ``lte``; or one of ``=``, ``<>``, ``>``, ``>=``, ``<``, ``<=``:
+
+  ``filter=['numeric_value', `>`, 10]``
+  
 **hassubject**
 
   Select all resources that have an outgoing connection to the given
-  page, which is specified by the argument (123 in the
-  example). Optionally, you can give the name of a predicate as second
-  argument, to specify that the connection should have this
-  predicate. Specifying this multiple times does an "or" of the conditions.
+  page, which is specified by the argument (the page id 123 in the
+  example, or the unique page name 'tag_gift'). Optionally, you can
+  pass the name of a predicate as the second argument, to specify that
+  the connection should have this predicate. Specifying this multiple
+  times does an "or" of the conditions.
 
   ``hassubject=123``
+  ``hassubject='tag_gift'``
   ``hassubject=[123,'author']``
 
 **hasobject**
 
   Like hassubject, but selects all pages that have an incoming
   connection to the given page, which is specified by the
-  argument. Optionally, you can give the name of a predicate as second
-  argument, to specify that the connection should have this predicate.
+  argument. Optionally, you can pass the name of a predicate as the
+  second argument, to specify that the connection should have this
+  predicate.
 
   ``hasobject=123``
+  ``hasobject='tag_gift'``
   ``hasobject=[123,'document']``
 
 **is_featured**
@@ -93,19 +126,23 @@ Query-model arguments
 
 **is_published**
 
-  Select published, unpublished or omit the publish check. Legal values are true,false or all.
+  Select published, unpublished or omit the publish check. Legal
+  values are true, false or all.
 
   ``is_published='all'``
 
 **is_public**
 
-  Filter on whether an item is publicly visible or not. Valid values are 'true', 'false', 'all'.
+  Filter on whether an item is publicly visible or not. Valid values
+  are 'true', 'false', 'all'.
 
   ``is_public='false'``
 
 **upcoming**
 
-Specifying 'upcoming' means that you only want to select things that have a start date which lies in the future. Like the name says, useful to select upcom  ing events.
+  Specifying 'upcoming' means that you only want to select things that
+  have a start date which lies in the future. Like the name says,
+  useful to select upcoming events.
 
   ``upcoming``
 
@@ -121,42 +158,57 @@ Specifying 'upcoming' means that you only want to select things that have a star
   - ``rsc.modified`` - date of last modification
   - ``rsc.pivot_date_start`` - the start date specified in the admin
   - ``rsc.pivot_date_end`` - the end date specified in the admin
-  - ``rsc.pivot_title`` - the title of the page. When making multilanguage sites, the behaviour of sorting on title is undefined.
+  - ``rsc.pivot_title`` - the title of the page. When making
+    multilingual sites, the behavior of sorting on title is undefined.
 
-  For all the sort fields, you will have to consult the Zotonic's data model. Example sorting on modification date, newest first:
+  For all the sort fields, you will have to consult Zotonic’s data
+  model. Example sorting on modification date, newest first:
 
   ``sort='-rsc.modified'``
 
 **custompivot**
 
-  Add a join on the given custom pivot table. The table is joined to the primary ``rsc`` table.
+  Add a join on the given custom pivot table. The table is joined to
+  the primary ``rsc`` table.
 
   ``custompivot=foo``
   (joins the ``pivot_foo`` table into the query)
 
+  The pivot tables are aliassed with a number in order of their
+  occurrence, with the first pivot table aliassed as ``pivot1``. This
+  allows you to do filtering on custom fields like this:
+
+  ``{query custompivot="pivotname" filter=["pivot1.fieldname", `=`, "hello"]}``
+
+
 **hasobjectpredicate**
 
-  Filter on all things which have any outgoing edge with given predicate.
+  Filter on all things which have any outgoing edge with the given
+  predicate.
 
   ``hasobjectpredicate='document'``
 
 **hassubjectpredicate**
 
-  Filter on all things which have any incoming edge with given predicate.
+  Filter on all things which have any incoming edge with the given
+  predicate.
 
-  ``hasobject='author'``
+  ``hassubjectpredicate='author'``
 
 **text**
 
-  Perform a fulltext search on the primary "rsc" table. The result will automatically be ordered on the relevancy (rank) of the result.
+  Perform a fulltext search on the primary "rsc" table. The result
+  will automatically be ordered on the relevancy (rank) of the result.
 
   ``text="test"``
 
 **query_id**
 
-  Load the query arguments from the saved ``query`` resource.
+  Load the query arguments from the saved ``query`` resource. 
 
   ``query_id=331``
+
+  .. seealso:: :ref:`manual-query-resources`
 
 **publication_month**
 
@@ -174,23 +226,51 @@ Specifying 'upcoming' means that you only want to select things that have a star
 
   Select items with a start date greater than given value
 
-  ``date_start_after="2010-01-01"``
+  ``date_start_after="2010-01-15"``
 
 **date_start_before**
 
   Select items with a start date smaller than given value
 
-  ``date_start_before="2010-01-01"``
+  ``date_start_before="2010-01-15"``
 
 **date_start_year**
 
-  Select items with a "event start date" in the given year.
+  Select items with an "event start date" in the given year.
 
   ``date_start_year=2012``
 
 **date_end_year**
 
-  Select items with a "event end date" in the given year.
+  Select items with an "event end date" in the given year.
 
   ``date_end_year=2012``
 
+
+Filter behaviour
+----------------
+
+All of the filters works as ``AND`` filter. The only exception to this
+is the ``cat=`` filter: if you specify multiple categories, those
+categories are "OR"'ed together, to allow to search in multiple
+distinct categories with a single search query.
+  
+
+
+.. _manual-query-resources:
+
+Query resources
+---------------
+
+Query resources are, as the name implies,
+:ref:`manual-datamodel-resources` of the special category `query`. In
+the admin this category is called "search query". it is basically a
+stored (and thus content manageable) search query. You create an
+editable search query in an admin page that then is invoked from a
+template.
+
+When creating such a resource in the page, you will see on the admin
+edit page an extra text field in which you can add search terms. Each
+search term goes on its own line, and the possible search terms are
+equal to the ones described on this page (the `Query-model
+arguments`).

@@ -10,7 +10,7 @@ page never existed or has been deleted.
 The user will be redirected to the ``logon`` URL when the current user
 is not allowed to view the page. 
 
-This controller also adds a ``noindex`` response header when the page's
+This controller also adds a ``noindex`` response header when the page’s
 “seo_noindex” flag is set.
 
 Example dispatch rule::
@@ -47,6 +47,9 @@ The following options can be given to the dispatch rule:
 +---------------------+-------------------------------------+------------------------+
 |template             |Name of the template to be           |{template, "about.tpl"} |
 |                     |rendered. Defaults to “page.tpl”     |                        |
+|                     |Can also be a tuple of the following |{template, {cat, "home. |
+|                     |form: `{cat, Name}`.                 |tpl"}}                  |
+|                     |See also: :ref:`tag-catinclude`.     |                        |
 +---------------------+-------------------------------------+------------------------+
 |cat                  |The category the resource that is    |{cat, text}             |
 |                     |requested has to be. If a page of a  |                        |
@@ -61,6 +64,12 @@ The following options can be given to the dispatch rule:
 +---------------------+-------------------------------------+------------------------+
 |acl                  |Extra authorization checks to be     |See `ACL options`_.     |
 |                     |performed.                           |                        |
++---------------------+-------------------------------------+------------------------+
+|is_canonical         |Whether this URL should be considered|{is_canonical, false}   |
+|                     |the caninical URL of the page. If so,|                        |
+|                     |the controller will redirect to the  |                        |
+|                     |sc's page path if set. Defaults to   |                        |
+|                     |true.                                |                        |
 +---------------------+-------------------------------------+------------------------+
 
 

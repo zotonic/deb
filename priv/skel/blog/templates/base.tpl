@@ -12,7 +12,7 @@
 		-->
 
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<meta name="author" content="YOUR NAME HERE &copy; 2012" />
+		<meta name="author" content="YOUR NAME HERE &copy; 2014" />
 
 		{% all include "_html_head.tpl" %}
 
@@ -66,7 +66,7 @@
 			<div class="row">
 				<div class="span12" id="footer">
 					<div class="pull-right">
-						<p class="footer-blog-title">{_ Website powered by _} <a href="http://zotonic.com">Zotonic</a> {{ m.config.zotonic.version.value }}.</p>
+						<p class="footer-blog-title">{% include "_powered_by_zotonic.tpl" %}</p>
 					</div>
 					{% menu id=id menu_id='footer_menu' %}
 				</div>

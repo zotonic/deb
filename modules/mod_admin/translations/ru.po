@@ -324,7 +324,7 @@ msgstr "Ошибка при закачивании файла."
 #: modules/mod_admin/templates/_admin_edit_content_date_range.tpl:12
 msgid ""
 "Every page can have a date range. For example if the page is an event or "
-"description of someone\\'s life."
+"description of someone’s life."
 msgstr ""
 "У каждой страницы может быть указан период. Например, если страница содержит "
 "событие или описание чьей-то жизни."
@@ -1015,7 +1015,7 @@ msgid "Visible till"
 msgstr "Видимо до"
 
 #: modules/mod_admin/templates/_action_dialog_edit_basics.tpl:58
-msgid "Visit full editpage"
+msgid "Visit full edit page"
 msgstr "Открыть страницу редактирования"
 
 #: modules/mod_admin/templates/_admin_edit_content_address.tpl:56

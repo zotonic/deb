@@ -35,17 +35,52 @@ resource_exists(ReqData, Context) ->
     ContextQs = z_context:ensure_qs(Context1),
     try
         Id = get_id(ContextQs),
-        case {m_rsc:exists(Id, ContextQs), z_context:get(cat, ContextQs)} of
-            {Exists, undefined} ->
-                ?WM_REPLY(Exists, ContextQs);
-            {true, Cat} ->
-                ?WM_REPLY(m_rsc:is_a(Id, Cat, ContextQs), ContextQs);
-            {false, _} ->
-                ?WM_REPLY(false, ContextQs)
-        end
+        maybe_redirect(m_rsc:p_no_acl(Id, page_path, ContextQs), Id, ContextQs)
     catch
         _:_ -> ?WM_REPLY(false, ContextQs)
     end.
+
+maybe_redirect(Empty, Id, Context) when Empty =:= <<>>; Empty =:= undefined ->
+    maybe_exists(Id, Context);
+maybe_redirect(PagePath, Id, Context) ->
+    case z_context:get(is_canonical, Context, true) of
+        false ->
+            maybe_exists(Id, Context);
+        true ->
+            %% Check if we need to be at a different URL. When the page
+            %% path of a resource is set, we need to redirect there if the
+            %% current request's path is not equal to the resource's path.
+            DispatchPath = z_context:get_q(zotonic_dispatch_path, Context),
+            DispatchBin = case DispatchPath of
+                              [] -> <<"/">>;
+                              _ -> z_convert:to_binary([[ $/, P ] || P <- DispatchPath ])
+                          end,
+            if
+                DispatchBin =:= PagePath ->
+                    maybe_exists(Id, Context);
+                true ->
+                    AbsUrl = m_rsc:p(Id, page_url_abs, Context),
+                    AbsUrlQs = append_qs(AbsUrl, wrq:req_qs(z_context:get_reqdata(Context))),
+                    ContextRedirect = z_context:set_resp_header("Location", AbsUrlQs, Context),
+                    ?WM_REPLY({halt, 301}, ContextRedirect)
+            end
+    end.
+
+append_qs(AbsUrl, []) ->
+    AbsUrl;
+append_qs(AbsUrl, Qs) ->
+    iolist_to_binary([AbsUrl, $?, mochiweb_util:urlencode(Qs)]).
+
+maybe_exists(Id, Context) ->
+    case {m_rsc:exists(Id, Context), z_context:get(cat, Context)} of
+        {Exists, undefined} ->
+            ?WM_REPLY(Exists, Context);
+        {true, Cat} ->
+            ?WM_REPLY(m_rsc:is_a(Id, Cat, Context), Context);
+        {false, _} ->
+            ?WM_REPLY(false, Context)
+    end.
+
 
 %% @doc Check if the resource used to exist
 previously_existed(ReqData, Context) ->
@@ -56,7 +91,6 @@ previously_existed(ReqData, Context) ->
                  _ -> false
              end,
     ?WM_REPLY(IsGone, Context1).
-
 
 %% @doc Check if the current user is allowed to view the resource. 
 is_authorized(ReqData, Context) ->

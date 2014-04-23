@@ -5,11 +5,10 @@
  {enabled, true},
 
  %% Hostname on which this site runs
- {hostname, "%%SITE%%:8000"},
+ {hostname, "%%SITEHOSTNAME%%:8000"},
 
  %% Aliases which should redirect to the primary hostname
- %%{hostalias, "www.example.com"},
- %%{hostalias, "example.com"},
+ %%{hostalias, ["www.example.com", "example.com"]},
 
  %% This site doesn't use a database connection
  {dbdatabase, none},

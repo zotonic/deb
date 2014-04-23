@@ -17,10 +17,6 @@ Andreas Stenius (21):
 * doc: renamed sidebar template to be more generic.
 * doc: update frontend-growl cookbook entry.
 * mod_admin: optionally include country options.
-* zotonic-tpl-mode: add test 10, to fix a regression.
-* zotonic-tpl-mode: add test 8.
-* zotonic-tpl-mode: add test 9.
-* zotonic-tpl-mode: add test routines.
 * zotonic-tpl-mode: add testsuite.
 * zotonic-tpl-mode: bind C-M-\ to zotonic-tpl-indent-buffer.
 * zotonic-tpl-mode: do not treat underscore as being part of a word.
@@ -31,16 +27,13 @@ Andreas Stenius (21):
 Arjan Scherpenisse (49):
 
 * Ensure iconv is started
-* New bert.erl submodule
 * New z_stdlib module
 * basesite skel: Add show_media filter to home template
 * build: Explicitly build lager first
 * controller_api: Fix throwing a 404 error when service module not is found
 * core: Fix use of hostname in startup / management scripts
 * core: Include the request hostname in a dispatch rewrite notification
-* core: Keep file extension when it is allowed for the file's mime type
-* deps: Update mimetypes submodule
-* deps: new gen_smtp
+* core: Keep file extension when it is allowed for the file’s mime type
 * doc: Add paragraph about multiple assignments to `with` tag docs
 * doc: Add some documentation about startup environment variables
 * doc: Document how to override TinyMCE options
@@ -51,7 +44,7 @@ Arjan Scherpenisse (49):
 * doc: Explain the make_list filter to force model evaluation
 * doc: Improve wording on replace filter
 * doc: show_media filter: correct the default value for media dimensions
-* mod_admin: Add button to run schema install from the site's module again
+* mod_admin: Add button to run schema install from the site’s module again
 * mod_admin: Add inlinepopups TinyMCE plugin.
 * mod_admin: Fix redirect to admin page when using admin logon form
 * mod_admin: Fix some errors in new rsc dialog
@@ -123,10 +116,6 @@ Marc Worrell (57):
 * core: show a stack trace when a periodic task crashes.
 * core: use z_context:abs_url/1 when redirecting to the main site url. Also make it a permanent redirect (301)
 * deps: add eiconv as git submodule.
-* deps: new ua_classifier lib
-* deps: new z_stdlib
-* deps: new z_stdlib
-* deps: new z_stdlib and new ua_classifier
 * doc: add google analytics code.
 * doc: added some missing smtp options
 * doc: fix in docs for split_in and vsplit_in filters.

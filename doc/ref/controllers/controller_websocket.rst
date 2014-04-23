@@ -27,8 +27,21 @@ It is also possible to configure a custom ``ws_handler`` by specifying it in a d
 
     {customws, ["socket", "custom"], controller_websocket, [{ws_handler, my_ws_handler}]}
 
+
+WebSocket Handler without Zotonic session
+-----------------------------------------
+
+By default, ``contorller_websocket`` requires the ``z_pid`` and ``z_sid`` cookies to be sent to the WebSocket request, so that the controller will verify that the calling party has already a running session on the Zotonic instance. It is possible to override this behaviour to not require a session to be present. This is done through the ``require_session`` dispatch option, which defaults to ``true``.
+
+To create a WebSocket controller without the caller needing to have a
+session running, create a dispatch rule like this::
+
+  {customws, ["socket", "without-session"], controller_websocket, [{require_session, false}]}
+  
+
+
 .. highlight:: erlang
-       
+               
 WebSocket Handler API
 ---------------------
 
@@ -39,21 +52,33 @@ Example::
 
   -module(my_ws_handler).
 
+  -export([websocket_init/1,
+           websocket_message/3,
+           websocket_info/2,
+           websocket_terminate/2]).
+  
   %% @doc Called when the websocket is initialized.
   websocket_init(_Context) ->
-      erlang:start_timer(1000, self(), <<"Hello!">>),
+      erlang:send_after(1000, self(), <<"Hello!">>),
       ok.
 
   %% @doc Called when a message arrives on the websocket.
-  websocket_message(Msg, Context) ->
-      controller_websocket:websocket_send_data(self(), ["You said: ", Msg]).
+  websocket_message(Msg, From, Context) ->
+      controller_websocket:websocket_send_data(From, ["You said: ", Msg]).
 
   %% @doc Called when another type of message arrives.
   websocket_info(Msg, _Context) ->
       controller_websocket:websocket_send_data(self(), Msg),
-      erlang:start_timer(5000, self(), <<"Hello again!">>).
+      erlang:send_after(5000, self(), <<"Hello again!">>).
 
   %% @doc Called when the websocket terminates.
   websocket_terminate(Reason, Context) ->
       ok.
 
+The websocket_init, websocket_info and websocket_terminate callbacks
+are called from within the controller’s receive loop, so to send a message
+to the websocket, you send it to ``self()``, as in the example above.
+
+The `websocket_message` function however gets a `From` argument passed
+to it because it is called from another process. To send a message to
+the socket, you need to send it to the `From` pid.

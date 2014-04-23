@@ -82,8 +82,15 @@ find_value(IsoAtom, Text, _Context) when is_atom(IsoAtom), is_binary(Text) ->
     end;
 
 %% JSON-decoded proplist structure
-find_value(Key, {obj, Props}, _Context) ->
+find_value(Key, {obj, Props}, _Context) when is_list(Props) ->
     proplists:get_value(z_convert:to_list(Key), Props);
+
+%% JSON-decoded proplist structure (mochiweb2)
+find_value(Key, {struct, Props}, _Context) when is_list(Props) ->
+    case proplists:get_value(z_convert:to_binary(Key), Props) of
+        null -> undefined;
+        V -> V
+    end;
 
 % Index of tuple with an integer like "a[2]"
 find_value(Key, T, _Context) when is_integer(Key) andalso is_tuple(T) ->
@@ -176,7 +183,7 @@ is_true(#rsc_list{list=[]}) -> false;
 is_true(#m_search_result{result=V}) -> is_true(V);
 is_true(#search_result{result=[]}) -> false;
 is_true(A) ->
-    z_convert:to_bool(A).
+    z_convert:to_bool_strict(A).
 
 init_counter_stats(List) ->
     init_counter_stats(List, undefined).

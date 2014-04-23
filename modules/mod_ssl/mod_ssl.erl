@@ -37,6 +37,7 @@
 	observe_module_activate/2,
 	pid_observe_dispatch_rules/4,
 	observe_cookie_options/3,
+	observe_url_abs/2,
 
 	cert_files/1,
 	check_certs/1
@@ -53,6 +54,24 @@ init(_Args) ->
 	{ok, {{one_for_one, 20, 10}, []}}.
 
 
+%% @doc Ensure that the right absolute url is returned when this is a 'secure' request.
+observe_url_abs(#url_abs{url=Url}, Context) ->
+	case is_ssl(Context) of
+		false -> undefined;
+		true ->
+			z_url:abs_link(Url, secure_base_url(Context))
+	end.
+
+secure_base_url(Context) ->
+	Base = case get_ssl_port(Context) of
+		{ok, 443} ->
+			[<<"https://">>, z_context:hostname(Context)];
+		{ok, Port} ->
+			[<<"https://">>, z_context:hostname(Context), $:, z_convert:to_list(Port)]
+	end,
+	iolist_to_binary(Base).
+
+
 %% @doc Ensure that all session and autologon cookies are set to 'secure' (ssl only).
 observe_cookie_options(#cookie_options{name=Name}, Options, Context) ->
 	case is_ssl(Context) andalso is_secure_cookie(Name) of
@@ -66,7 +85,10 @@ observe_cookie_options(#cookie_options{name=Name}, Options, Context) ->
 	end.
 
 is_ssl(Context) ->
-	wrq:is_ssl(z_context:get_reqdata(Context)).
+        case z_context:get_reqdata(Context) of
+                undefined -> false;
+                RD -> wrq:is_ssl(RD)
+        end.
 
 is_secure_cookie("z_sid") -> true;
 is_secure_cookie("z_logon") -> true;

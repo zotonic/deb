@@ -1,6 +1,7 @@
 %% @author Marc Worrell <marc@worrell.nl>
 %% @copyright 2009 Marc Worrell
-%% @doc Serve static library files (css and js).  Library files can be combined in one path, using z_lib_include:tag/2
+%% @doc Serve static library files (css and js).  Library files can be combined in one 
+%% path, using z_lib_include:tag/2
 %%
 %% Serves files like: /lib/some/path
 
@@ -27,13 +28,15 @@
 	 expires/2,
 	 content_types_provided/2,
 	 charsets_provided/2,
-	 encodings_provided/2,
+	 content_encodings_provided/2,
 	 provide_content/2,
 	 finish_request/2
 	 ]).
 
 -include_lib("controller_webmachine_helper.hrl").
 -include_lib("zotonic.hrl").
+
+-define(MAX_AGE, 315360000).
 
 %% These are used for file serving (move to metadata)
 -record(state, {
@@ -46,7 +49,9 @@
         path=undefined,
         mime=undefined,
         last_modified=undefined,
-        body=undefined
+        body=undefined,
+        dispatch_paths=undefined,
+        max_age=undefined
     }).
 
 -record(cache, {
@@ -57,13 +62,19 @@
     body=undefined
     }).
 
--define(MAX_AGE, 315360000).
+
 
 init(ConfigProps) ->
     UseCache = proplists:get_value(use_cache, ConfigProps, false),
     Root = proplists:get_value(root, ConfigProps, [lib]),
     ContentDisposition = proplists:get_value(content_disposition, ConfigProps),
-    {ok, #state{root=Root, use_cache=UseCache, content_disposition=ContentDisposition}}.
+    DispatchPaths = proplists:get_value(paths, ConfigProps, undefined),
+    MaxAge = proplists:get_value(max_age, ConfigProps, ?MAX_AGE),
+    {ok, #state{root=Root, 
+                use_cache=UseCache, 
+                dispatch_paths=DispatchPaths,
+                max_age=MaxAge,
+                content_disposition=ContentDisposition}}.
     
 allowed_methods(ReqData, State) ->
     {['HEAD', 'GET'], ReqData, State}.
@@ -72,21 +83,23 @@ content_types_provided(ReqData, State) ->
 	State1 = lookup_path(ReqData, State),
     case State1#state.mime of
         undefined ->
-            Path = mochiweb_util:unquote(wrq:disp_path(ReqData)),
+            Path = case State#state.dispatch_paths of
+                undefined ->
+                    mochiweb_util:unquote(wrq:disp_path(ReqData));
+                [FirstFile|_T] -> 
+                    FirstFile
+            end,
             CT = z_media_identify:guess_mime(Path),
             {[{CT, provide_content}], ReqData, State1#state{mime=CT}};
         Mime -> 
             {[{Mime, provide_content}], ReqData, State1}
     end.
 
-encodings_provided(ReqData, State) ->
+content_encodings_provided(ReqData, State) ->
     State1 = lookup_path(ReqData, State),
     Encodings = case z_media_identify:is_mime_compressed(State1#state.mime) of
-        true -> 
-            [{"identity", fun(Data) -> Data end}];
-        false -> 
-            [{"identity", fun(Data) -> decode_data(identity, Data) end},
-             {"gzip",     fun(Data) -> decode_data(gzip, Data) end}]
+        true -> ["identity"];
+        false -> ["identity", "gzip"]
     end,
     EncodeData = length(Encodings) > 1,
     {Encodings, ReqData, State1#state{encode_data=EncodeData}}.
@@ -102,13 +115,13 @@ resource_exists(ReqData, State) ->
 charsets_provided(ReqData, State) ->
 	State1 = lookup_path(ReqData, State),
     case is_text(State1#state.mime) of
-        true -> {[{"utf-8", fun(X) -> X end}], ReqData, State1};
+        true -> {["utf-8"], ReqData, State1};
         _ -> {no_charset, ReqData, State1}
     end.
     
 last_modified(ReqData, State) ->
 	State1 = lookup_path(ReqData, State),
-    RD1 = wrq:set_resp_header("Cache-Control", "public, max-age="++integer_to_list(?MAX_AGE), ReqData),
+    RD1 = wrq:set_resp_header("Cache-Control", "public, max-age="++integer_to_list(State#state.max_age), ReqData),
     case State1#state.last_modified of
         undefined -> 
             LMod = max_last_modified(State1#state.fullpaths, {{1970,1,1},{12,0,0}}),
@@ -129,9 +142,9 @@ last_modified(ReqData, State) ->
         end.
 
         
-expires(ReqData, State) ->
+expires(ReqData, #state{max_age=MaxAge}=State) ->
     NowSecs = calendar:datetime_to_gregorian_seconds(calendar:universal_time()),
-    {calendar:gregorian_seconds_to_datetime(NowSecs + ?MAX_AGE), ReqData, State}.
+    {calendar:gregorian_seconds_to_datetime(NowSecs + MaxAge), ReqData, State}.
 
 provide_content(ReqData, State) ->
 	State1 = lookup_path(ReqData, State),
@@ -143,10 +156,9 @@ provide_content(ReqData, State) ->
     {Content, State2} = case State1#state.body of
         undefined ->
             Data = [ read_data(F) || F <- State1#state.fullpaths ],
-            Data1 = case State1#state.mime of
-                "text/javascript" -> z_utils:combine([$;, $\n], Data);
-                "application/x-javascript" -> z_utils:combine([$;, $\n], Data);
-                _ -> z_utils:combine($\n, Data)
+            Data1 = case is_javascript(State1#state.mime) of
+                true -> z_utils:combine(<<";\n">>, Data);
+                false -> z_utils:combine($\n, Data)
             end,
             Body = case State1#state.encode_data of 
                 true -> encode_data(Data1);
@@ -156,13 +168,12 @@ provide_content(ReqData, State) ->
         Body -> 
             {Body, State1}
     end,
-    {Content, RD1, State2}.
+    {select_encoding(Content, RD1), RD1, State2}.
     
-    read_data(F) ->
-        {ok, Data} = file:read_file(F),
-        Data.
+read_data(F) ->
+    {ok, Data} = file:read_file(F),
+    Data.
     
-
 finish_request(ReqData, State) ->
     case State#state.is_cached of
         false ->
@@ -181,7 +192,7 @@ finish_request(ReqData, State) ->
                                         body=State#state.body
                                     },
                             Context = z_context:new(ReqData, ?MODULE),
-                            z_depcache:set(cache_key(State#state.path), Cache, Context),
+                            z_depcache:set(cache_key(State#state.path), Cache, 3600, [module_index], Context),
                             {ok, ReqData, State};
                         _ ->
                             % No cache or no gzip'ed version (file system cache is fast enough for image serving)
@@ -235,23 +246,26 @@ file_exists1([DirName|T], RelName, Context) ->
 %% @spec is_text(Mime) -> bool()
 %% @doc Check if a mime type is textual
 is_text("text/" ++ _) -> true;
+is_text("application/javascript") -> true;
 is_text("application/x-javascript") -> true;
 is_text("application/xhtml+xml") -> true;
 is_text("application/xml") -> true;
 is_text(_Mime) -> false.
 
-
-
+%% @spec is_javascript(Mime) -> bool()
+%% @doc Check if the mime-type is javascript.
+is_javascript("application/javascript") -> true;
+is_javascript("application/x-javascript") -> true;
+is_javascript("text/javascript") -> true;
+is_javascript(_) -> false.
+ 
+%% @doc Lookup all files which we must concatenate.
 lookup_path(ReqData, State = #state{path=undefined}) ->
     Context = z_context:new(ReqData, ?MODULE),
-    Path   = mochiweb_util:unquote(wrq:disp_path(ReqData)),
-    Cached = case State#state.use_cache of
-        true -> z_depcache:get(cache_key(Path), Context);
-        _    -> undefined
-    end,
-    case Cached of
+    Path = get_path(ReqData, State),
+    case get_cached(Path, State#state.use_cache, Context) of
         undefined ->
-            Paths = z_lib_include:uncollapse(Path),
+            Paths = get_paths(Path),
             FullPaths = [ file_exists(State, P, Context) || P <- Paths ],
             FullPaths1 = [ P || {true, P} <- FullPaths ], 
             case FullPaths1 of
@@ -271,7 +285,27 @@ lookup_path(ReqData, State = #state{path=undefined}) ->
 lookup_path(_ReqData, State) ->
 	State.
 
+% @doc Get the cached information.
+get_cached(Path, true, Context) ->
+    z_depcache:get(cache_key(Path), Context);
+get_cached(_Path, false, _Context) ->
+    undefined.
 
+% @doc get the path, a representation of the names of the files
+% which must be included.
+get_path(ReqData, #state{dispatch_paths=undefined}) ->
+    mochiweb_util:unquote(wrq:disp_path(ReqData));
+get_path(_ReqData, #state{dispatch_paths=DispatchPaths}) ->
+    {dispatch_paths, DispatchPaths}.
+
+% @doc get a list with path names.
+get_paths({dispatch_paths, DispatchPaths}) ->
+    DispatchPaths;
+get_paths(Path) ->
+    z_lib_include:uncollapse(Path).
+
+select_encoding(Data, ReqData) ->
+    decode_data(wrq:resp_content_encoding(ReqData), Data).
 
 %% Encode the data so that the identity variant comes first and then the gzip'ed variant
 encode_data(Data) when is_list(Data) ->
@@ -279,7 +313,11 @@ encode_data(Data) when is_list(Data) ->
 encode_data(Data) when is_binary(Data) ->
     {Data, zlib:gzip(Data)}.
 
-decode_data(identity, {Data, _Gzip}) ->
+decode_data("identity", {Data, _Gzip}) ->
 	Data;
-decode_data(gzip, {_Data, Gzip}) ->
-	Gzip.
+decode_data("identity", Data) ->
+    Data;
+decode_data("gzip", {_Data, Gzip}) ->
+	Gzip;
+decode_data("gzip", Data) ->
+    zlib:gzip(Data).

@@ -38,6 +38,8 @@ start_link(Host) ->
 %% @spec init(Host) -> SupervisorTree
 %% @doc Supervisor callback, returns the supervisor tree for a zotonic site
 init(Host) ->
+    ok = z_stats:init_site(Host),
+
     % On (re)start we use the newest site config.
     SiteProps = z_sites_manager:get_site_config(Host),
 
@@ -54,8 +56,9 @@ init(Host) ->
                 permanent, 5000, worker, dynamic},
 
     % The installer needs the database pool, depcache and translation.
+    InstallerModule = proplists:get_value(installer, SiteProps, z_installer),
     Installer = {z_installer,
-                {z_installer, start_link, [SiteProps]},
+                {InstallerModule, start_link, [SiteProps]},
                 permanent, 1, worker, dynamic},
 
     % Continue with the normal per-site servers
@@ -83,6 +86,10 @@ init(Host) ->
                 {z_pivot_rsc, start_link, [SiteProps]}, 
                 permanent, 5000, worker, dynamic},
 
+    MediaCleanup = {z_media_cleanup_server,
+                {z_media_cleanup_server, start_link, [SiteProps]}, 
+                permanent, 5000, worker, dynamic},
+
     ModuleIndexer = {z_module_indexer,
                 {z_module_indexer, start_link, [SiteProps]},
                 permanent, 5000, worker, dynamic},
@@ -97,7 +104,7 @@ init(Host) ->
 
     Processes = [
             Notifier, Depcache, Translation, Installer, Session, 
-            Dispatcher, Template, MediaClass, DropBox, Pivot,
+            Dispatcher, Template, MediaClass, DropBox, Pivot, MediaCleanup,
             ModuleIndexer, Modules,
             PostStartup
     ],

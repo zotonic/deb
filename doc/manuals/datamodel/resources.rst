@@ -3,6 +3,99 @@
 Resources
 ---------
 
+Resources are the main building block of Zotonic's :ref:`data model
+<manual-datamodel>`. For simplicity of communication, a resource is
+often referred to as a page. Every resource usually has its own page
+on the web site.
+
+Common resource properties
+..........................
+
+Resources are very flexible data units: they can have any property
+that the developer needs them to have. However, by default, Zotonic's
+admin is designed to edit a common set of properties.
+
+The following properties are common to all resources:
+
+``id``
+  Each resource has an id. This is the unique number identifying the resource within the Zotonic site.
+
+``title``
+  The main title of a resource. 
+
+``summary``
+  A short summary. Can not contain HTML, just plain text.  
+
+``short_title``
+  A short version of the title, for use in menu navigation and other places where an abbreviated title is required.  
+
+``is_featured``
+  A boolean flag indicating whether the resource is "featured". Can be used in galleries or to highlight certain items on a site.
+
+``is_published``
+  The resource's published state dictates whether or not the resource is visible to the general public.
+
+``publication_start`` / ``publication_end``
+  Publication start and end times of the resource. Together with `is_published`, these properties define the resource's published status. 
+
+``modified``  
+  Timestamp of last modification (in local time)
+
+``modifier_id``
+  id of the person who last modified this resource  
+
+``name``
+  The resource's `unique name`. A unique name is used to uniquely identify a resource in the site. There can be just one resource with the same name. On places where one would normally use a resource ID, it is also possible to use the resource's unique name.
+  
+``page_path``
+  This property can be used to override the resource's page URL. The page_path needs to be unique among all resources.
+
+``slug``
+  The slug component that can be used in the resource's page URL. This is normally automatically derived from the resource title.
+
+``version``
+  Every time a resource is updated, its version is increased. `version` is an increasing number, starting at 1. A resource itself does not maintain its version history, but the :ref:`mod_backup` module can record changes in resources.
+
+``visible_for``
+  Access check on the resource. 0 = world, 1 = logged in users, 2 = groups. Level 2 (groups) is a legacy setting and is not implemented.
+
+``name_first``, ``name_middle``, ``name_surname_prefix``, ``name_surname``
+  For a modelling persons as resources, these fields are used for given names.
+
+``email``, ``website``
+  Self-explanatory
+
+``address_state``, ``address_postcode``, ``address_city``, ``address_street_1``, ``address_street_2``, ``address_country``
+  Properties for the primary address of the resource, if any
+
+``mail_state``, ``mail_postcode``, ``mail_city``, ``mail_street_1``, ``mail_street_2``, ``mail_country``
+  Properties for the mailing address of the resource, if any
+
+``phone``, ``phone_mobile``, ``phone_alt``, ``phone_emergency``
+  Phone numbers for a person.
+
+``blocks``
+  These hold a list of all the `blocks` that are added to the resource, see the section below for more information about blocks.
+
+``seo_desc``
+  SEO description for the web page of the source. This text usually goes into the meta `description` tag.
+
+``seo_keywords``
+  SEO keywords for the web page of the source. This text usually goes into the meta `keywords` tag.
+
+``seo_title``
+  An alternative title for the `title` tag of the web page of the resource, for SEO purposes.
+
+``seo_noindex``
+  A boolean flag that, if set, sets the robots `noindex` meta-tag in the web page of the resource so that the resource is excluded from indexing by search engines.
+
+Besides this list, one can add any other properties to a resource, as
+they are stored in a serialized fashion.
+
+  
+How resources are stored
+........................
+
 Each :term:`resource` on a site is stored in the ``rsc`` table.  Some
 properties are present as columns and other properties are serialized
 in a binary blob column. The properties having their own column are
@@ -15,7 +108,7 @@ id, version number, unique name, unique path, unique uri and
 publication period. For a full listing of its properties, see the
 :ref:`model-rsc` page.
 
-Resource properties can also be customly defined: any property that is
+Custom resource properties can also be defined: any property that is
 programmatically set on the resource, is stored in serialized form in
 the record, and can later be retrieved.
 
@@ -34,8 +127,8 @@ news item, a video or something else. The only difference is the
 categories and predicates themselves are represented as rsc records
 and can, subsequently, have their own page on the web site.
 
-Categories are organised in a hierarchical fashion, and is used to
-organise the resources into meaningful groups. Zotonic has a standard
+Categories are organized in a hierarchical fashion, and used to
+organize the resources into meaningful groups. Zotonic has a standard
 set of categories (see :ref:`manual-datamodel-domainmodel`, but it is
 very usual to define your own in your own site, resulting in a custom
 :term:`domain model`.
@@ -46,8 +139,8 @@ In the database, categories are stored in an extra metadata table,
 <http://en.wikipedia.org/wiki/Nested_set_model>`_. The tree is
 strictly hierarchical: Every category has at most a single parent
 category, and every resource belongs to exactly one category.  That a
-resource can't belong to more than a single category is done to
-maintain the datamodel's simplicity and speed of the searches in the
+resource can’t belong to more than a single category is done to
+maintain the datamodel’s simplicity and speed of the searches in the
 system.
 
 Since in Zotonic, `everything is a resource`, categories `themselves`
@@ -141,10 +234,10 @@ in the background.
 Identities
 ..........
 
-A rsc record can become an user by adding the user's credentials to
+A rsc record can become a user by adding the user’s credentials to
 this table. A single user can have multiple kinds of credentials,
-think of his/her username, openid uri etc. A user doesn't necessarily
-be a person.
+think of his/her username, openid uri etc. A user isn't necessarily a
+person.
 
 .. seealso:: :ref:`model-identity`.
 
@@ -152,8 +245,8 @@ be a person.
 Deleted resources
 .................
 
-Whenever a resource is deleted, an entry is added to the ``rsc_gone`` table.
-The page and id controllers will server a *410 Gone* when a deleted resource
-is requested.
+Whenever a resource is deleted, an entry is added to the ``rsc_gone``
+table.  The page and id controllers will serve a *410 Gone* when a
+deleted resource is requested.
 
 .. seealso:: :ref:`model-rsc_gone`.

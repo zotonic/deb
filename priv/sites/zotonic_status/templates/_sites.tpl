@@ -49,7 +49,13 @@
 	    class="flush btn btn-mini" 
 	    title=_"Flush and reload all settings, templates etc." 
 	    postback={site_flush site=name} %}
-	    
+
+        {% button 
+            text=_"admin"
+            class="admin btn btn-mini" 
+            title=_"Visit the admin page for this site." 
+            postback={site_admin site=name} %}
+
 	    {% all include "_z_status_button.tpl" %}
 	</td>
 	{% endif %}

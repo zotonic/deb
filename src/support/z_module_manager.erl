@@ -51,7 +51,10 @@
     dependencies/1,
     startable/2,
     module_exists/1,
-    title/1
+    title/1,
+    add_observers/3,
+    remove_observers/3,
+    reinstall/2
 ]).
 
 -include_lib("zotonic.hrl").
@@ -79,12 +82,14 @@ start_link(SiteProps) ->
 %% @spec upgrade(#context{}) -> ok
 %% @doc Reload the list of all modules, add processes if necessary.
 upgrade(Context) ->
+    flush(Context),
     gen_server:cast(name(Context), upgrade).
 
 
 %% @doc Deactivate a module. The module is marked as deactivated and stopped when it was running.
 %% @spec deactivate(Module, #context{}) -> ok
 deactivate(Module, Context) ->
+    flush(Context),
     case z_db:q("update module set is_active = false, modified = now() where name = $1", [Module], Context) of
         1 -> upgrade(Context);
         0 -> ok
@@ -95,6 +100,7 @@ deactivate(Module, Context) ->
 %% The module manager can be checked later to see if the module started or not.
 %% @spec activate(Module, #context{}) -> void()
 activate(Module, Context) ->
+    flush(Context),
     Scanned = scan(Context),
     {Module, _Dirname} = proplists:lookup(Module, Scanned),
     F = fun(Ctx) ->
@@ -118,8 +124,11 @@ restart(Module, Context) ->
 active(Context) ->
     case z_db:has_connection(Context) of
         true ->
-            Modules = z_db:q("select name from module where is_active = true order by name", Context),
-            [ z_convert:to_atom(M) || {M} <- Modules ];
+            F = fun() -> 
+                Modules = z_db:q("select name from module where is_active = true order by name", Context),
+                [ z_convert:to_atom(M) || {M} <- Modules ]
+            end,
+            z_depcache:memo(F, {?MODULE, active, Context#context.host}, Context);
         false ->
             case m_site:get(modules, Context) of
                 L when is_list(L) -> L;
@@ -274,6 +283,15 @@ startable(Module, Dependencies) when is_list(Dependencies) ->
         false ->
             {error, not_found}
     end.
+
+
+get_start_error_reason({error, not_found}) ->
+    "Module not found";
+get_start_error_reason({error, {missing_dependencies, Missing}}) ->
+    "Missing dependencies: " ++ binary_to_list(iolist_to_binary(io_lib:format("~p", [Missing])));
+get_start_error_reason({error, could_not_derive_dependencies}) ->
+    "Could not derive dependencies".
+
 
 
 
@@ -437,6 +455,8 @@ name(Context) ->
 name(Module, #context{host=Host}) ->
     z_utils:name_for_host(Module, Host).
 
+flush(Context) ->
+    z_depcache:flush({?MODULE, active, Context#context.host}, Context).
 
 handle_upgrade(#state{context=Context, sup=ModuleSup} = State) ->
     ValidModules = valid_modules(Context),
@@ -485,12 +505,12 @@ handle_start_next(#state{context=Context, sup=ModuleSup, start_queue=Starting} =
     case lists:filter(fun(M) -> is_startable(M, Provided) end, Starting) of
         [] ->
             [
-                ?ERROR("[~p] Error starting module ~p: ~p~n", 
-                        [ z_context:site(Context), 
-                          M, 
-                          startable(M, Provided)
-                        ])
-                || M <- Starting
+             begin
+                 StartErrorReason = get_start_error_reason(startable(M, Provided)),
+                 Msg = iolist_to_binary(io_lib:format("Could not start ~p: ~s", [M, StartErrorReason])),
+                 z_session_manager:broadcast(#broadcast{type="error", message=Msg, title="Module manager", stay=false}, z_acl:sudo(Context)),
+                 lager:error("[~p] ~s", [z_context:site(Context), Msg])
+             end || M <- Starting
             ],
             
             % Add non-started modules to the list with errors.
@@ -753,3 +773,21 @@ observes(Module, Pid) ->
     observes(Module, Pid, [_|Rest], Acc) -> 
         observes(Module, Pid, Rest, Acc).
 
+
+
+%% @doc Reinstall the given module's schema, calling
+%% Module:manage_schema(install, Context); if that function exists.
+reinstall(Module, Context) ->
+    case proplists:get_value(manage_schema, erlang:get_module_info(Module, exports)) of
+        undefined ->
+            %% nothing to do, no manage_schema
+            nop;
+        2 ->
+            %% has manage_schema/2
+            case Module:manage_schema(install, Context) of
+                D=#datamodel{} ->
+                    ok = z_datamodel:manage(Module, D, Context);
+                ok -> ok
+            end,
+            ok = z_db:flush(Context)
+    end.

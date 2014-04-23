@@ -41,7 +41,7 @@
     pid_observe_development_make/3,
     file_changed/2,
     observe_admin_menu/3,
-
+    observe_module_activate/2,
     % internal (for spawn)
     page_debug_stream/3,
     page_debug_stream_loop/3
@@ -84,6 +84,15 @@ debug_stream(TargetId, What, Context) ->
 observe_debug_stream(#debug_stream{target=TargetId, what=What}, Context) ->
     start_debug_stream(TargetId, What, Context).
 
+%% @doc When activating a module while developing, call Module:manage_schema(install, Context).
+observe_module_activate(#module_activate{module=Module}, Context) ->
+    case z_module_manager:reinstall(Module, Context) of
+        ok ->
+            lager:warning("Reinstalled module: ~p", [Module]);
+        nop ->
+            nop
+    end.
+
 pid_observe_development_reload(Pid, development_reload, _Context) ->
     gen_server:cast(Pid, development_reload).
 
@@ -115,16 +124,15 @@ file_blacklisted(F) ->
 
 %% @doc Recompile Erlang files on the fly
 handle_file(_Verb, ".erl", F) ->
-    spawn(fun() ->
-                  make:files([F], [load,
-                                   {i, "include"},
-                                   {i, "src/dbdrivers/postgresql/include"},
-                                   {i, "deps/webzmachine/include"},
-                                   {outdir, "ebin"},
-                                   {parse_transform, lager_transform}
-                                  ])
-          end),
-    "Recompile " ++ F;
+    spawn(fun() -> recompile_file(F) end),
+    Libdir = z_utils:lib_dir(),
+    L = length(Libdir),
+    F2 = case string:substr(F, 1, L) of
+             Libdir ->
+                 string:substr(F, L+2);
+             _ -> F
+         end,
+    "Recompile " ++ F2;
 
 %% @doc SCSS / SASS files from lib/scss -> lib/css
 handle_file(_Verb, ".sass", F) ->
@@ -166,7 +174,7 @@ handle_file(_Verb, ".coffee", F) ->
 
 %% @doc Flush 
 handle_file(_Verb, ".tpl", F) ->
-    case re:run(F, "/sites/(.*?)/templates/(.*)", [{capture, all_but_first, list}]) of
+    case re:run(F, "/sites/([^/]+).*?/templates/(.*)", [{capture, all_but_first, list}]) of
         nomatch ->
             %% Flush the cache when a new zotonic-wide .tpl file is used
             case re:run(F, ".*?/templates/(.*)", [{capture, all_but_first, list}]) of
@@ -187,6 +195,7 @@ handle_file(_Verb, ".tpl", F) ->
             case z_template:find_template(TemplateFile, C) of
                 {ok, _} -> undefined;
                 {error, _} ->
+                    z_notifier:notify(module_ready, C),
                     z_depcache:flush(C),
                     "Flushed cache of " ++ Site ++ " due to new template, " ++ TemplateFile
             end
@@ -328,3 +337,36 @@ observe_admin_menu(admin_menu, Acc, Context) ->
      
      |Acc].
 
+
+%% @doc Recompile and reload an Erlang file.
+recompile_file(File) ->
+    Module = list_to_atom(filename:basename(File, ".erl")),
+
+    do_observe_fun(Module, fun z_module_manager:remove_observers/3),
+    
+    make:files([File], [load,
+                     {i, "include"},
+                     {i, "src/dbdrivers/postgresql/include"},
+                     {i, "deps/webzmachine/include"},
+                     {outdir, "ebin"},
+                     {parse_transform, lager_transform}
+                    ]),
+    do_observe_fun(Module, fun z_module_manager:add_observers/3).
+
+
+%% @doc Given an Erlang module that is being recompiled, adds or
+%% remove the 'magic' module observers if the erlang module is also a
+%% Zotonic module.
+do_observe_fun(Module, F) ->
+    Contexts = [z:c(Site) || [Site, State |_] <- z_sites_manager:get_sites_status(), State =:= running],
+    lists:foreach(
+      fun(C) ->
+              case z_module_manager:whereis(Module, C) of
+                  {ok, Pid} ->
+                      F(Module, Pid, C),
+                      z_depcache:flush(C);
+                  {error, _} ->
+                      nop
+              end
+      end,
+      Contexts).

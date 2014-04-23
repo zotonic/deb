@@ -330,7 +330,7 @@ msgstr ""
 #: modules/mod_admin/templates/_admin_edit_content_date_range.tpl:12
 msgid ""
 "Every page can have a date range. For example if the page is an event or "
-"description of someone\\'s life."
+"description of someone’s life."
 msgstr ""
 "Für jede Seite kann ein Zeitraum angegeben werden. Zum Beispiel eine Seite "
 "über eine Veranstaltung oder jemandes Leben"
@@ -600,12 +600,12 @@ msgstr "Benötigen Sie weitere Hilfe?"
 #: modules/mod_admin/templates/_action_dialog_connect.tpl:21
 #, fuzzy
 msgid "New Page"
-msgstr "Seiten"
+msgstr "Neue Seite"
 
 #: modules/mod_admin/templates/_action_dialog_new_rsc.tpl:3
 #, fuzzy
 msgid "New page"
-msgstr "Die Seite"
+msgstr "Neue Seite"
 
 #: modules/mod_admin/templates/_admin_edit_content_publish.tpl:52
 msgid "Next in category: "
@@ -825,7 +825,7 @@ msgstr "Bundesland"
 #: modules/mod_admin/mod_admin.erl:124
 #, fuzzy
 msgid "Status"
-msgstr "Bundesland"
+msgstr "Status"
 
 #: modules/mod_admin/templates/_admin_edit_content_address.tpl:81
 #: modules/mod_admin/templates/_admin_edit_content_address.tpl:146
@@ -1005,7 +1005,7 @@ msgid "Visible till"
 msgstr "Sichtbar bis"
 
 #: modules/mod_admin/templates/_action_dialog_edit_basics.tpl:58
-msgid "Visit full editpage"
+msgid "Visit full edit page"
 msgstr "Vollständige Editierseite aufrufen"
 
 #: modules/mod_admin/templates/_admin_edit_content_address.tpl:56

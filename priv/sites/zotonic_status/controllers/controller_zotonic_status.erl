@@ -52,20 +52,30 @@ provide_content(ReqData, Context) ->
     Context1 = ?WM_REQ(ReqData, Context),
     Context2 = z_context:ensure_all(Context1),
 
-    Template = case z_acl:user(Context2) of
-                   undefined -> "logon.tpl";
-                   _ -> z_context:get(template, Context2)
-               end,
+    case z_acl:user(Context2) of
+        undefined -> 
+            logon_page(Context2);
+        _ -> 
+            status_page(Context2)
+    end.
+
+logon_page(Context) ->
+    Rendered = z_template:render("logon.tpl", z_context:get_all(Context), Context),
+    {Output, OutputContext} = z_context:output(Rendered, Context),
+    ?WM_REPLY(Output, OutputContext).
+
+status_page(Context) ->
+    Template = z_context:get(template, Context),
     SitesStatus = z_sites_manager:get_sites_status(),
     Vars = [
-        {has_user, z_acl:user(Context2)},
+        {has_user, z_acl:user(Context)},
         {configs, [ {Site, z_sites_manager:get_site_config(Site)} || Site <- z_sites_manager:get_sites_all(), Site /= zotonic_status ]},
         {sites, SitesStatus}
-        | z_context:get_all(Context2)
+        | z_context:get_all(Context)
     ],
     Vars1 = z_notifier:foldl(zotonic_status_init, Vars, Context),
-    Rendered = z_template:render(Template, Vars1, Context2),
-    {Output, OutputContext} = z_context:output(Rendered, Context2),
+    Rendered = z_template:render(Template, Vars1, Context),
+    {Output, OutputContext} = z_context:output(Rendered, Context),
     start_stream(SitesStatus, OutputContext),
     ?WM_REPLY(Output, OutputContext).
 
@@ -89,19 +99,32 @@ event(#postback{message={logoff, []}}, Context) ->
 event(#postback{message={site_start, [{site, Site}]}}, Context) ->
     true = z_auth:is_auth(Context),
     z_sites_manager:start(Site),
-    Context;
+    notice(Site, "Successfully started.", Context);
 event(#postback{message={site_restart, [{site, Site}]}}, Context) ->
     true = z_auth:is_auth(Context),
     z_sites_manager:restart(Site),
-    Context;
+    notice(Site, "Successfully restarted.", Context);
 event(#postback{message={site_stop, [{site, Site}]}}, Context) ->
     true = z_auth:is_auth(Context),
     z_sites_manager:stop(Site),
-    Context;
+    notice(Site, "Successfully stopped.", Context);
 event(#postback{message={site_flush, [{site, Site}]}}, Context) ->
     true = z_auth:is_auth(Context),
     z:flush(z_context:new(Site)),
-    Context.
+    notice(Site, "The cache is flushed and all dispatch rules are reloaded.", Context);
+event(#postback{message={site_admin, [{site,Site}]}}, Context) ->
+    try
+        SiteContext = z_context:new(Site),
+        case z_dispatcher:url_for(admin, SiteContext) of
+            undefined ->
+                z_render:growl_error("This site does not have an admin url.", Context);
+            U -> 
+                Url = z_dispatcher:abs_url(U, SiteContext),
+                z_render:wire({redirect, [{location,Url}]}, Context)
+        end
+    catch
+        _:_ -> z_render:growl_error("Could not fetch the admin url, the site might not be running.", Context) 
+    end.
 
 
 %% -----------------------------------------------------------------------------------------------
@@ -137,4 +160,5 @@ render_update(SitesStatus, Context) ->
     Context1 = z_render:update("sites", #render{template="_sites.tpl", vars=Vars1}, Context),
     z_session_page:add_script(Context1).
     
-
+notice(SiteName, Text, Context) ->
+     mod_zotonic_status_vcs:notice(SiteName, Text, Context).

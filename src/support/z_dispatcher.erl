@@ -194,7 +194,7 @@ init(SiteProps) ->
     {hostname, Hostname} = proplists:lookup(hostname, SiteProps),
     Streamhost = proplists:get_value(streamhost, SiteProps),
     Smtphost = proplists:get_value(smtphost, SiteProps),
-    HostAlias = proplists:get_all_values(hostalias, SiteProps),
+    HostAlias = proplists:get_value(hostalias, SiteProps, []),
     Context = z_context:new(Host),
     process_flag(trap_exit, true),
     State  = #state{
@@ -218,8 +218,10 @@ drop_port(undefined) ->
     undefined;
 drop_port(none) ->
     undefined;
+drop_port(Hostname) when is_list(Hostname) ->
+    hd(string:tokens(Hostname, ":"));
 drop_port(Hostname) ->
-    hd(string:tokens(Hostname, ":")).
+    drop_port(z_convert:to_list(Hostname)).
 
 
 %% @spec handle_call(Request, From, State) -> {reply, Reply, State} |

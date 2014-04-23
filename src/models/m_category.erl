@@ -45,6 +45,8 @@
     name_to_id/2,
     name_to_id_check/2,
     id_to_name/2,
+    foreach/3,
+    fold/4,
     move/2,
     move_below/3,
     move_end/2,
@@ -99,6 +101,8 @@ m_find_value(tree2, #m{value={cat, Id}}, Context) ->
     tree_depth(Id, 2, Context);
 m_find_value(path, #m{value={cat, Id}}, Context) ->
     get_path(Id, Context);
+m_find_value(is_a, #m{value={cat, Id}}, Context) ->
+    is_a(Id, Context);
 m_find_value(image, #m{value={cat, Id}}, Context) ->
     image(Id, Context);
 m_find_value(all_flat, #m{value={cat, Id}}, Context) ->
@@ -245,6 +249,39 @@ id_to_name(Id, Context) when is_integer(Id) ->
     end,
     z_depcache:memo(F, {category_id_to_name, Id}, ?WEEK, [category], Context).
 
+
+
+%% @doc Perform a function on all resource ids in a category. Order of the ids is unspecified.
+-spec foreach(Category::integer()|atom(), function(), #context{}) -> ok | {error, term()}.
+foreach(Category, F, Context) ->
+    case name_to_id(Category, Context) of
+        {ok, Id} ->
+            {From,To} = get_range(Id, Context),
+            Ids = z_db:q("select id from rsc where pivot_category_nr >= $1 and pivot_category_nr <= $2", [From,To], Context),
+            lists:foreach(fun({RscId}) ->
+                              F(RscId, Context)
+                          end,
+                          Ids),
+            ok;
+        {error, _} = Error ->
+            Error
+    end.
+
+%% @doc Perform a function on all resource ids in a category. Order of the ids is unspecified.
+-spec fold(Category::integer()|atom(), function(), term(), #context{}) -> term() | {error, term()}.
+fold(Category, F, Acc0, Context) ->
+    case name_to_id(Category, Context) of
+        {ok, Id} ->
+            {From,To} = get_range(Id, Context),
+            Ids = z_db:q("select id from rsc where pivot_category_nr >= $1 and pivot_category_nr <= $2", [From,To], Context),
+            lists:foldl(fun({RscId}, Acc) ->
+                              F(RscId, Acc, Context)
+                        end,
+                        Acc0,
+                        Ids);
+        {error, _} = Error ->
+            Error
+    end.
 
 %% @doc Return the last modification date of the category. Returns false
 %% @spec last_modified(Cat::term(), Context) -> {ok, {{Y,M,D},{Hour,Min,Sec}}} | {error, Reason}
