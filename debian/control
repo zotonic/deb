@@ -9,7 +9,7 @@ Vcs-Git: git://github.com/zotonic/zotonic.git
 
 Package: zotonic
 Architecture: all
-Depends: build-essential, bash, adduser, ${erlang:Depends},
+Depends: build-essential, git, bash, adduser, ${erlang:Depends},
  ${erlang-abi:Depends}, ${misc:Depends}, ${shlibs:Depends},
  imagemagick, erlang-nox, erlang-dev, postgresql, python, openssl
 Description: distributed, fault-tolerant CMS and web framework
