@@ -1,11 +1,11 @@
 /* Zotonic basic Javascript library
 ----------------------------------------------------------
 
-@package:	Zotonic 2009
-@Author:	Tim Benniks <tim@timbenniks.nl>
-@Author:	Marc Worrell <marc@worrell.nl>
+@package:   Zotonic 2009
+@Author:    Tim Benniks <tim@timbenniks.nl>
+@Author:    Marc Worrell <marc@worrell.nl>
 
-Copyright 2009-2013 Tim Benniks, Marc Worrell
+Copyright 2009-2014 Tim Benniks, Marc Worrell
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,34 +23,92 @@ Based on nitrogen.js which is copyright 2008-2009 Rusty Klophaus
 
 ---------------------------------------------------------- */
 
-var z_ws					= false;
+// Client state
+var z_language              = "en";
+var z_ua                    = "desktop";
+var z_pageid                = '';
+var z_userid;
+var z_editor;
+
+// Session state
+var z_session_valid         = false;
+var z_session_restart_count = 0;
+
+// Transport to/from server
+var z_ws                    = false;
 var z_ws_pong_count         = 0;
 var z_ws_ping_timeout;
 var z_stream_host;
+var z_stream_starter;
+var z_stream_start_timeout;
 var z_websocket_host;
-var z_doing_postback		= false;
-var z_spinner_show_ct		= 0;
-var z_postbacks				= [];
 var z_default_form_postback = false;
-var z_input_updater			= false;
-var z_drag_tag				= [];
-var z_registered_events		= {};
-var z_on_visible_checks		= [];
+var z_page_unloading        = false;
+var z_comet_reconnect_timeout = 1000;
+var z_transport_check_timer;
+var z_transport_queue       = [];
+var z_transport_acks        = [];
+var z_transport_delegates   = {
+    javascript: function (data, _msg) { eval(data); },
+    session: z_transport_session_status,
+    reload: z_session_invalid_dialog
+};
+
+var TRANSPORT_TIMEOUT       = 30000;
+var TRANSPORT_TRIES         = 3;
+
+// Misc state
+var z_spinner_show_ct       = 0;  // Set when performing an AJAX callback
+var z_input_updater         = false;
+var z_drag_tag              = [];
+var z_registered_events     = {};
+var z_on_visible_checks     = [];
 var z_on_visible_timer;
-var z_unique_id_counter		= 0;
-var z_language				= "en";
-var z_ua					= "desktop";
-var z_pageid				= '';
+var z_unique_id_counter     = 0;
 
 
-function z_set_page_id( page_id )
+function z_set_page_id( page_id, user_id )
 {
-	if (z_pageid != page_id) {
-		z_pageid = page_id;
-		if (typeof pubzub == "object") {
-			setTimeout(function() { pubzub.publish("pageinit", page_id); }, 10);
-		}
-	}
+    ubf.add_spec('z_msg_v1', [
+        "qos", "dup", "msg_id", "timestamp", "content_type", "delegate",
+        "push_queue", "ua_class", "session_id", "page_id",
+        "data"
+        ]);
+    ubf.add_spec('z_msg_ack', [
+        "qos", "msg_id", "push_queue", "session_id", "page_id", "result"
+        ]);
+    ubf.add_spec('postback_notify', [
+        "message", "trigger", "target", "data"
+        ]);
+    ubf.add_spec('postback_event', [
+        "postback", "trigger", "target",
+        "triggervalue", "data"
+        ]);
+    ubf.add_spec('session_state', [
+        "page_id", "user_id"
+        ]);
+    ubf.add_spec('auth_change', [
+        "page_id"
+        ]);
+    ubf.add_spec('q', [
+        "q"
+        ]);
+
+    if (z_pageid != page_id) {
+        z_session_valid = true;
+        z_pageid = page_id;
+        z_userid = user_id;
+
+        if (typeof pubzub == "object") {
+            setTimeout(function() { pubzub.publish("~pagesession/pageinit", page_id); }, 10);
+        }
+    }
+    $(window).bind('beforeunload', function() {
+        z_page_unloading = true;
+        setTimeout(function() {
+            z_page_unloading = false;
+        }, 10000);
+    });
 }
 
 /* Non modal dialogs
@@ -83,6 +141,25 @@ function z_dialog_confirm(options)
         width: (options.width)
     });
     $(".z-dialog-cancel-button").click(function() { z_dialog_close(); });
+    $(".z-dialog-ok-button").click(function() {
+        z_dialog_close();
+        if (options.on_confirm) options.on_confirm();
+    });
+}
+
+function z_dialog_alert(options)
+{
+    html = '<div class="confirm">' + options.text + '</div>'
+         + '<div class="modal-footer">'
+         + '<button class="btn btn-primary z-dialog-ok-button">'
+         + (options.ok||z_translate('OK'))
+         + '</button>'
+         + '</div>';
+    $.dialogAdd({
+        title: (options.title||z_translate('Alert')),
+        text: html,
+        width: (options.width)
+    });
     $(".z-dialog-ok-button").click(function() {
         z_dialog_close();
         if (options.on_confirm) options.on_confirm();
@@ -142,169 +219,518 @@ function z_event(name, extraParams)
 function z_notify(message, extraParams)
 {
     var trigger_id = '';
-    if (extraParams != undefined && extraParams.z_trigger_id != undefined) {
-        trigger_id = extraParams.z_trigger_id;
-        extraParams.z_trigger_id = undefined;
+    var params = extraParams || [];
+
+    if (typeof params == 'object' && params.z_trigger_id !== undefined) {
+        trigger_id = params.z_trigger_id;
+        delete params.z_trigger_id;
     }
-    var extra = ensure_name_value(extraParams);
-    if (typeof extra != 'object')
-    {
-        extra = [];
+    var notify = {
+        _record: "postback_notify",
+        message: message,
+        trigger: trigger_id,
+        target: params.z_target_id || undefined,
+        data: {
+            _record: 'q',
+            q: ensure_name_value(params) || []
+        }
+    };
+    var delegate = params.z_delegate || 'notify';
+    var options = {
+        trigger_id: trigger_id
+    };
+    if (trigger_id) {
+        options.ack = function(_ack_msg, _options) {
+            z_unmask(trigger_id);
+        };
     }
-    extra.push({name: 'z_msg', value: message});
-    z_queue_postback(trigger_id, 'notify', extra, true);
+    return z_transport(delegate, 'ubf', notify, options);
 }
 
-/* Postback loop
+
+/* Session handling and restarts
 ---------------------------------------------------------- */
 
-function z_postback_check()
-{
-    if (z_postbacks.length === 0)
-    {
-        z_doing_postback = false;
-    }
-    else
-    {
-        // Send only a single postback at a time.
-        z_doing_postback = true;
 
-        var o = z_postbacks.shift();
-        z_do_postback(o.triggerID, o.postback, o.extraParams);
+function z_session_restart(invalid_page_id)
+{
+    if (z_session_valid) {
+        z_session_valid = false;
+        z_session_restart_count = 0;
+    }
+    setTimeout(function() { z_session_restart_check(invalid_page_id); }, 500);
+}
+
+function z_session_restart_check(invalid_page_id)
+{
+    if (z_pageid == invalid_page_id) {
+        if (z_spinner_show_ct === 0) {
+            if (z_session_restart_count == 3) {
+                z_session_invalid_reload(z_pageid);
+            } else {
+                z_session_restart_count++;
+                z_transport('session', 'ubf', 'ensure', {is_expect_cookie: true});
+            }
+        } else {
+            setTimeout(function() { z_session_restart_check(invalid_page_id); }, 200);
+        }
     }
 }
 
-function z_opt_cancel(obj)
+function z_session_status_ok(page_id, user_id)
 {
-    if(typeof obj.nodeName == 'undefined')
-        return false;
+    if (page_id != z_pageid || user_id != z_userid) {
+        var status = {
+            status: "restart",
+            user_id: user_id,
+            page_id: page_id,
+            prev_user_id: z_userid,
+            prev_page_id: z_pageid
+        };
 
-    var nodeName = obj.nodeName.toLowerCase();
-    var nodeType = $(obj).attr("type");
+        z_pageid = page_id;
+        z_userid = user_id;
 
-    if (nodeName == 'input' &&	(nodeType == 'checkbox' || nodeType == 'radio'))
-    {
-        return true;
-    }
-    else
-    {
-        return false;
+        z_transport_queue = [];
+        z_transport_acks = [];
+
+        // checks pubzub registry for the local "session" topic
+        // if any handlers then publish the new user to the topic
+        // if no handlers then the default reload dialog is shown
+        if (typeof pubzub == "object" && pubzub.subscribers("~pagesession/session").length > 0) {
+            z_session_valid = true;
+            pubzub.publish("~pagesession/session", status);
+            z_stream_restart();
+        } else {
+            z_session_invalid_reload(z_pageid, status);
+        }
     }
 }
 
-function z_httpdata( xhr, type, s )
+function z_session_invalid_reload(page_id, status)
 {
-    // lifted from jq1.4.4
-    var ct = xhr.getResponseHeader("content-type") || "",
-      xml = type === "xml" || !type && ct.indexOf("xml") >= 0,
-      data = xml ? xhr.responseXML : xhr.responseText;
-
-    if ( xml && data.documentElement.nodeName === "parsererror" ) {
-      $.error( "parsererror" );
+    if (page_id == z_pageid) {
+        if (z_spinner_show_ct === 0 && !z_page_unloading) {
+            z_transport_delegates.reload(status);
+        } else {
+            setTimeout(function() {
+                z_session_invalid_reload(page_id, status);
+            }, 1000);
+        }
     }
-    if ( s && s.dataFilter ) {
-      data = s.dataFilter( data, type );
-    }
-    if ( typeof data === "string" ) {
-      if ( type === "json" || !type && ct.indexOf("json") >= 0 ) {
-        data = $.parseJSON( data );
-      } else if ( type === "script" || !type && ct.indexOf("javascript") >= 0 ) {
-        $.globalEval( data );
-      }
-    }
-    return data;
 }
 
-function z_queue_postback(triggerID, postback, extraParams, noTriggerValue)
+// Default action for delegates.reload
+function z_session_invalid_dialog()
 {
-    var triggerValue = '';
+    var is_editing = false;
 
-    if (triggerID != '' && !noTriggerValue)
+    z_editor_save($('body'));
+    $('textarea').each(function() {
+        is_editing = is_editing || ($(this).val() !== "");
+    });
+
+    if (is_editing) {
+        z_dialog_confirm({
+            title: z_translate("Reload"),
+            text: "<p>" +
+                z_translate("Your session has expired or is invalid. Reload the page to continue.") +
+                "</p>",
+            ok: z_translate("Reload"),
+            on_confirm: function() { z_reload(); }
+        });
+    } else {
+        z_reload();
+    }
+}
+
+/* Transport between user-agent and server
+---------------------------------------------------------- */
+
+// Register a handler for incoming data (aka delegates)
+function z_transport_delegate_register(name, func)
+{
+    z_transport_delegates[name] = func;
+}
+
+// Called for 'session' transport delegates, handles the session status
+function z_transport_session_status(data, msg)
+{
+    switch (data)
     {
-        var trigger = $('#'+triggerID).get(0);
-        if (trigger)
-        {
-            if ($(trigger).is(":checkbox") || $(trigger).is(":radio"))
-            {
-                if ($(trigger).is(":checked"))
-                {
-                    triggerValue = $(trigger).val() || 'on';
+        case 'session_invalid':
+            if (window.z_sid) {
+                window.z_sid = undefined;
+            }
+            z_session_restart(z_pageid);
+            break;
+        case 'page_invalid':
+            z_session_restart(z_pageid);
+            break;
+        case 'ok':
+            z_session_valid = true;
+            break;
+        default:
+            if (typeof data == 'object') {
+                switch (data._record) {
+                    case 'session_state':
+                        z_session_status_ok(data.page_id, data.user_id);
+                        break;
+                    case 'auth_change':
+                        // The user-id of the session is changed.
+                        // A new session cookie might still be on its way, so wait a bit
+                        if (data.page_id == z_pageid) {
+                            z_session_restart(z_pageid);
+                        }
+                        break;
+                    default:
+                        console.log("Transport, unknown session status ", data);
+                        break;
+                }
+            } else {
+                console.log("Transport, unknown session status ", data);
+            }
+            break;
+    }
+}
+
+
+// Queue any data to be transported to the server
+function z_transport(delegate, content_type, data, options)
+{
+    var msg_id = z_pageid + z_unique_id(true);
+    var timestamp = new Date().getTime();
+
+    options = options || {};
+    if (typeof options.qos == 'undefined') {
+        if (options.ack) {
+            options.qos = 1;
+        } else {
+            options.qos = 0;
+        }
+    }
+    var msg = {
+            "_record": "z_msg_v1",
+            "qos": options.qos,
+            "dup": false,
+            "msg_id": msg_id,
+            "timestamp": timestamp,
+            "content_type": z_transport_content_type(content_type),
+            "delegate": z_transport_delegate(delegate),
+            "ua_class": ubf.constant(z_ua),
+            "page_id": z_pageid,
+            "session_id": window.z_sid || undefined,
+            "data": data
+        };
+
+    options.timeout = options.timeout || TRANSPORT_TIMEOUT;
+    if (options.qos > 0) {
+        var t = setTimeout(function() {
+                    z_transport_timeout(msg_id);
+                }, options.timeout);
+        z_transport_acks[msg_id] = {
+            msg: msg,
+            msg_id: msg_id,
+            options: options,
+            timestamp: timestamp,
+            timeout_timer: t,
+            timeout_count: 0,
+            is_queued: true
+        };
+    }
+    z_transport_queue.push({
+        msg: msg,
+        msg_id: msg_id,
+        options: options || {}
+    });
+    z_transport_check();
+    return msg_id;
+}
+
+// Map some special content types to an atom
+function z_transport_content_type(content_type)
+{
+    switch (content_type || 'ubf')
+    {
+        case 'ubf':        return ubf.constant('ubf');
+        case 'json':       return ubf.constant('json');
+        case 'form':       return ubf.constant('form');
+        case 'javascript': return ubf.constant('javascript');
+        case 'text':       return ubf.constant('text');
+        default: return content_type;
+    }
+}
+
+// Map some special delegates to an atom
+function z_transport_delegate(delegate)
+{
+    switch (delegate)
+    {
+        case 'mqtt':     return ubf.constant('mqtt');
+        case 'notify':   return ubf.constant('notify');
+        case 'postback': return ubf.constant('postback');
+        case 'session':  return ubf.constant('session');
+        case '$ping':    return ubf.constant('$ping');
+        default: return delegate;
+    }
+}
+
+// Ensure that a transport is scheduled for fetching data queued at the server
+function z_transport_ensure()
+{
+    if (z_transport_queue.length === 0 && !z_websocket_is_connected()) {
+        z_transport('$ping');
+    }
+}
+
+function z_transport_incoming(data)
+{
+    if (data !== undefined && data.length > 0) {
+        var msgs = ubf.decode(data);
+
+        if (typeof msgs == 'object' && msgs.ubf_type == ubf.LIST) {
+            for (i=0; i<msgs.length; i++) {
+                z_transport_incoming_msg(msgs[i]);
+            }
+        } else {
+            z_transport_incoming_msg(msgs);
+        }
+    }
+}
+
+function z_transport_incoming_msg(msg)
+{
+    switch (msg._record)
+    {
+        case 'z_msg_v1':
+            z_transport_maybe_ack(msg);
+            var data = z_transport_incoming_data_decode(msg.content_type.valueOf(), msg.data);
+            var fun = z_transport_delegates[msg.delegate.valueOf()];
+            if (typeof fun == 'function') {
+                fun(data, msg);
+            } else {
+                console.log("No delegate registered for ",msg);
+            }
+            break;
+        case 'z_msg_ack':
+            if (!z_websocket_pong(msg) && typeof z_transport_acks[msg.msg_id] == 'object') {
+                var ack = z_transport_acks[msg.msg_id];
+                delete z_transport_acks[msg.msg_id];
+
+                clearTimeout(ack.timeout_timer);
+                if (typeof ack.options.ack == 'function') {
+                    ack.options.ack(msg, ack.options);
                 }
             }
-            else
-            {
-                var nodeName = trigger.nodeName.toLowerCase();
+            break;
+        default:
+            console.log("Don't know where to delegate incoming message ", msg);
+            break;
+    }
+}
 
-                if (nodeName == 'input' || nodeName == 'button' || nodeName == 'textarea' || nodeName == 'select')
-                    triggerValue = $(trigger).val() || '';
+function z_transport_maybe_ack(msg)
+{
+    if (msg.qos >= 1) {
+        var ack = {
+            "_record": "z_msg_ack",
+            "qos": msg.qos,
+            "msg_id": msg.msg_id,
+            "push_queue": msg.push_queue,
+            "session_id": window.z_sid || undefined,
+            "page_id": msg.page_id || z_pageid,
+        };
+        z_transport_queue.push({
+            msg: ack,
+            msg_id: msg.msg_id,
+            options: {}
+        });
+        z_transport_check();
+    }
+}
+
+// If a transport times-out whilst in transit then it is reposted
+function z_transport_timeout(msg_id)
+{
+    if (typeof z_transport_acks[msg_id] == 'object') {
+        if (z_transport_acks[msg_id].timeout_count++ < TRANSPORT_TRIES) {
+            // Requeue the request (if it is not waiting in the queue)
+            if (!z_transport_acks[msg_id].is_queued) {
+                z_transport_acks[msg_id].msg.dup = true;
+                z_transport_queue.push({
+                    msg: z_transport_acks[msg_id].msg,
+                    msg_id: msg_id,
+                    options: z_transport_acks[msg_id].options || {},
+                });
+                z_transport_acks[msg_id].is_queued = true;
+            }
+            z_transport_acks[msg_id].timeout_timer = setTimeout(function() {
+                z_transport_timeout(msg_id);
+            }, z_transport_acks[msg_id].options.timeout);
+        } else {
+            // Final timeout, remove from all queues
+            if (z_transport_acks[msg_id].fail) {
+                z_transport_acks[msg_id].fail(msg_id, z_transport_acks[msg_id].options);
+            }
+            if (z_transport_acks[msg_id].is_queued) {
+                for (var i=0; i<z_transport_queue.length; i++) {
+                    if (z_transport_queue[i].msg_id == msg_id) {
+                        z_transport_queue.splice(i,i);
+                        break;
+                    }
+                }
+            }
+            delete z_transport_acks[msg_id];
+        }
+    }
+}
+
+function z_transport_incoming_data_decode(type, data)
+{
+    switch (type)
+    {
+        case 'ubf':
+            // Decoded by decoding the z_msg_v1 record 
+            return data;
+        case 'json':
+            return $.parseJSON(data.valueOf());
+        case 'javascript':
+            return data.valueOf();
+        case 'form':
+            return $.parseQuery(data.valueOf());
+        case 'text':
+            return data.valueOf();
+        default:
+            console.log("Unknown message data format: ", type, data);
+            return data;
+    }
+}
+
+
+// Queue form data to be transported to the server
+// This is called by the server generated javascript and jquery triggered postback events.
+function z_queue_postback(trigger_id, postback, extraParams, noTriggerValue, isExpectCookie)
+{
+    var triggervalue = '';
+    var trigger;
+
+    if (trigger_id) {
+        trigger = $('#'+trigger_id).get(0);
+    }
+    if (trigger && !noTriggerValue) {
+        if ($(trigger).is(":checkbox") || $(trigger).is(":radio")) {
+            if ($(trigger).is(":checked")) {
+                triggervalue = $(trigger).val() || 'on';
+            }
+        } else {
+            var nodeName = trigger.nodeName.toLowerCase();
+            if (nodeName == 'input' || nodeName == 'button' || nodeName == 'textarea' || nodeName == 'select') {
+                triggervalue = $(trigger).val() || '';
             }
         }
     }
+    extraParams = extraParams || [];
+    // extraParams.push({name: 'triggervalue', value: triggervalue});
 
-    extraParams = extraParams || new Array();
-    extraParams.push({name: 'triggervalue', value: triggerValue})
-
-    var o			= new Object();
-    o.triggerID		= triggerID;
-    o.postback		= postback;
-    o.extraParams	= extraParams;
-    z_postbacks.push(o);
-    z_postback_check();
-}
-
-
-function z_do_postback(triggerID, postback, extraParams)
-{
-    // Get params...
-    var params =
-        "postback=" + urlencode(postback) +
-        "&z_trigger_id=" + urlencode(triggerID) +
-        "&z_pageid=" + urlencode(z_pageid) +
-        "&" + $.param(extraParams);
+    var pb_event = {
+        _record: "postback_event",
+        postback: postback,
+        trigger: trigger_id,
+        target: extraParams.target_id || undefined,
+        triggervalue: triggervalue,
+        data: {
+            _record: 'q',
+            q: ensure_name_value(extraParams) || []
+        }
+    };
 
     // logon_form and .setcookie forms are always posted, as they will set cookies.
-    if (   z_websocket_is_connected()
-        && triggerID != "logon_form"
-        && (triggerID == '' || !$('#'+triggerID).hasClass("setcookie")))
+    var options = {
+        is_expect_cookie: isExpectCookie ||
+                          (trigger_id == "logon_form") ||
+                          (trigger && $(trigger).hasClass("setcookie")),
+        trigger_id: trigger_id
+    };
+    if (trigger_id) {
+        options.ack = function(_ack_msg, _options) {
+            z_unmask(trigger_id);
+        };
+    }
+    z_transport('postback', 'ubf', pb_event, options);
+}
+
+function z_postback_opt_qs(extraParams)
+{
+    if (typeof extraParams == 'object' && extraParams instanceof Array) {
+        return {
+            _record: "q",
+            q: ensure_name_value(extraParams)
+        };
+    } else {
+        return extraParams;
+    }
+}
+
+function z_transport_check()
+{
+    if (z_transport_queue.length > 0)
     {
-        z_ws.send(params);
+        // Delay transport messages till the z_pageid is initialized.
+        if (z_pageid !== '') {
+            var qmsg = z_transport_queue.shift();
+
+            if (z_transport_acks[qmsg.msg_id]) {
+                z_transport_acks[qmsg.msg_id].is_queued = false;
+            }
+            z_do_transport(qmsg);
+        } else if (!z_transport_check_timer) {
+            z_transport_check_timer = setTimeout(function() { z_transport_check_timer = undefined; z_transport_check(); }, 50);
+        }
+    }
+}
+
+function z_do_transport(qmsg)
+{
+    var data = ubf.encode(qmsg.msg);
+    if (z_websocket_is_connected() && !qmsg.options.is_expect_cookie && z_pageid)
+    {
+        z_ws.send(data);
     }
     else
     {
-        z_ajax(triggerID, params);
+        z_ajax(qmsg.options, data);
     }
 }
 
-function z_ajax(triggerID, params)
+function z_ajax(options, data)
 {
     z_start_spinner();
-
     $.ajax({
-        url:		'/postback',
-        type:		'post',
-        data:		params,
-        dataType:	'text',
-        success: function(data, textStatus)
+        url:        '/postback',
+        type:       'post',
+        data:       data,
+        dataType:   'text',
+        contentType: 'text/x-ubf',
+        success: function(received_data, textStatus)
         {
-            z_stop_spinner();
-
             try
             {
-                eval(data);
+                z_transport_incoming(received_data);
                 z_init_postback_forms();
+                z_unmask(options.trigger_id);
             }
             catch(e)
             {
-                $.misc.error("Error evaluating ajax return value: " + data, e);
+                console.log("Error evaluating ajax return value: ", received_data);
+                $.misc.error("Error evaluating ajax return value: " + received_data, e);
             }
-            setTimeout("z_postback_check()", 0);
+            setTimeout(function() { z_stop_spinner(); z_transport_check(); }, 0);
         },
         error: function(xmlHttpRequest, textStatus, errorThrown)
         {
             z_stop_spinner();
-
             $.misc.error("FAIL: " + textStatus);
-            z_unmask_error(triggerID);
+            z_unmask_error(options.trigger_id);
         }
     });
 }
@@ -358,7 +784,7 @@ function z_progress(id, value)
 
         if (trigger.nodeName.toLowerCase() == 'form')
         {
-            try { $(trigger).maskProgress(value); } catch (e) {};
+            try { $(trigger).maskProgress(value); } catch (e) {}
         }
     }
 }
@@ -366,7 +792,7 @@ function z_progress(id, value)
 function z_reload(args)
 {
     var page = $('#logon_form input[name="page"]');
-
+    z_start_spinner();
     if (page.length > 0 && page.val() != "") {
         window.location.href = window.location.protocol+"//"+window.location.host+page.val();
     } else {
@@ -374,10 +800,9 @@ function z_reload(args)
             window.location.reload(true);
         else {
             var qs = ensure_name_value(args);
+            var href;
 
             if (qs.length == 1 &&  typeof args.z_language == "string") {
-                var href;
-
                 if (  window.location.pathname.substring(0,2+z_language.length) == "/"+z_language+"/") {
                     href = window.location.protocol+"//"+window.location.host
                             +"/"+args.z_language+"/"
@@ -392,7 +817,7 @@ function z_reload(args)
                 else
                     window.location.href = href + "?" + window.location.search;
             } else {
-                var href = window.location.protocol+"//"+window.location.host+window.location.pathname;
+                href = window.location.protocol+"//"+window.location.host+window.location.pathname;
                 if (window.location.search == "") {
                     window.location.href = href + '?' + $.param(qs);
                 } else {
@@ -439,75 +864,84 @@ function z_text_to_nodes(text)
     }
 }
 
-/* tinyMCE stuff
+/* WYSYWIG editor
 ---------------------------------------------------------- */
 
-/* Initialize all non-initialized tinymce controls */
-function z_tinymce_init()
+function z_editor_init()
 {
-    $(".tinymce-init:visible").each(function() {
-        var self = $(this);
-        setTimeout(function() {
-            var ti = jQuery.extend({}, tinyInit);
-            if (self.attr('dir')) {
-                ti.directionality = self.attr('dir');
-            }
-            self.tinymce(ti);
-        }, 200);
-    }).removeClass('tinymce-init').addClass('tinymce');
-}
-
-function z_tinymce_add(element)
-{
-    $("textarea.tinymce", element).each(function() {
-        if (typeof $(this).tinymce == 'function') {
-            var self = $(this);
-            setTimeout(function() {
-                if (typeof tinyInit == 'object') self.tinymce(tinyInit);
-                else self.tinymce({});
-            }, 200);
-        } else if (typeof tinyMCE == 'object') {
-            var mce_id = $(this).attr('id');
-            setTimeout(function() { tinyMCE.execCommand('mceAddControl',false, mce_id); }, 200);
-        }
-    });
-}
-
-function z_tinymce_save(element)
-{
-    var tiny = $("textarea.tinymce", element);
-    if (tiny.length > 0) {
-        if (typeof tiny.tinymce == "function") {
-            tiny.each(function() { $(this).tinymce().save(); });
-        } else if (typeof tinyMCE == 'object') {
-            tinyMCE.triggerSave(true,true);
-        }
+    if (z_editor !== undefined) {
+        z_editor.init();
     }
 }
 
-function z_tinymce_remove(element)
+function z_editor_add($element)
 {
-    $("textarea.tinymce", element).each( function() {
-        if (typeof(tinyMCE) != 'undefined') {
-            tinyMCE.execCommand('mceRemoveControl',false, $(this).attr('id'));
-        } else if (typeof $(this).tinymce == 'function') {
-            $(this).tinymce().remove();
-        }
-    });
+    if (z_editor !== undefined) {
+        z_editor.add($element);
+    }
 }
 
+function z_editor_save($element)
+{
+    if (z_editor !== undefined) {
+        z_editor.save($element);
+    }
+}
+
+function z_editor_remove($element)
+{
+    if (z_editor !== undefined) {
+        z_editor.remove($element);
+    }
+}
+
+/* Support legacy code */
+
+function z_tinymce_init()
+{
+    z_editor_init();
+}
+
+function z_tinymce_add($element)
+{
+    z_editor_add($element);
+}
+
+function z_tinymce_save($element)
+{
+    z_editor_save($element);
+}
+
+function z_tinymce_remove($element)
+{
+    z_editor_remove($element);
+}
 
 /* Comet long poll or WebSockets connection
 ---------------------------------------------------------- */
 
 function z_stream_start(host, websocket_host)
 {
-    z_stream_host = host;
-    z_websocket_host = websocket_host || window.location.host;
-    setTimeout(function() { z_comet_start(); }, 1000);
-    if ("WebSocket" in window)
-    {
-        setTimeout(function() { z_websocket_start(); }, 200);
+    if (!z_session_valid) {
+        setTimeout(function() {
+            z_stream_start(host, websocket_host);
+        }, 100);
+    } else {
+        z_stream_host = host;
+        z_websocket_host = websocket_host || window.location.host;
+        z_stream_restart();
+    }
+}
+
+function z_stream_restart()
+{
+    if (z_websocket_host) {
+        $('#z_comet_connection').remove();
+        setTimeout(function() { z_comet_start(); }, 1000);
+        if ("WebSocket" in window)
+        {
+            setTimeout(function() { z_websocket_start(); }, 200);
+        }
     }
 }
 
@@ -519,7 +953,8 @@ function z_comet_start()
         if ($zc.length > 0) {
             $zc.attr('src', $zc.attr('src'));
         } else {
-            var url = window.location.protocol + '//' + z_stream_host + "/comet/subdomain?z_pageid=" + urlencode(z_pageid);
+            var qs = z_stream_args('comet');
+            var url = window.location.protocol + '//' + z_stream_host + "/comet/subdomain?"+qs;
             var comet = $('<iframe id="z_comet_connection" name="z_comet_connection" src="'+url+'" />');
             comet.css({ position: 'absolute', top: '-1000px', left: '-1000px' });
             comet.appendTo("body");
@@ -533,28 +968,51 @@ function z_comet_start()
 
 function z_comet_poll_ajax()
 {
-    if (z_ws_pong_count === 0)
+    if (z_ws_pong_count === 0 && z_session_valid)
     {
-	    $.ajax({
-	        url: window.location.protocol + '//' + window.location.host + '/comet',
-	        type:'post',
-	        data: "z_pageid=" + urlencode(z_pageid),
-	        dataType: 'text',
-	        success: function(data, textStatus)
-	        {
-	            z_comet_data(data);
-	            setTimeout(function() { z_comet_poll_ajax(); }, 500);
-	        },
-	        error: function(xmlHttpRequest, textStatus, errorThrown)
-	        {
-	            setTimeout(function() { z_comet_poll_ajax(); }, 1000);
-	        }
-	    });
+        $.ajax({
+            url: window.location.protocol + '//' + window.location.host + '/comet',
+            type:'post',
+            data: z_stream_args('comet'),
+            dataType: 'text',
+            statusCode: {
+                    /* Handle incoming data */
+                    200: function(data, _textStatus) {
+                            z_comet_data(data);
+                            z_timeout_comet_poll_ajax(100);
+                    },
+                    204: function() {
+                        z_timeout_comet_poll_ajax(1000);
+                    },
+
+                    /* Reload the page on forbidden/auth responses. */
+                    401: function() {
+                        z_transport_delegates.session("session_invalid");
+                    },
+                    403: function() {
+                        z_transport_delegates.session("session_invalid");
+                    },
+                },
+            error: function(xmlHttpRequest, textStatus, errorThrown) {
+                       setTimeout(function() { z_comet_poll_ajax(); }, z_comet_reconnect_timeout);
+                       if(z_comet_reconnect_timeout < 60000)
+                           z_comet_reconnect_timeout = z_comet_reconnect_timeout * 2;
+                   }
+        });
     }
     else
     {
-        setTimeout(function() { z_comet_poll_ajax(); }, 5000);
+        z_timeout_comet_poll_ajax(5000);
     }
+}
+
+
+function z_timeout_comet_poll_ajax(timeout)
+{
+    setTimeout(function() {
+        z_comet_reconnect_timeout = 1000;
+        z_comet_poll_ajax();
+    }, timeout);
 }
 
 
@@ -562,12 +1020,13 @@ function z_comet_data(data)
 {
     try
     {
-        eval(data);
+        z_transport_incoming(data);
         z_init_postback_forms();
     }
     catch (e)
     {
-        $.misc.error("Error evaluating ajax return value: " + data, e);
+        console.log("Error evaluating push return value: ", data);
+        $.misc.error("Error evaluating push return value: " + data, e);
     }
 }
 
@@ -575,13 +1034,12 @@ function z_comet_data(data)
 function z_websocket_start()
 {
     var protocol = "ws:";
-    if (window.location.protocol == "https:")
-    {
+    if (window.location.protocol == "https:") {
         protocol = "wss:";
     }
 
     try {
-        z_ws = new WebSocket(protocol+"//"+z_websocket_host+"/websocket?z_pageid="+z_pageid+"&z_ua="+z_ua);
+        z_ws = new WebSocket(protocol+"//"+z_websocket_host+"/websocket");
     } catch (e) {
         z_ws_pong_count = 0;
     }
@@ -594,25 +1052,34 @@ function z_websocket_start()
         z_websocket_restart();
     };
 
-    z_ws.onclose = function (evt)
-    {
+    z_ws.onclose = function (evt) {
         z_websocket_restart();
     };
 
-    z_ws.onmessage = function (evt)
-    {
-        if (!z_websocket_pong(evt.data)) {
-            z_comet_data(evt.data);
-            setTimeout("z_postback_check()", 0);
-        }
+    z_ws.onmessage = function (evt) {
+        z_comet_data(evt.data);
+        setTimeout(function() { z_transport_check(); }, 0);
     };
 }
 
 function z_websocket_ping()
 {
     setTimeout(function() {
-        if (z_ws && z_ws.readyState !== 0) {
-            z_ws.send('Z:PING:'+z_pageid);
+        if (z_ws && z_ws.readyState == 1) {
+            var msg = ubf.encode({
+                    "_record": "z_msg_v1",
+                    "qos": 1,
+                    "dup" : false,
+                    "msg_id": '$ws-'+z_pageid,
+                    "timestamp": new Date().getTime(),
+                    "content_type": ubf.constant("ubf"),
+                    "delegate": ubf.constant('$ping'),
+                    "ua_class": ubf.constant(z_ua),
+                    "page_id": z_pageid,
+                    "session_id": window.z_sid || undefined,
+                    "data": z_ws_pong_count
+                });
+            z_ws.send(msg);
         }
     }, 0);
     if (typeof z_ws_ping_timeout !== 'undefined') {
@@ -624,17 +1091,15 @@ function z_websocket_ping()
     }, 5000);
 }
 
-function z_websocket_pong( data )
+function z_websocket_pong( msg )
 {
-    if (data.substring(0,7) == 'Z:PONG:') {
-        if (data == 'Z:PONG:'+z_pageid) {
-            if (typeof z_ws_ping_timeout !== 'undefined') {
-                clearTimeout(z_ws_ping_timeout);
-                z_ws_ping_timeout = undefined;
-            }
-            z_ws_pong_count++;
-            setTimeout(function() { z_websocket_ping(); }, 20000);
+    if (msg.msg_id == '$ws-'+z_pageid) {
+        if (typeof z_ws_ping_timeout !== 'undefined') {
+            clearTimeout(z_ws_ping_timeout);
+            z_ws_ping_timeout = undefined;
         }
+        z_ws_pong_count++;
+        setTimeout(function() { z_websocket_ping(); }, 20000);
         return true;
     } else {
         return false;
@@ -652,14 +1117,48 @@ function z_websocket_restart()
         try { z_ws.close(); } catch(e) {} // closing an already closed ws can raise exceptions.
         z_ws = undefined;
     }
-    if (z_ws_pong_count > 0) {
+    if (z_ws_pong_count > 0 && z_session_valid) {
         z_ws_pong_count = 0;
         z_websocket_start();
     }
 }
 
+function z_stream_args(stream_type)
+{
+    var args = "z_pageid=" + urlencode(z_pageid);
+
+    // Set the z_ua because we can't derive it from the ws handshake.
+    if(stream_type == "websocket")
+        args += "&z_ua=" + urlencode(z_ua);
+
+    // Set z_sid when it is available. Can be used if there are problems with cookies.
+    if(window.z_sid)
+        args += "&z_sid=" + urlencode(z_sid);
+
+    return args;
+}
+
 /* Utility functions
 ---------------------------------------------------------- */
+
+// Should an event be canceled or passed through.
+function z_opt_cancel(obj)
+{
+    if(typeof obj.nodeName == 'undefined')
+        return false;
+
+    var nodeName = obj.nodeName.toLowerCase();
+    var nodeType = $(obj).attr("type");
+
+    if (nodeName == 'input' &&  (nodeType == 'checkbox' || nodeType == 'radio'))
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
 
 function z_is_enter_key(event)
 {
@@ -688,18 +1187,19 @@ function z_has_flash()
 function z_ensure_id(elt)
 {
     var id = $(elt).attr('id');
-    if (id == undefined) {
+    if (id === undefined || id === "") {
         id = z_unique_id();
         $(elt).attr('id', id);
     }
     return id;
 }
 
-function z_unique_id()
+function z_unique_id(no_dom_check)
 {
+    var id;
     do {
-        var id = '-z-' + z_unique_id_counter++;
-    } while ($('#'+id).length > 0);
+        id = '-z-' + z_unique_id_counter++;
+    } while (!no_dom_check && $('#'+id).length > 0);
     return id;
 }
 
@@ -709,7 +1209,7 @@ function z_unique_id()
 
 function z_start_spinner()
 {
-    if (z_spinner_show_ct++ == 0)
+    if (z_spinner_show_ct++ === 0)
     {
         $(document.body).addClass('wait');
         $('#spinner').fadeIn(100);
@@ -718,10 +1218,13 @@ function z_start_spinner()
 
 function z_stop_spinner()
 {
-    if (--z_spinner_show_ct == 0)
+    if (--z_spinner_show_ct === 0)
     {
         $('#spinner').fadeOut(100);
         $(document.body).removeClass('wait');
+    }
+    else if (z_spinner_show_ct < 0) {
+        z_spinner_show_ct = 0;
     }
 }
 
@@ -765,15 +1268,14 @@ function z_sorter(sortBlock, sortOptions, sortPostbackInfo)
 
         for (var i = 0; i < this.childNodes.length; i++)
         {
-            var sortTag = $(this.childNodes[i]).data("z_sort_tag")
+            var sortTag = $(this.childNodes[i]).data("z_sort_tag");
             if (sortTag)
             {
-                if (sortItems != "")
+                if (sortItems !== "")
                 {
                     sortItems += ",";
                 }
-
-                sortItems += sortTag
+                sortItems += sortTag;
             }
         }
 
@@ -782,7 +1284,7 @@ function z_sorter(sortBlock, sortOptions, sortPostbackInfo)
         z_queue_postback(this.id, sortPostbackInfo, sortItem, true);
     };
     sortOptions.receive = function (ev, ui) {
-        var $target = $(this).data().sortable.element;
+        var $target = $(this).data().uiSortable.element;
         var $source = $(ui.sender);
         $target.data('z_sort_tag', $source.data('z_drag_tag'));
     };
@@ -808,7 +1310,7 @@ function z_typeselect(ElementId, postbackInfo)
         if(obj.val().length >= 2)
         {
             obj.addClass('loading');
-            z_queue_postback(ElementId, postbackInfo)
+            z_queue_postback(ElementId, postbackInfo);
         }
     }, 400);
 }
@@ -854,7 +1356,7 @@ function isScrolledIntoView(elem)
     var elemBottom = elemTop + $(elem).height();
 
     return (elemBottom >= docViewTop) && (elemTop <= docViewBottom);
-    // && (elemBottom <= docViewBottom) &&	(elemTop >= docViewTop);
+    // && (elemBottom <= docViewBottom) &&  (elemTop >= docViewTop);
 }
 
 /* Form element validations
@@ -867,7 +1369,7 @@ This function can be run multiple times.
 
 function z_init_postback_forms()
 {
-    $("form[action*='postback']").each(function()
+    $("form[action='postback']").each(function()
     {
         // store options in hash
         $(this).on('click.form-plugin', ":submit,input:image", function(e)
@@ -877,7 +1379,7 @@ function z_init_postback_forms()
 
             if (this.type == 'image')
             {
-                if (e.offsetX != undefined)
+                if (e.offsetX !== undefined)
                 {
                     form.clk_x = e.offsetX;
                     form.clk_y = e.offsetY;
@@ -899,16 +1401,16 @@ function z_init_postback_forms()
     .submit(function(event)
     {
         theForm = this;
-        z_tinymce_save(theForm);
+        z_editor_save(theForm);
 
         submitFunction = function(ev) {
-            var arguments = $(theForm).formToArray();
+            var args = $(theForm).formToArray();
 
-            try { $(theForm).mask("", 100); } catch (e) {};
+            try { $(theForm).mask("", 100); } catch (e) {}
 
-            var postback	= $(theForm).data("z_submit_postback");
-            var action		= $(theForm).data("z_submit_action");
-            var form_id		= $(theForm).attr('id');
+            var postback    = $(theForm).data("z_submit_postback");
+            var action      = $(theForm).data("z_submit_action");
+            var form_id     = $(theForm).attr('id');
             var validations = $(theForm).formValidationPostback();
 
             if(!postback)
@@ -921,20 +1423,14 @@ function z_init_postback_forms()
                 setTimeout(action, 10);
             }
 
-            var use_post = $(theForm).hasClass("z_cookie_form") || $(theForm).hasClass("z_logon_form");
-            if (typeof(z_only_post_forms) != "undefined" && z_only_post_forms)
+            var files = $('input:file', theForm).fieldValue();
+            var use_post = false;
+            for (var j=0; j < files.length && !use_post; j++)
             {
-                use_post = true;
-            }
-            else
-            {
-                var files = $('input:file', theForm).fieldValue();
-                for (var j=0; j < files.length && !use_post; j++)
+                if (files[j])
                 {
-                    if (files[j])
-                    {
-                        use_post = true;
-                    }
+                    use_post = true;
+                    break;
                 }
             }
 
@@ -944,8 +1440,13 @@ function z_init_postback_forms()
             }
             else
             {
+                var cookie_form = $(theForm).hasClass("z_cookie_form") || $(theForm).hasClass("z_logon_form");
+                if (typeof(z_only_post_forms) != "undefined" && z_only_post_forms)
+                {
+                    cookie_form = true;
+                }
                 theForm.clk = theForm.clk_x = theForm.clk_y = null;
-                z_queue_postback(form_id, postback, arguments.concat(validations));
+                z_queue_postback(form_id, postback, args.concat(validations), false, cookie_form);
             }
             ev.stopPropagation();
             return false;
@@ -965,7 +1466,7 @@ function z_form_submit_validated_delay(theForm, event, submitFunction)
         // There are form validations and they are not done yet.
         if (!event.zAfterValidation)
         {
-            event.zAfterValidation = new Array();
+            event.zAfterValidation = [];
         }
         event.zAfterValidation.push({ func: submitFunction, context: theForm });
         return true;
@@ -996,16 +1497,17 @@ $.fn.postbackFileForm = function(trigger_id, postback, validations)
 {
     var a = validations;
 
-    a.push({name: "postback", value: postback});
+    a.push({name: "postback",     value: postback});
     a.push({name: "z_trigger_id", value: trigger_id});
-    a.push({name: "z_pageid", value: z_pageid});
-    a.push({name: "z_comet", value: typeof z_stream_host != 'undefined'});
+    a.push({name: "z_pageid",     value: z_pageid});
+    a.push({name: "z_ua",         value: z_ua});
+    a.push({name: "z_comet",      value: typeof z_stream_host != 'undefined'});
 
     var $form = this;
     var options = {
         url:  '/postback?' + $.param(a),
         type: 'POST',
-        dataType: 'text/javascript'
+        dataType: 'text/plain'
     };
 
     // hack to fix Safari hang (thanks to Tim Molendijk for this)
@@ -1078,7 +1580,9 @@ $.fn.postbackFileForm = function(trigger_id, postback, validations)
                 }
             }
         }
-        form.clk = form.clk_x = form.clk_y = null;
+        form.clk   = null;
+        form.clk_x = null;
+        form.clk_y = null;
 
         // take a breath so that pending repaints get some cpu time before the upload starts
         setTimeout(function() {
@@ -1102,8 +1606,9 @@ $.fn.postbackFileForm = function(trigger_id, postback, validations)
             }
 
             // support timout
-            if (opts.timeout)
+            if (opts.timeout) {
                 setTimeout(function() { timedOut = true; cb(); }, opts.timeout);
+            }
 
             // add "extra" data to form if provided in options
             var extraInputs = [];
@@ -1116,117 +1621,78 @@ $.fn.postbackFileForm = function(trigger_id, postback, validations)
 
                 // add iframe to doc and submit the form
                 $io.appendTo('body');
-                io.attachEvent ? io.attachEvent('onload', cb) : io.addEventListener('load', cb, false);
+                if (io.attachEvent) {
+                    io.attachEvent('onload', cb);
+                } else {
+                    io.addEventListener('load', cb, false);
+                }
                 form.submit();
             }
             finally {
                 // reset attrs and remove "extra" input elements
                 form.setAttribute('action',a);
-                t ? form.setAttribute('target', t) : $form.removeAttr('target');
+                if (t) {
+                    form.setAttribute('target', t);
+                } else {
+                    $form.removeAttr('target');
+                }
                 $(extraInputs).remove();
             }
         }, 10);
 
-        var domCheckCount = 3;
-
         function cb() {
-            if (cbInvoked++) return;
-
-            io.detachEvent ? io.detachEvent('onload', cb) : io.removeEventListener('load', cb, false);
-
-            var ok = true;
-            try {
-                if (timedOut) throw 'timeout';
-                // extract the server response from the iframe
-                var data, doc;
-
-                doc = io.contentWindow ? io.contentWindow.document : io.contentDocument ? io.contentDocument : io.document;
-                if (doc.body == null || doc.body.innerHTML == '') {
-                    if (--domCheckCount) {
-                        // in some browsers (Opera) the iframe DOM is not always traversable when
-                        // the onload callback fires, so we loop a bit to accommodate
-
-                        // MW: looks like this is not a timing issue but Opera triggering a
-                        //     load event on the 100 continue.
-                        cbInvoked = 0;
-                        io.addEventListener('load', cb, false);
-                        return;
-                    }
-                    log('Could not access iframe DOM after 50 tries.');
-                    return;
-                }
-
-                xhr.responseText = doc.body ? doc.body.innerHTML : null;
-
-                xhr.getResponseHeader = function(header){
-                    var headers = {'content-type': opts.dataType};
-                    return headers[header];
-                };
-
-                var ta = doc.getElementsByTagName('textarea')[0];
-                xhr.responseText = ta ? ta.value : xhr.responseText;
-                data = z_httpdata(xhr, opts.dataType);
-            }
-            catch(e){
-                ok = false;
-                $.event.trigger("ajaxError", [xhr, opts, e]);
-            }
-
-            // ordering of these callbacks/triggers is odd, but that's how $.ajax does it
-            if (ok) {
-                try {
-                    eval(data);
-                } catch (e) {
-                    z_unmask_error(form.id);
-                }
-                if (g)
-                {
-                    $.event.trigger("ajaxSuccess", [xhr, opts]);
-                }
+            if (io.detachEvent) {
+                io.detachEvent('onload', cb);
             } else {
-                z_unmask_error(form.id);
+                io.removeEventListener('load', cb, false);
             }
-            if (g) $.event.trigger("ajaxComplete", [xhr, opts]);
-            if (g && ! --$.active) $.event.trigger("ajaxStop");
-            if (opts.complete) opts.complete(xhr, ok ? 'success' : 'error');
-
-            // clean up
-            setTimeout(function() {
-                $io.remove();
-                xhr.responseXML = null;
-            }, 100);
-        };
-    };
-}
+            if (timedOut) {
+                $.event.trigger("ajaxError", [xhr, opts, e]);
+                z_unmask_error(form.id);
+            } else {
+                $.event.trigger("ajaxSuccess", [xhr, opts]);
+                z_unmask(form.id);
+            }
+            if (g) {
+                $.event.trigger("ajaxComplete", [xhr, opts]);
+                $.event.trigger("ajaxStop");
+            }
+            if (opts.complete) {
+                opts.complete(xhr, ok ? 'success' : 'error');
+            }
+            z_transport_ensure();
+        }
+    }
+};
 
 
 // Collect all postback validations from the form elements
 $.fn.formValidationPostback = function()
 {
     var a = [];
-    if(this.length == 0) return a;
+    if(this.length > 0) {
+        var form = this[0];
+        var els      = form.elements;
 
-    var form = this[0];
-    var els      = form.elements;
+        if (!els) return a;
 
-    if (!els) return a;
-
-    for(var i=0, max=els.length; i < max; i++)
-    {
-        var el = els[i];
-        var n  = el.name;
-
-        if (n && !el.disabled && !$(el).hasClass("nosubmit"))
+        for(var i=0, max=els.length; i < max; i++)
         {
-            var v = $(el).data("z_postback_validation");
-            if (v)
+            var el = els[i];
+            var n  = el.name;
+
+            if (n && !el.disabled && !$(el).hasClass("nosubmit"))
             {
-                a.push({name: "z_v", value: n+":"+v})
+                var v = $(el).data("z_postback_validation");
+                if (v)
+                {
+                    a.push({name: "z_v", value: n+":"+v});
+                }
             }
         }
     }
     return a;
-}
+};
 
 // Initialize a validator for the element #id
 function z_init_validator(id, args)
@@ -1269,15 +1735,15 @@ function z_add_validator(id, type, args)
             }
             switch (type)
             {
-                case 'email':			v.add(Validate.Email, args);		break;
-                                case 'date':					v.add(Validate.Date, args);				break;
-                case 'presence':		v.add(Validate.Presence, args);		break;
-                case 'confirmation':	v.add(Validate.Confirmation, args); break;
-                case 'acceptance':		v.add(Validate.Acceptance, args);	break;
-                case 'length':			v.add(Validate.Length, args);		break;
-                case 'format':			v.add(Validate.Format, args);		break;
-                case 'numericality':	v.add(Validate.Numericality, args); break;
-                case 'custom':			v.add(Validate.Custom, args);		break;
+                case 'email':           v.add(Validate.Email, args);        break;
+                                case 'date':                    v.add(Validate.Date, args);             break;
+                case 'presence':        v.add(Validate.Presence, args);     break;
+                case 'confirmation':    v.add(Validate.Confirmation, args); break;
+                case 'acceptance':      v.add(Validate.Acceptance, args);   break;
+                case 'length':          v.add(Validate.Length, args);       break;
+                case 'format':          v.add(Validate.Format, args);       break;
+                case 'numericality':    v.add(Validate.Numericality, args); break;
+                case 'custom':          v.add(Validate.Custom, args);       break;
                 case 'postback':
                     args['z_id'] = id;
                     v.add(Validate.Postback, args);
@@ -1376,10 +1842,10 @@ function ensure_name_value(a)
 {
     if ((typeof a == 'object') && !(a instanceof Array))
     {
-        var n = []
+        var n = [];
         for (var prop in a)
         {
-            if (a[prop] != undefined)
+            if (a[prop] !== undefined)
                 n.push({name: prop, value: a[prop]});
         }
         return n;
@@ -1389,6 +1855,7 @@ function ensure_name_value(a)
         return a;
     }
 }
+
 
 // From: http://malsup.com/jquery/form/jquery.form.js
 
@@ -1416,15 +1883,16 @@ function ensure_name_value(a)
  */
 $.fn.formToArray = function(semantic) {
     var a = [];
-    if (this.length == 0) return a;
+    if (this.length === 0) return a;
 
     var form = this[0];
-
     var els = semantic ? form.getElementsByTagName('*') : form.elements;
+    var n;
+
     if (!els) return a;
     for(var i=0, max=els.length; i < max; i++) {
         var el = els[i];
-        var n = el.name;
+        n = el.name;
         if (!n) continue;
         if ($(el).hasClass("nosubmit")) continue;
         if ($(el).attr("type") == 'submit') continue;
@@ -1441,7 +1909,7 @@ $.fn.formToArray = function(semantic) {
     // add submitting element to data if we know it
     var sub = form.clk;
     if (sub) {
-        var n = sub.name;
+        n = sub.name;
         if (n && !sub.disabled) {
             a.push({name: n, value: $(sub).val()});
             a.push({name: 'z_submitter', value: n});
@@ -1482,34 +1950,34 @@ $.fn.fieldSerialize = function(successful) {
 };
 
 /**
- * Returns the value(s) of the element in the matched set.	For example, consider the following form:
+ * Returns the value(s) of the element in the matched set.  For example, consider the following form:
  *
- *	<form><fieldset>
- *		<input name="A" type="text" />
- *		<input name="A" type="text" />
- *		<input name="B" type="checkbox" value="B1" />
- *		<input name="B" type="checkbox" value="B2"/>
- *		<input name="C" type="radio" value="C1" />
- *		<input name="C" type="radio" value="C2" />
- *	</fieldset></form>
+ *  <form><fieldset>
+ *      <input name="A" type="text" />
+ *      <input name="A" type="text" />
+ *      <input name="B" type="checkbox" value="B1" />
+ *      <input name="B" type="checkbox" value="B2"/>
+ *      <input name="C" type="radio" value="C1" />
+ *      <input name="C" type="radio" value="C2" />
+ *  </fieldset></form>
  *
- *	var v = $(':text').fieldValue();
- *	// if no values are entered into the text inputs
- *	v == ['','']
- *	// if values entered into the text inputs are 'foo' and 'bar'
- *	v == ['foo','bar']
+ *  var v = $(':text').fieldValue();
+ *  // if no values are entered into the text inputs
+ *  v == ['','']
+ *  // if values entered into the text inputs are 'foo' and 'bar'
+ *  v == ['foo','bar']
  *
- *	var v = $(':checkbox').fieldValue();
- *	// if neither checkbox is checked
- *	v === undefined
- *	// if both checkboxes are checked
- *	v == ['B1', 'B2']
+ *  var v = $(':checkbox').fieldValue();
+ *  // if neither checkbox is checked
+ *  v === undefined
+ *  // if both checkboxes are checked
+ *  v == ['B1', 'B2']
  *
- *	var v = $(':radio').fieldValue();
- *	// if neither radio is checked
- *	v === undefined
- *	// if first radio is checked
- *	v == ['C1']
+ *  var v = $(':radio').fieldValue();
+ *  // if neither radio is checked
+ *  v === undefined
+ *  // if first radio is checked
+ *  v == ['C1']
  *
  * The successful argument controls whether or not the field element must be 'successful'
  * (per http://www.w3.org/TR/html4/interact/forms.html#successful-controls).
@@ -1571,11 +2039,11 @@ $.fieldValue = function(el, successful) {
 
 /**
  * Clears the form data.  Takes the following actions on the form's input fields:
- *	- input text fields will have their 'value' property set to the empty string
- *	- select elements will have their 'selectedIndex' property set to -1
- *	- checkbox and radio inputs will have their 'checked' property set to false
- *	- inputs of type submit, button, reset, and hidden will *not* be effected
- *	- button elements will *not* be effected
+ *  - input text fields will have their 'value' property set to the empty string
+ *  - select elements will have their 'selectedIndex' property set to -1
+ *  - checkbox and radio inputs will have their 'checked' property set to false
+ *  - inputs of type submit, button, reset, and hidden will *not* be effected
+ *  - button elements will *not* be effected
  */
 $.fn.clearForm = function() {
     return this.each(function() {
@@ -1614,7 +2082,7 @@ $.fn.resetForm = function() {
  * Enables or disables any matching elements.
  */
 $.fn.enable = function(b) {
-    if (b == undefined) b = true;
+    if (b === undefined) b = true;
     return this.each(function() {
         this.disabled = !b;
     });
@@ -1625,7 +2093,7 @@ $.fn.enable = function(b) {
  * selects/deselects and matching option elements.
  */
 $.fn.selected = function(select) {
-    if (select == undefined) select = true;
+    if (select === undefined) select = true;
     return this.each(function() {
         var t = this.type;
         if (t == 'checkbox' || t == 'radio')
@@ -1667,10 +2135,20 @@ function is_equal(x, y) {
     return true;
 }
 
+$.extend({ 
+    keys: function(obj){
+        if (typeof Object.keys == 'function') 
+            return Object.keys(obj);
+        var a = [];
+        $.each(obj, function(k){ a.push(k) });
+        return a;
+    }
+});
+
 
 /**
  * A simple querystring parser.
- * Example usage: var q = $.parseQuery(); q.fooreturns	"bar" if query contains "?foo=bar"; multiple values are added to an array.
+ * Example usage: var q = $.parseQuery(); q.fooreturns  "bar" if query contains "?foo=bar"; multiple values are added to an array.
  * Values are unescaped by default and plus signs replaced with spaces, or an alternate processing function can be passed in the params object .
  * http://actingthemaggot.com/jquery
  *
@@ -1686,4 +2164,4 @@ $.parseQuery = function(qs,options) {
         params[p[0]] = params[p[0]]?((params[p[0]] instanceof Array)?(params[p[0]].push(p[1]),params[p[0]]):[params[p[0]],p[1]]):p[1];
     });
     return params;
-}
+};

@@ -36,6 +36,7 @@ init(DispatchArgs) -> {ok, DispatchArgs}.
 
 service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
     Context  = z_context:new(ReqData, ?MODULE),
+    z_context:lager_md(Context),
     Context1 = z_context:set(DispatchArgs, Context),
     ?WM_REPLY(true, Context1).
 
@@ -52,58 +53,25 @@ content_types_provided(ReqData, Context) ->
 
 %% @doc Check if the current user is allowed to view the resource. 
 is_authorized(ReqData, Context) ->
-    Context1 = z_context:ensure_all(?WM_REQ(ReqData, Context)),
-    case z_context:get(acl, Context1) of
-        undefined -> 
-            is_authorized_action(Context1);
-        is_auth -> 
-            case z_auth:is_auth(Context1) of
-                true -> is_authorized_action(Context1);
-                false -> is_authorized_action(false, Context1)
-            end;
-        logoff ->
-            Context2 = case z_auth:is_auth(Context1) of
-                           true ->
-                               z_auth:logoff(Context1);
-                           false ->
-                               Context1
-                       end,
-            is_authorized_action(Context2);
-        Acl -> 
-            is_authorized_action(append_acl(Acl, Context1), Context1)
+    Context1 = ?WM_REQ(ReqData, Context),
+    case z_context:get(anonymous, Context1) of
+        true ->
+            ContextQs = z_context:ensure_qs(Context1),
+            ?WM_REPLY(true, ContextQs);
+        _ ->
+            Context2 = z_context:ensure_all(Context1),
+            z_context:lager_md(Context2),
+            z_controller_helper:is_authorized(Context2)
     end.
-
-is_authorized_action(Context) ->
-    is_authorized_action([get_acl_action(Context)], Context).
-
-is_authorized_action(Acl, Context) ->
-    %% wm_is_authorized for Acl::{view, undefined} -> true
-    z_acl:wm_is_authorized(Acl, Context).
-
-get_acl_action(Context) ->
-    {z_context:get(acl_action, Context, view), get_id(Context)}.
-
-get_id(Context) ->
-    controller_page:get_id(Context).
-
-
-append_acl({_, _}=Acl, Context) ->
-    [get_acl_action(Context), Acl];
-append_acl(Acl, Context) when is_list(Acl) ->
-    [get_acl_action(Context) | Acl].
 
 
 provide_content(ReqData, Context) ->
-    Context1 = ?WM_REQ(ReqData, Context),
-    Context2 = case z_context:get(anonymous, Context) of
-        true -> z_context:ensure_qs(Context1);
-        _ -> z_context:ensure_all(Context1)
-    end,
+    Context2 = ?WM_REQ(ReqData, Context),
     Context3 = z_context:set_noindex_header(Context2),
     Context4 = set_optional_cache_header(Context3),
     Template = z_context:get(template, Context4),
     Vars = [
-        {id, get_id(Context3)}
+        {id, z_controller_helper:get_id(Context3)}
         | z_context:get_all(Context3)
     ],
     Rendered = z_template:render(Template, Vars, Context4),

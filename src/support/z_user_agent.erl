@@ -160,6 +160,8 @@ to_ua_class(_) -> undefined.
 -spec get_class( #context{} | #wm_reqdata{} | undefined ) -> ua_classifier:device_type().
 get_class(undefined) ->
     desktop;
+get_class(#context{ua_class=Class}) when Class =/= undefined ->
+    Class;
 get_class(#context{} = Context) ->
     get_class(z_context:get_reqdata(Context));
 get_class(#wm_reqdata{} = ReqData) ->
@@ -331,8 +333,8 @@ filename_split_class(F) ->
 %% @doc Ordering function for lists:sort/2. Orders by genericity. Most specific first.
 -spec order_class( ua_classifier:device_type(), ua_classifier:device_type() ) -> boolean().
 order_class(A,A) -> true;
-order_class(_, generic) -> false;
-order_class(generic, _) -> true;
+order_class(_, generic) -> true;
+order_class(generic, _) -> false;
 order_class(desktop, _) -> true;
 order_class(phone, text) -> true;
 order_class(tablet, text) -> true;

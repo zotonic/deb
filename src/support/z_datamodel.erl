@@ -74,8 +74,8 @@ manage_medium(Module, {Name, Props}, Options, Context) ->
 
 manage_medium(Module, {Name, {EmbedService, EmbedCode}, Props}, Options, Context) ->
     case manage_resource(Module, {Name, media, Props}, Options, Context) of
-        {ok} ->
-            {ok};
+        ok ->
+            ok;
         {ok, Id} ->
             MediaProps = [{mime, "text/html-video-embed"}, 
                           {video_embed_service, EmbedService}, 
@@ -87,8 +87,8 @@ manage_medium(Module, {Name, {EmbedService, EmbedCode}, Props}, Options, Context
 
 manage_medium(Module, {Name, Filename, Props}, Options, Context) ->
     case manage_resource(Module, {Name, media, Props}, Options, Context) of
-        {ok} ->
-            {ok};
+        ok ->
+            ok;
         {ok, Id} ->
             m_media:replace_file(Filename, Id, Context),
             {ok, Id}
@@ -97,18 +97,18 @@ manage_medium(Module, {Name, Filename, Props}, Options, Context) ->
 
 manage_category(Module, {Name, ParentCategory, Props}, Options, Context) ->
     case manage_resource(Module, {Name, category, Props}, Options, Context) of
-        {ok} ->
-            {ok};
+        ok ->
+            ok;
         {ok, Id} ->
             case ParentCategory of
                 undefined ->
-                    {ok, Id};
+                    ok;
                 _ ->
                     case m_category:name_to_id(ParentCategory, Context) of
                         {ok, PId} ->
-                            m_category:move_below(Id, PId, Context),
-                            {ok, Id};
-                        _ -> throw({error, {nonexisting_parent_category, ParentCategory}})
+                            m_category:move_below(Id, PId, Context);
+                        _ ->
+                            throw({error, {nonexisting_parent_category, ParentCategory}})
                     end
             end
     end.
@@ -120,8 +120,8 @@ manage_predicate(Module, {Name, Uri, Props, ValidFor}, Options, Context) ->
 manage_predicate(Module, {Name, Props, ValidFor}, Options, Context) ->
     Category = proplists:get_value(category, Props, predicate),
     case manage_resource(Module, {Name, Category, lists:keydelete(category, 1, Props)}, Options, Context) of
-        {ok} ->
-            {ok};
+        ok ->
+            ok;
         {ok, Id} ->
             ok = manage_predicate_validfor(Id, ValidFor, Options, Context),
             {ok, Id}
@@ -139,16 +139,15 @@ manage_resource(Module, {Name, Category, Props0}, Options, Context) ->
                             NewProps = update_new_props(Module, Id, Props, Options, Context),
                             m_rsc_update:update(Id, [{managed_props, z_html:escape_props(Props)} | NewProps],
                                                 [{is_import, true}], Context),
-                            {ok};
+                            ok;
                         _ ->
                             %% Resource exists but is not installed by us.
                             ?zInfo(io_lib:format("Resource '~p' (~p) exists but is not managed by ~p.", [Name, Id, Module]), Context),
-                            {ok}
+                            ok
                     end;
                 {error, {unknown_rsc, _}} ->
                     %% new resource, or old resource
                     Props1 = [{name, Name}, {category_id, CatId},
-                              {is_protected, true},
                               {installed_by, Module}, {managed_props, z_html:escape_props(Props)}] ++ Props,
                     Props2 = case proplists:get_value(is_published, Props1) of
                                  undefined -> [{is_published, true} | Props1];
@@ -158,15 +157,19 @@ manage_resource(Module, {Name, Category, Props0}, Options, Context) ->
                                  undefined -> [{visible_for, ?ACL_VIS_PUBLIC} | Props2];
                                  _ -> Props2
                              end,
+                    Props4 = case proplists:get_value(is_protected, Props3) of
+                                 undefined -> [{is_protected, true} | Props3];
+                                 _ -> Props3
+                             end,
                     ?zInfo(io_lib:format("Creating new ~p '~p'", [Category, Name]), Context),
-                    {ok, Id} = m_rsc_update:update(insert_rsc, Props3, [{is_import, true}], Context),
-                    case proplists:get_value(media_url, Props3) of
+                    {ok, Id} = m_rsc_update:update(insert_rsc, Props4, [{is_import, true}], Context),
+                    case proplists:get_value(media_url, Props4) of
                         undefined ->
                             nop;
                         Url ->
                             m_media:replace_url(Url, Id, [], Context)
                     end,
-                    case proplists:get_value(media_file, Props3) of
+                    case proplists:get_value(media_file, Props4) of
                         undefined ->
                             nop;
                         File ->
@@ -177,7 +180,7 @@ manage_resource(Module, {Name, Category, Props0}, Options, Context) ->
         {error, _} ->
             Msg = io_lib:format("Resource '~p' could not be handled because the category ~p does not exist.", [Name, Category]),
             ?zWarning(Msg, Context),
-            {ok}
+            ok
     end.
 
 update_new_props(Module, Id, NewProps, Options, Context) ->
@@ -271,14 +274,15 @@ map_prop({to_id, Name}, Context) ->
 map_prop(Value, _Context) ->
     Value.
 
-
 manage_edge(_Module, {SubjectName, PredicateName, ObjectName}, _Options, Context) ->
+    manage_edge(_Module, {SubjectName, PredicateName, ObjectName, []}, _Options, Context);
+manage_edge(_Module, {SubjectName, PredicateName, ObjectName, EdgeOptions}, _Options, Context) ->
     Subject = m_rsc:name_to_id(SubjectName, Context),
     Predicate = m_predicate:name_to_id(PredicateName, Context),
     Object = m_rsc:name_to_id(ObjectName, Context),
     case {Subject, Predicate, Object} of
         {{ok, SubjectId}, {ok, PredicateId}, {ok,ObjectId}} ->
-            m_edge:insert(SubjectId, PredicateId, ObjectId, Context);
+            m_edge:insert(SubjectId, PredicateId, ObjectId, EdgeOptions, Context);
         _ ->
             skip %% One part of the triple was MIA
     end.

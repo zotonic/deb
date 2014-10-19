@@ -129,7 +129,7 @@ observe_media_upload_props(#media_upload_props{id=Id, archive_file=File, mime="v
     Info = video_info(FileAbs),
     Info2 = case video_preview(FileAbs, Info) of
              {ok, TmpFile} ->
-                PreviewFilename = preview_filename(Id, File),
+                PreviewFilename = preview_filename(Id, Context),
                 PreviewPath = z_media_archive:abspath(PreviewFilename, Context),
                 ok = z_media_preview:convert(TmpFile, PreviewPath, [{quality,70}], Context),
                 _ = file:delete(TmpFile), 
@@ -161,20 +161,12 @@ observe_media_viewer(#media_viewer{props=Props, options=Options}, Context) ->
 
 %% @doc Return the filename of a still image to be used for image tags.
 -spec observe_media_stillimage(#media_stillimage{}, #context{}) -> undefined | {ok, file:filename()}.
-observe_media_stillimage(#media_stillimage{id=Id, props=Props}, Context) ->
+observe_media_stillimage(#media_stillimage{props=Props}, _Context) ->
     case proplists:get_value(mime, Props) of
         <<"video/mp4">> ->
-            case m_rsc:p(Id, depiction, Context) of
-                undefined ->
-                    case z_convert:to_list(proplists:get_value(preview_filename, Props)) of
-                        [] -> {ok, "lib/images/poster.png"};
-                        PreviewFile -> {ok, PreviewFile}
-                    end;
-                DepictionProps ->
-                    case z_convert:to_list(proplists:get_value(filename, DepictionProps)) of
-                        [] -> undefined;
-                        Filename -> {ok, Filename}
-                    end
+            case z_convert:to_list(proplists:get_value(preview_filename, Props)) of
+                [] -> {ok, "lib/images/poster.png"};
+                PreviewFile -> {ok, PreviewFile}
             end;
         _ ->
             undefined
@@ -372,14 +364,6 @@ orientation_to_transpose(3) -> " -vf 'transpose=2,transpose=2' ";
 orientation_to_transpose(6) -> " -vf 'transpose=1' ";
 orientation_to_transpose(_) -> "".
 
-preview_filename(Id, File) ->
-    {{Y,M,D},_} = calendar:local_time(),
-    Basename = filename:basename(File) ++ "-" ++ z_ids:identifier(10) ++ ".jpg",
-    filename:join([ "preview",
-                    integer_to_list(Y),
-                    integer_to_list(M),
-                    integer_to_list(D),
-                    id_to_list(Id) ++ "-" ++ Basename]).
+preview_filename(Id, Context) ->
+    m_media:make_preview_unique(Id, ".jpg", Context).
 
-id_to_list(N) when is_integer(N) -> integer_to_list(N);
-id_to_list(insert_rsc) -> "video".

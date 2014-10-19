@@ -38,6 +38,7 @@
     f/1,
     f/2,
     get_seconds/0,
+    ranges/1,
     group_by/3,
     group_proplists/2,
     hex_decode/1,
@@ -84,7 +85,7 @@
     flush_message/1,
     ensure_existing_module/1,
     generate_username/2,
-    
+
     %% Deprecated, see z_url.erl
     url_path_encode/1,
     url_encode/1,
@@ -167,7 +168,7 @@ encode_value_expire(Value, Date, Context) ->
 
 decode_value_expire(Data, Context) ->
     {Value, Expire} = decode_value(Data, Context),
-    case Expire >= calendar:local_time() of
+    case Expire >= calendar:universal_time() of
         false -> {error, expired};
         true -> {ok, Value}
     end.
@@ -180,7 +181,12 @@ checksum(Data, Context) ->
 
 checksum_assert(Data, Checksum, Context) ->
     Sign = z_ids:sign_key_simple(Context),
-    assert(list_to_binary(z_utils:hex_decode(Checksum)) == erlang:md5([Sign,Data]), checksum_invalid).
+    try
+        assert(list_to_binary(z_utils:hex_decode(Checksum)) == erlang:md5([Sign,Data]), checksum_invalid)
+    catch
+        error:badarg ->
+            erlang:error(checksum_invalid)
+    end.
 
 
 %%% PICKLE / UNPICKLE %%%
@@ -651,6 +657,20 @@ vsplit_in(N, L, RunLength, Acc) ->
 		{Row,Rest} = lists:split(RunLength, L),
 		vsplit_in(N-1, Rest, RunLength, [Row|Acc]).
 
+
+%% @doc Convert a sorted list of integers to a list of range pairs {From,To}
+-spec ranges([integer()]) -> [ {integer(),integer()} ].
+ranges([]) ->
+    [];
+ranges([N|Ns]) ->
+    ranges(Ns, [{N,N}]).
+
+ranges([],Acc) ->
+    lists:reverse(Acc);
+ranges([N|Ns], [{A,B}|Acc]) when B+1 =:= N ->
+    ranges(Ns, [{A,N}|Acc]);
+ranges([N|Ns], Acc) ->
+    ranges(Ns, [{N,N}|Acc]).
 
 %% @doc Group by a property or m_rsc property, keeps the input list in the same order.
 group_by([], _, _Context) ->

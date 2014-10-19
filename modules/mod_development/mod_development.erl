@@ -50,7 +50,7 @@
 -include_lib("zotonic.hrl").
 -include_lib("modules/mod_admin/include/admin_menu.hrl").
 
--record(state, {context}).
+-record(state, {host}).
 
 % Interval for checking for new and/or changed files.
 -define(DEV_POLL_INTERVAL, 10000).
@@ -88,7 +88,7 @@ observe_debug_stream(#debug_stream{target=TargetId, what=What}, Context) ->
 observe_module_activate(#module_activate{module=Module}, Context) ->
     case z_module_manager:reinstall(Module, Context) of
         ok ->
-            lager:warning("Reinstalled module: ~p", [Module]);
+            lager:info("[~p] Reinstalled module: ~p", [z_context:site(Context), Module]);
         nop ->
             nop
     end.
@@ -242,10 +242,12 @@ init(Args) ->
                            true
                    end,
     z_code_reloader:start_link(NeedPeriodic),
-
-    {ok, #state{
-        context  = z_context:new(Context)
-    }}.
+    Host = z_context:site(Context),
+    lager:md([
+            {site, Host},
+            {module, ?MODULE}
+        ]),
+    {ok, #state{host=Host}}.
 
 
 %% @spec handle_call(Request, From, State) -> {reply, Reply, State} |
@@ -341,16 +343,8 @@ observe_admin_menu(admin_menu, Acc, Context) ->
 %% @doc Recompile and reload an Erlang file.
 recompile_file(File) ->
     Module = list_to_atom(filename:basename(File, ".erl")),
-
     do_observe_fun(Module, fun z_module_manager:remove_observers/3),
-    
-    make:files([File], [load,
-                     {i, "include"},
-                     {i, "src/dbdrivers/postgresql/include"},
-                     {i, "deps/webzmachine/include"},
-                     {outdir, "ebin"},
-                     {parse_transform, lager_transform}
-                    ]),
+    make:files([File], [load|zotonic_compile:compile_options()]),
     do_observe_fun(Module, fun z_module_manager:add_observers/3).
 
 

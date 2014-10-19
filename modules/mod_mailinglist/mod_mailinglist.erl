@@ -95,7 +95,7 @@ observe_mailinglist_message(#mailinglist_message{what=Message, list_id=ListId, r
 %% @doc When an e-mail bounces, disable the corresponding recipients and mark them as bounced.
 observe_email_bounced(B=#email_bounced{}, Context) ->
     Recipients = m_mailinglist:get_recipients_by_email(B#email_bounced.recipient, Context),
-    lists:foreach(fun(Id) -> m_mailinglist:update_recipient(Id, [{is_enabled, false}, {is_bounced, true}, {bounce_time, calendar:local_time()}], Context) end, Recipients),
+    lists:foreach(fun(Id) -> m_mailinglist:update_recipient(Id, [{is_enabled, false}, {is_bounced, true}, {bounce_time, calendar:universal_time()}], Context) end, Recipients),
     undefined. %% Let other bounce handlers do their thing
 
 
@@ -194,6 +194,10 @@ start_link(Args) when is_list(Args) ->
 init(Args) ->
     process_flag(trap_exit, true),
     {context, Context} = proplists:lookup(context, Args),
+    lager:md([
+        {site, z_context:site(Context)},
+        {module, ?MODULE}
+      ]),
     z_notifier:observe(mailinglist_mailing, self(), Context),
     z_notifier:observe(dropbox_file, self(), 100, Context),
     timer:send_interval(180000, poll),

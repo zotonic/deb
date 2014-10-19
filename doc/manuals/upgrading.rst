@@ -1,13 +1,139 @@
+.. _upgrade-notes:
+
 Upgrade notes
 =============
 
-Although we try to keep things backward compatible, sometimes this is
-just impossible, e.g. when renaming things for the sake of clarity.
+These notes list the most important changes between Zotonic
+versions. Please read these notes carefully when upgrading to a new
+major Zotonic version.
 
-These notes list the most important changes between Zotonic versions
-that require attetion for site developers when things change in
-incompatible ways or get deprecated.
 
+Upgrading to Zotonic 0.12
+-------------------------
+
+Bootstrap CSS version 3
+.......................
+
+Zotonic has been switched over to the latest version of the Bootstrap
+Framework. When you are using Zotonic's ``mod_bootstrap`` or when you
+have customized the admin templates, you will need to update your
+templates.
+
+A full migration guide to upgrading from Bootstrap 2.x is here:
+http://getbootstrap.com/migration/, a tool to help you convert your
+Zotonic templates is located here:
+https://github.com/arjan/bootstrap3-upgrader.
+
+
+
+Upgrading to Zotonic 0.11
+-------------------------
+
+Global configuration changes
+............................
+
+The global file ``priv/config`` has been obsoleted in place of a new
+global configuration file, ``~/.zotonic/zotonic.config``. 
+
+To upgrade your config file, do the following:
+
+ * Make a directory in your home folder, called ``~/.zotonic``.
+ * Copy ``priv/zotonic.config.in`` to ``~/.zotonic/zotonic.config``
+ * Copy any settings from ``priv/config`` into the new ``priv/zotonic.config`` (IP addresses, etc)
+ * Remove the old file ``priv/config``, as it is no longer in use.
+ * Also, move ``priv/erlang.config`` to ``~/.zotonic/erlang.config``.
+  
+These configuration files can also be put in other places
+(``/etc/zotonic``, most notably), or can contain Zotonic's version
+number or node name when running multiple Zotonic versions side by
+side. See :ref:`manual-configuration` for all information on this
+topic.
+
+.. note:: You can *not* just copy over your old ``priv/config`` file to the new
+          location, as the structure of the file has changed.
+
+
+Changed location of sites and external modules
+..............................................
+
+The default place for user-defined sites and external modules has been
+changed to the defaults ``user/sites`` and ``user/modules``,
+respectively.
+
+To move your sites and modules in the right places, do the following:
+
+ * In the zotonic dir, do ``mkdir -p user/{modules,sites}``
+ * Move any external modules: ``mv priv/modules/* user/modules/``
+ * Move all sites except ``zotonic_status`` and ``testsandbox`` to ``user/sites``.
+
+You can change the location of the user-defined sites and modules by
+changing ``user_sites_dir`` and ``user_modules`` dir settings in the
+:ref:`manual-configuration`.
+
+
+Postback and javascript changes
+...............................
+
+The file ``zotonic-1.0.js`` now uses ``lib/js/modules/ubf.js``. This file **must**
+be included for the Zotonic javascripts to work.
+
+All postback, comet and websocket connection are now handled by ``z_transport``.
+Check :ref:`manual-transport` for details.
+
+The ``stream`` tag has been deprecated. You can remove it from your
+templates. Zotonic now automatically starts a WebSocket connection on
+each page, unless ``nostream`` is given in the :ref:`scomp-script` tag.
+
+
+Dispatch rules for files
+........................
+
+The ``controller_lib`` and ``controller_file_readonly`` have been replaced
+by the ``controller_file``. This controller uses the new *filestore* system 
+in Zotonic. This enables the storage of files on remote services like S3.
+
+If you have added your own ``controller_lib`` or ``controller_file_readonly``
+dispatch rules then you have to change them to use ``controller_file`` instead.
+
+The following options have been **removed**:
+
+ * media_path
+ * is_media_preview
+ * use_cache
+ * use of an *id* argument, use ``controller_file_id`` instead
+
+See the documentation for :ref:`controller-file` and :ref:`controller-file_id`.
+
+
+Modules moved out of core
+.........................
+
+The ``mod_geomap`` repository has moved to its own dedicated
+repository. To keep using this module, you'll now need to install it
+as an external module: ``zotonic modules install
+mod_geomap``. Alternatively, you can try the module ``mod_geo``
+(``zotonic modules install mod_geomap``) , which uses Google Maps in
+the admin.
+
+
+Database-driver changes
+.......................
+
+Due to the introduction of the new database driver, the behaviour of
+automatically serializing Erlang terms into the database (on ``bytea``
+columns) has been made explicit. To enable serialization of database
+values, you have to tag them with the new ``?DB_PROPS(...)``
+macro. Unserialization of terms is still done automatically.
+
+Gotcha's
+........
+
+If you get this error on startup::
+
+  DTREE: cannot open ''
+
+You can fix this by doing: ``rm -rf deps/ua_classifier``, and then running ``make`` again.
+  
 
 Upgrading to Zotonic 0.10
 -------------------------
@@ -220,7 +346,7 @@ http://code.google.com/p/zotonic-modules/.  These modules are:
 * mod_emailer*
 
 All modules, except mod_emailer can still be easily installed with the
-help of the ``zotonic installmodule`` command. The mod_emailer module
+help of the ``zotonic modules install`` command. The mod_emailer module
 (and its esmtp library) has been removed in favor of the native SMTP
 sending/receiving capabilities.  
 

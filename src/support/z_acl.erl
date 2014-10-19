@@ -20,6 +20,7 @@
 -author("Marc Worrell <marc@worrell.nl>").
 
 -export([is_allowed/3,
+         maybe_allowed/3,
 
          rsc_visible/2,
          rsc_prop_visible/3,
@@ -40,6 +41,7 @@
          anondo/1,
          anondo/2,
          logon/2,
+         logon_prefs/2,
          logoff/1,
 
          wm_is_authorized/2,
@@ -58,17 +60,25 @@
 -type object() :: m_rsc:resource().
 
 %% @doc Check if an action is allowed for the current actor.
--spec is_allowed(term(), term(), #context{}) -> true | false | undefined.
+-spec is_allowed(term(), term(), #context{}) -> true | false.
 is_allowed(_Action, _Object, #context{acl=admin}) ->
     true;
 is_allowed(_Action, _Object, #context{user_id=?ACL_ADMIN_USER_ID}) ->
     true;
 is_allowed(Action, Object, Context) ->
-    case z_notifier:first(#acl_is_allowed{action=Action, object=Object}, Context) of
+    case maybe_allowed(Action, Object, Context) of
         undefined -> false;
-        Other -> Other
+        true -> true;
+        false -> false
     end.
 
+-spec maybe_allowed(term(), term(), #context{}) -> true | false | undefined.
+maybe_allowed(_Action, _Object, #context{acl=admin}) ->
+    true;
+maybe_allowed(_Action, _Object, #context{user_id=?ACL_ADMIN_USER_ID}) ->
+    true;
+maybe_allowed(Action, Object, Context) ->
+    z_notifier:first(#acl_is_allowed{action=Action, object=Object}, Context).
 
 %% @doc Check if an action on a property of a resource is allowed for the current actor.
 -spec is_allowed_prop(term(), term(), atom(), #context{}) -> true | false | undefined.
@@ -269,6 +279,7 @@ is_admin(_) -> false.
 
 %% @doc Call a function as the anonymous user.
 %% @spec anondo(FuncDef, #context{}) -> FuncResult
+-spec anondo({atom(),atom()}|{atom(),atom(),list()}|function(), #context{}) -> any().
 anondo({M,F}, Context) ->
     erlang:apply(M, F, [set_anonymous(Context)]);
 anondo({M,F,A}, Context) ->
@@ -279,21 +290,29 @@ anondo(F, Context) when is_function(F, 1) ->
 anondo(Context) ->
     set_anonymous(Context).
 
+-spec set_anonymous(#context{}) -> #context{}.
 set_anonymous(Context) ->
     Context#context{acl=undefined, user_id=undefined}.
 
 
 %% @doc Log the user with the id on, fill the acl field of the context
-%% @spec logon(integer(), #context{}) -> #context{}
+-spec logon(pos_integer(), #context{}) -> #context{}.
 logon(Id, Context) ->
     case z_notifier:first(#acl_logon{id=Id}, Context) of
         undefined -> Context#context{acl=undefined, user_id=Id};
         #context{} = NewContext -> NewContext
     end.
 
+%% @doc Log the user with the id on, fill acl and set all user preferences (like timezone and language)
+-spec logon_prefs(pos_integer(), #context{}) -> #context{}.
+logon_prefs(Id, Context) ->
+    z_notifier:foldl(#user_context{id=Id}, z_acl:logon(Id, Context), Context).
+
 
 %% @doc Log off, reset the acl field of the context
-%% @spec logoff(#context{}) -> #context{}
+-spec logoff(#context{}) -> #context{}.
+logoff(#context{user_id=undefined, acl=undefined} = Context) ->
+    Context;
 logoff(Context) ->
     case z_notifier:first(#acl_logoff{}, Context) of
         undefined -> Context#context{user_id=undefined, acl=undefined};
@@ -320,8 +339,7 @@ wm_is_authorized(false, Redirect, Context) ->
     ContextLocation = wm_set_location(Redirect, Context),
     ?WM_REPLY({halt, 302}, ContextLocation);
 wm_is_authorized(ACLs, Redirect, Context) when is_list(ACLs), is_atom(Redirect) ->
-    ContextEnsured = z_context:ensure_all(Context),
-    wm_is_authorized(wm_is_allowed(ACLs, ContextEnsured), Redirect, ContextEnsured);
+    wm_is_authorized(wm_is_allowed(ACLs, Context), Redirect, Context);
 wm_is_authorized(ACLs, ReqData, Context) when is_list(ACLs) ->
     wm_is_authorized(ACLs, ?WM_REQ(ReqData, Context));
 wm_is_authorized(Action, Object, Context) ->
@@ -340,7 +358,9 @@ wm_is_authorized(Action, Object, Redirect, ReqData, Context) ->
 -spec wm_set_location(Redirect::atom(), #context{}) -> #context{}.
 wm_set_location(Redirect, Context) ->
     RequestPath = wrq:raw_path(z_context:get_reqdata(Context)),
-    Location = z_dispatcher:url_for(Redirect, [{p,RequestPath}], Context),
+    Location = z_context:abs_url(
+                    z_dispatcher:url_for(Redirect, [{p,RequestPath}], Context),
+                    Context),
     z_context:set_resp_header("Location", Location, Context).
 
 %% Check list of {Action,Object} ACL pairs

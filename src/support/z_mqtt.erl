@@ -20,6 +20,8 @@
 -module(z_mqtt).
 
 -export([
+    transport_incoming/2,
+
     route/2,
     publish/2,
     publish/3,
@@ -28,10 +30,10 @@
     subscribe/4,
     unsubscribe/2,
     unsubscribe/3,
-    maybe_context_topic/2,
-    remove_context_topic/2,
+    expand_context_topic/2,
+    make_context_topic/2,
 
-    make_postback_payload/2,
+    wrap_payload/2,
     payload_data/1,
     encode_packet_payload/1
     ]).
@@ -42,13 +44,16 @@
 -compile([{parse_transform, lager_transform}]).
 
 -record(z_mqtt_payload, {
-        version = 1,
         site,
         user_id,
-        encoding = binary,
-        payload = <<>>
+        payload
     }).
 
+
+%% @doc Transport incoming messages to mod_mqtt
+%% @todo Decouple this or move the mod_mqtt routines to core z_mqtt functions
+transport_incoming(Cmd, Context) when is_tuple(Cmd) ->
+    z_notifier:first(Cmd, Context).
 
 
 %% @doc Entry point for messages received via the mqtt listener.
@@ -56,12 +61,13 @@
 %% @todo Payload might be a z_mqtt_payload record, in that case only verify the user_id etc
 route(#mqtt_msg{} = Msg, Context) ->
     Msg1 = Msg#mqtt_msg{
-        topic=maybe_context_topic(Msg#mqtt_msg.topic, Context),
-        payload=wrap_payload(ubf, Msg#mqtt_msg.payload, Context),
+        topic=expand_context_topic(Msg#mqtt_msg.topic, Context),
+        payload=wrap_payload(Msg#mqtt_msg.payload, Context),
         encoder=fun(B) -> z_mqtt:encode_packet_payload(B) end
     },
     case z_mqtt_acl:is_allowed(publish, Msg1#mqtt_msg.topic, Context) of
         true ->
+            opt_debug_pubsub("publish", Msg1#mqtt_msg.topic, Context),
             emqtt_router:publish(Msg1);
         false ->
             lager:debug("MQTT publish access denied to ~p", [Msg1#mqtt_msg.topic]),
@@ -71,10 +77,11 @@ route(#mqtt_msg{} = Msg, Context) ->
 %% @doc Entry point for messages received via events
 publish(#mqtt_msg{} = Msg, Context) ->
     Msg1 = Msg#mqtt_msg{
-        topic=maybe_context_topic(Msg#mqtt_msg.topic, Context)
+        topic=expand_context_topic(Msg#mqtt_msg.topic, Context)
     },
     case z_mqtt_acl:is_allowed(publish, Msg1#mqtt_msg.topic, Context) of
         true ->
+            opt_debug_pubsub("publish", Msg1#mqtt_msg.topic, Context),
             emqtt_router:publish(Msg1);
         false ->
             lager:debug("MQTT publish access denied to ~p", [Msg1#mqtt_msg.topic]),
@@ -83,14 +90,15 @@ publish(#mqtt_msg{} = Msg, Context) ->
 
 publish(Topic, #z_mqtt_payload{} = Payload, Context) ->
     Msg = #mqtt_msg{
-        topic=maybe_context_topic(Topic, Context),
+        topic=expand_context_topic(Topic, Context),
         retain=false,
         qos=?QOS_0,
         payload=Payload,
         encoder=fun(B) -> z_mqtt:encode_packet_payload(B) end
     },
     case z_mqtt_acl:is_allowed(publish, Msg#mqtt_msg.topic, Context) of
-        true -> 
+        true ->
+            opt_debug_pubsub("publish", Msg#mqtt_msg.topic, Context),
             emqtt_router:publish(Msg);
         false ->
             lager:debug("MQTT publish access denied to ~p", [Msg#mqtt_msg.topic]),
@@ -111,17 +119,17 @@ subscribe(Topic, Callback, Context) when is_pid(Callback); is_tuple(Callback) ->
     subscribe(Topic, ?QOS_0, Callback, Context).
 
 subscribe(Topic, Qos, Pid, Context) when is_pid(Pid) ->
-    Topic1 = maybe_context_topic(Topic, Context),
+    Topic1 = expand_context_topic(Topic, Context),
     case z_mqtt_acl:is_allowed(subscribe, Topic1, Context) of
         true ->
-            lager:debug("MQTT subscribe ~p to ~p", [Pid, Topic1]),
+            opt_debug_pubsub("subscribe", Topic1, Context),
             emqtt_router:subscribe({Topic1, Qos}, Pid);
         false ->
-            lager:debug("MQTT subscribe access denied to ~p", [Topic]),
+            lager:debug("MQTT subscribe access denied to ~p for ~p", [Topic, z_acl:user(Context)]),
             {error, eacces}
     end;
 subscribe(Topic, Qos, MFA, Context) when is_tuple(MFA) ->
-    Topic1 = maybe_context_topic(Topic, Context),
+    Topic1 = expand_context_topic(Topic, Context),
     case z_mqtt_acl:is_allowed(subscribe, Topic1, Context) of
         true ->
             case z_notifier:first(#mqtt_subscribe{topic=Topic1, qos=Qos, mfa=MFA}, Context) of
@@ -129,7 +137,7 @@ subscribe(Topic, Qos, MFA, Context) when is_tuple(MFA) ->
                 ok -> ok
             end;
         false ->
-            lager:debug("MQTT subscribe access denied to ~p", [Topic]),
+            lager:debug("MQTT subscribe access denied to ~p for ~p", [Topic, z_acl:user(Context)]),
             {error, eacces}
     end.
 
@@ -137,42 +145,35 @@ unsubscribe(Topic, Context) ->
     unsubscribe(Topic, self(), Context).
 
 unsubscribe(Topic, Pid, Context) when is_pid(Pid) ->
-    emqtt_router:unsubscribe(maybe_context_topic(Topic, Context), Pid);
+    lager:debug("MQTT unsubscribe ~p from ~p", [Pid, Topic]),
+    emqtt_router:unsubscribe(expand_context_topic(Topic, Context), Pid);
 unsubscribe(Topic, MFA, Context) when is_tuple(MFA) ->
-    z_notifier:first(#mqtt_unsubscribe{topic=maybe_context_topic(Topic, Context), mfa=MFA}, Context).
+    lager:debug("MQTT unsubscribe ~p from ~p", [MFA, Topic]),
+    z_notifier:first(#mqtt_unsubscribe{topic=expand_context_topic(Topic, Context), mfa=MFA}, Context).
 
 
 %doc Add a decode wrapper around the payload we received from via a postback event.
-make_postback_payload(undefined, Context) ->
-    wrap_payload(binary, <<>>, Context);
-make_postback_payload([], Context) ->
-    wrap_payload(binary, <<>>, Context);
-make_postback_payload(Data, Context) ->
-    wrap_payload(ubf, Data, Context).
-
-wrap_payload(Encoding, Data, Context) ->
+wrap_payload(Data, Context) ->
     #z_mqtt_payload{
         site=z_context:site(Context), 
         user_id=z_acl:user(Context),
-        encoding=Encoding,
-        payload=z_convert:to_binary(Data)
+        payload=Data
     }.
 
+opt_debug_pubsub(Action, Topic, Context) ->
+    case z_convert:to_bool(m_config:get_value(mod_mqtt, debug_pubsub, Context)) of
+        true ->
+            lager:info("[~p] mod_mqtt ~s: ~s", [z_context:site(Context), Action, Topic]);
+        false ->
+            nop
+    end.
 
 payload_data(#mqtt_msg{payload=Payload}) ->
     payload_data(Payload);
 payload_data(Bin) when is_binary(Bin) ->
     {ok, Bin};
-payload_data(#z_mqtt_payload{encoding=binary, payload=Data}) ->
-    {ok, Data};
-payload_data(#z_mqtt_payload{encoding=term, payload=Data}) ->
-    {ok, Data};
-payload_data(#z_mqtt_payload{encoding=ubf, payload=Data}) when is_binary(Data) ->
-    case z_ubf:decode(Data) of
-        {ok, Term, _} -> {ok, Term};
-        {more, _} -> {error, eof};      
-        {error, _} = Error -> Error
-    end.
+payload_data(#z_mqtt_payload{payload=Data}) ->
+    {ok, Data}.
 
 %% @doc UBF encode the data to be sent to a client over a TCP/IP connection.
 -spec encode_packet_payload(#z_mqtt_payload{} | undefined | binary()) -> binary().
@@ -186,42 +187,102 @@ encode_packet_payload(Any) ->
     Bin.
 
 
-%% @doc Add the site's name to a topic iff the topic doesn't start with '//'
--spec maybe_context_topic(binary()|string(), #context{}) -> binary().
-maybe_context_topic("//" ++ Topic, _Context) ->
+%% @doc Map the ~site, ~pagesession, ~session, ~user topics
+-spec expand_context_topic(binary()|string(), #context{}) -> binary().
+expand_context_topic(Topic, _Context) when is_list(Topic) ->
     unicode:characters_to_binary(Topic);
-maybe_context_topic(<<"//", Topic/binary>>, _Context) ->
-    Topic;
-maybe_context_topic("site/" ++ _ = Topic, _Context) ->
-    unicode:characters_to_binary(Topic);
-maybe_context_topic(<<"site/", _/binary>> = Topic, _Context) ->
-    Topic;
-maybe_context_topic(Topic, Context) ->
-    iolist_to_binary([
-            <<"site/">>,
-            z_convert:to_binary(z_context:site(Context)),
-            $/,
-            to_binary(drop_slash(Topic))
-        ]).
+expand_context_topic(<<"~site", Topic/binary>>, Context) ->
+    localsite(Topic, Context);    
+expand_context_topic(<<"~user", Topic/binary>>, Context) ->
+    localuser(Topic, Context);    
+expand_context_topic(<<"~session", Topic/binary>>, Context) ->
+    localsession(Topic, Context);    
+expand_context_topic(<<"~pagesession", Topic/binary>>, Context) ->
+    localpagesession(Topic, Context);    
+expand_context_topic(<<$~, T/binary>> = Topic, Context) ->
+    lager:error(z_context:lager_md(Context), "Illegal MQTT topic ~p, mapped to ~p", [Topic, T]),
+    T;
+expand_context_topic(Topic, _Context) ->
+    Topic.
 
-remove_context_topic(Topic, #context{} = Context) ->
-    remove_context_topic(Topic, z_convert:to_binary(z_context:site(Context)));
-remove_context_topic(Topic, Site) when is_atom(Site) ->
-    remove_context_topic(Topic, z_convert:to_binary(Site));
-remove_context_topic(<<"site/", Topic/binary>> = ST, Site) ->
+localsite(<<>>, Context) ->
+    <<"site/",(z_convert:to_binary(z_context:site(Context)))/binary>>;
+localsite(<<$/,_/binary>> = Topic, Context) ->
+    <<"site/",(z_convert:to_binary(z_context:site(Context)))/binary, Topic/binary>>;
+localsite(Topic, Context) when is_binary(Topic) ->
+    <<"site/",(z_convert:to_binary(z_context:site(Context)))/binary, $/, Topic/binary>>.
+
+localuser(Topic, #context{user_id=undefined} = Context) ->
+    case Topic of
+        <<>> -> localsite(<<"anonymous">>, Context);
+        <<$/,_/binary>> -> localsite(<<"anonymous", Topic/binary>>, Context);
+        _ -> localsite(<<"anonymous/", Topic/binary>>, Context)
+    end;
+localuser(Topic, #context{user_id=UserId} = Context) ->
+    UserBin = z_convert:to_binary(UserId),
+    case Topic of
+        <<>> -> localsite(<<"user/", UserBin/binary>>, Context);
+        <<$/,_/binary>> -> localsite(<<"user/", UserBin/binary, Topic/binary>>, Context);
+        _ -> localsite(<<"user/", UserBin/binary, $/, Topic/binary>>, Context)
+    end.
+
+localsession(<<>>, #context{session_id=SessionId} = Context) when is_binary(SessionId) ->
+    localsite(<<"session/", SessionId/binary>>, Context);
+localsession(<<$/, _/binary>> = Topic, #context{session_id=SessionId} = Context) when is_binary(SessionId) ->
+    localsite(<<"session/", SessionId/binary, Topic/binary>>, Context);
+localsession(Topic, #context{session_id=SessionId} = Context) when is_binary(SessionId) ->
+    localsite(<<"session/", SessionId/binary, $/, Topic/binary>>, Context).
+
+localpagesession(<<>>, #context{page_id=PageId} = Context) when is_binary(PageId) ->
+    localsite(<<"pagesession/", PageId/binary>>, Context);
+localpagesession(<<$/, _/binary>> = Topic, #context{page_id=PageId} = Context) when is_binary(PageId) ->
+    localsite(<<"pagesession/", PageId/binary, Topic/binary>>, Context);
+localpagesession(Topic, #context{page_id=PageId} = Context) when is_binary(PageId) ->
+    localsite(<<"pagesession/", PageId/binary, $/, Topic/binary>>, Context).
+
+
+
+make_context_topic(<<"site/", Topic/binary>> = ST, Context) ->
+    SiteBin = z_convert:to_binary(z_context:site(Context)),
     case binary:split(Topic, <<"/">>) of
-        [Site, LocalTopic] -> <<$/, LocalTopic/binary>>;
-        _ -> <<"//", ST/binary>>
+        [SiteBin] -> <<"~site">>;
+        [SiteBin, LocalTopic] -> make_localsite(LocalTopic, Context);
+        _ -> ST
     end; 
-remove_context_topic(Topic, _Site) ->
+make_context_topic(Topic, _Site) ->
     <<"//", Topic/binary>>.
 
+make_localsite(<<>>, _Context) ->
+    <<"~site">>;
+make_localsite(<<"anonymous">>, #context{user_id=undefined} = _Context) ->
+    <<"~user">>;
+make_localsite(<<"anonymous/", Topic/binary>>, #context{user_id=undefined}) ->
+    <<"~user/", Topic/binary>>;
+make_localsite(<<"user/", Topic/binary>> = Topic0, #context{user_id=UserId}) when is_integer(UserId) ->
+    UserIdBin = z_convert:to_binary(UserId),
+    case Topic of
+        UserIdBin ->                   <<"~user">>;
+        <<UserIdBin, $/, T/binary>> -> <<"~user/", T/binary>>;
+        _ ->                           <<"~site/", Topic0/binary>>
+    end;
+make_localsite(<<"session/", Topic/binary>> = Topic0, #context{session_id=SessionId}) when is_binary(SessionId) ->
+    case Topic of
+        SessionId ->                   <<"~session">>;
+        <<SessionId, $/, T/binary>> -> <<"~session/", T/binary>>;
+        _ ->                           <<"~site/", Topic0/binary>>
+    end;
+make_localsite(<<"session/", _/binary>> = Topic0, #context{session_pid=SessionPid} = Context) when is_pid(SessionPid) ->
+    case z_session_manager:get_session_id(Context) of
+        undefined -> <<"~site/", Topic0/binary>>;
+        SessionId -> make_localsite(Topic0, Context#context{session_id=SessionId})
+    end;
+make_localsite(<<"pagesession/", Topic/binary>> = Topic0, #context{page_id=PageId}) when is_binary(PageId) ->
+    case Topic of
+        PageId ->                   <<"~pagesession">>;
+        <<PageId, $/, T/binary>> -> <<"~pagesession/", T/binary>>;
+        _ ->                        <<"~site/", Topic0/binary>>
+    end;
+make_localsite(Topic, _Context) ->
+    <<"~site/", Topic/binary>>.
 
-to_binary(L) when is_list(L) ->
-    unicode:characters_to_binary(L);
-to_binary(B) when is_binary(B) ->
-    B.
 
-drop_slash(<<"/", T/binary>>) -> T;
-drop_slash([$/ | T ]) -> T;
-drop_slash(T) -> T.

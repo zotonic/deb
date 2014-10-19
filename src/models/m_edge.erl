@@ -169,16 +169,17 @@ insert(Subject, Pred, Object, Opts, Context) ->
                             true -> skip;
                             false -> m_rsc:touch(SubjectId, Ctx)
                         end,
-                        z_db:insert(edge, [{subject_id, SubjectId}, {object_id, ObjectId}, {predicate_id, PredId}], Ctx)
+                        SeqOpt = case proplists:get_value(seq, Opts) of
+                                  S when is_integer(S) -> [{seq, S}];
+                                  _ -> []
+                              end,
+                        z_db:insert(edge, [{subject_id, SubjectId}, {object_id, ObjectId}, {predicate_id, PredId} | SeqOpt], Ctx)
                     end,
-                
                 {ok, PredName} = m_predicate:id_to_name(PredId, Context),
                 case z_acl:is_allowed(insert, #acl_edge{subject_id=SubjectId, predicate=PredName, object_id=ObjectId}, Context) of
                     true ->
                         {ok, EdgeId} = z_db:transaction(F, Context),
-                        z_depcache:flush(SubjectId, Context),
-                        z_depcache:flush(ObjectId, Context),
-                        z_notifier:notify(#edge_insert{subject_id=SubjectId, predicate=PredName, object_id=ObjectId}, Context),
+                        z_edge_log_server:check(Context),
                         {ok, EdgeId};
                     AclError ->
                         {error, {acl, AclError}}
@@ -200,9 +201,7 @@ delete(Id, Context) ->
             end,
             
             z_db:transaction(F, Context),
-            z_depcache:flush(SubjectId, Context),
-            z_depcache:flush(ObjectId, Context),
-            z_notifier:notify(#edge_delete{subject_id=SubjectId, predicate=PredName, object_id=ObjectId}, Context),
+            z_edge_log_server:check(Context),
             ok;
         AclError -> 
             {error, {acl, AclError}}
@@ -226,9 +225,7 @@ delete(SubjectId, Pred, ObjectId, Options, Context) ->
             end,
 
             z_db:transaction(F, Context),
-            z_depcache:flush(SubjectId, Context),
-            z_depcache:flush(ObjectId, Context),
-            z_notifier:notify(#edge_delete{subject_id=SubjectId, predicate=PredName, object_id=ObjectId}, Context),
+            z_edge_log_server:check(Context),
             ok;
         AclError ->
             {error, {acl, AclError}}
@@ -255,12 +252,7 @@ delete_multiple(SubjectId, Preds, ObjectId, Context) ->
                 0 -> 
                     ok;
                 N when is_integer(N) -> 
-                    z_depcache:flush(SubjectId, Context),
-                    z_depcache:flush(ObjectId, Context),
-                    [
-                        z_notifier:notify(#edge_delete{subject_id=SubjectId, predicate=PredName, object_id=ObjectId}, Context)
-                        || PredName <- PredNames
-                    ],
+                    z_edge_log_server:check(Context),
                     ok;
                 Error -> 
                     Error
@@ -328,23 +320,7 @@ replace(SubjectId, Pred, NewObjects, Context) ->
             
                         % Sync all caches, notify edge delete/insert listeners
                         z_db:transaction(F, Context),
-                        z_depcache:flush(SubjectId, Context),
-                        [z_depcache:flush(ObjectId, Context) || ObjectId <- NewObjects],
-                        [z_depcache:flush(ObjectId, Context) || ObjectId <- CurrObjects],
-                        [
-                            case lists:member(ObjId, NewObjects) of
-                                true -> nop;
-                                false -> z_notifier:notify({edge_delete, SubjectId, PredName, ObjId}, Context)
-                            end
-                            || ObjId <- CurrObjects
-                        ],
-                        [
-                            case lists:member(ObjId, CurrObjects) of
-                                true -> nop;
-                                false -> z_notifier:notify({edge_insert, SubjectId, PredName, ObjId}, Context)
-                            end
-                            || ObjId <- NewObjects
-                        ],
+                        z_edge_log_server:check(Context),
                         ok;
                     AclError ->
                         {error, {acl, AclError}}
@@ -366,7 +342,7 @@ duplicate(Id, ToId, Context) ->
                 ]
             end,
             z_db:transaction(F, Context),
-            z_depcache:flush(ToId, Context),
+            z_edge_log_server:check(Context),
             ok;
         false ->
             {error, {eacces, Id}}
@@ -402,8 +378,7 @@ update_nth(SubjectId, Predicate, Nth, ObjectId, Context) ->
         true -> 
             case z_db:transaction(F, Context) of
                 {ok,EdgeId} ->
-                    z_depcache:flush(SubjectId, Context),
-                    z_notifier:notify({edge_insert, SubjectId, PredName, ObjectId}, Context),
+                    z_edge_log_server:check(Context),
                     {ok, EdgeId};
                 {error, Reason} ->
                     {error, Reason}
@@ -413,7 +388,7 @@ update_nth(SubjectId, Predicate, Nth, ObjectId, Context) ->
     end.
 
 
-%% @doc Return the Nth object with a certaing predicate of a subject.
+%% @doc Return the Nth object with a certain predicate of a subject.
 object(Id, Pred, N, Context) ->
     Ids = objects(Id, Pred, Context),
     try
@@ -422,7 +397,7 @@ object(Id, Pred, N, Context) ->
         _:_ -> undefined
     end.
 
-%% @doc Return the Nth subject with a certaing predicate of an object.
+%% @doc Return the Nth subject with a certain predicate of an object.
 subject(Id, Pred, N, Context) ->
     Ids = subjects(Id, Pred, Context),
     try
@@ -431,7 +406,7 @@ subject(Id, Pred, N, Context) ->
         _:_ -> undefined
     end.
 
-%% @doc Return all object ids of an id with a certain predicate.  The order of the ids is deterministic.
+%% @doc Return all object ids of an id with a certain predicate. The order of the ids is deterministic.
 %% @spec objects(Id, Pred, Context) -> List
 objects(_Id, undefined, _Context) ->
     [];
@@ -559,7 +534,7 @@ update_sequence(Id, Pred, ObjectIds, Context) ->
 
 
 %% @doc Set edges order so that the specified object ids are in given order.
-%% Any extra edges not speicified will be deleted, and any missing edges will be inserted.
+%% Any extra edges not specified will be deleted, and any missing edges will be inserted.
 %% @spec set_sequence(Id, Predicate, ObjectIds, Context) -> ok | {error, Reason}
 set_sequence(Id, Pred, ObjectIds, Context) ->
     case z_acl:rsc_editable(Id, Context) of

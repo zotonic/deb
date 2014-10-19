@@ -34,8 +34,8 @@
 
 % Hixie-75 (Chrome 4; Safari 5.0.0)
 % First draft protocol version, this code should be removed in due time.
-start(ReqData, Context1) ->
-    Hostname = m_site:get(hostname, Context1),
+start(ReqData, Context) ->
+    Hostname = m_site:get(hostname, Context),
 
     Qs = mochiweb_util:urlencode(wrq:req_qs(ReqData)),
     WebSocketPath = case Qs of
@@ -54,8 +54,8 @@ start(ReqData, Context1) ->
             13, 10
             ],
     ok = send(Socket, Data),
-    SenderPid = spawn_link(fun() -> z_websocket_hixie75:start_send_loop(Socket, Context1) end),
-    z_websocket_hixie75:receive_loop(none, nolength, Socket, SenderPid, Context1).
+    SenderPid = spawn_link(fun() -> z_websocket_hixie75:start_send_loop(Socket, Context) end),
+    z_websocket_hixie75:receive_loop(none, nolength, Socket, SenderPid, Context).
 
 
 %% ============================== RECEIVE DATA =====================================
@@ -88,15 +88,15 @@ handle_data(<<>>, nolength, <<255,_T/binary>>, _Socket, _SenderPid, _Context) ->
     % A packet of <<0,255>> signifies that the ua wants to close the connection
     ua_close_request;
 handle_data(Msg, nolength, <<255,T/binary>>, Socket, SenderPid, Context) ->
-    handle_message(Msg, SenderPid, Context),
-    handle_data(none, nolength, T, Socket, SenderPid, Context);
+    {ok, Context1} = handle_message(Msg, SenderPid, Context),
+    handle_data(none, nolength, T, Socket, SenderPid, Context1);
 handle_data(Msg, nolength, <<H,T/binary>>, Socket, SenderPid, Context) ->
     handle_data(<<Msg/binary, H>>, nolength, T, Socket, SenderPid, Context);
 
 %% Extract frame with length bytes
 handle_data(Msg, 0, T, Socket, SenderPid, Context) ->
-    handle_message(Msg, SenderPid, Context),
-    handle_data(none, nolength, T, Socket, SenderPid, Context);
+    {ok, Context1} = handle_message(Msg, SenderPid, Context),
+    handle_data(none, nolength, T, Socket, SenderPid, Context1);
 handle_data(Msg, Length, <<H,T/binary>>, Socket, SenderPid, Context) when is_integer(Length) and Length > 0 ->
     handle_data(<<Msg/binary, H>>, Length-1, T, Socket, SenderPid, Context);
 
@@ -113,7 +113,15 @@ handle_init(Context) ->
 % Call the handler, new message arrived.
 handle_message(Msg, SenderPid, Context) ->
     H = z_context:get(ws_handler, Context),
-    H:websocket_message(Msg, SenderPid, Context).
+    z_depcache:in_process(true),
+    case H:websocket_message(Msg, SenderPid, Context) of
+        ok ->
+            z_utils:erase_process_dict(),
+            {ok, Context};
+        {ok, Context1} ->
+            z_utils:erase_process_dict(),
+            {ok, z_context:prune_for_scomp(Context1)}
+    end.
 
 handle_info(Msg, Context) ->
     H = z_context:get(ws_handler, Context),

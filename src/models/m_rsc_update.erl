@@ -1,10 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009-2010 Marc Worrell
-%% Date: 2009-04-24
-%%
+%% @copyright 2009-2014 Marc Worrell, Arjan Scherpenisse
 %% @doc Update routines for resources.  For use by the m_rsc module.
 
-%% Copyright 2009-2010 Marc Worrell, Arjan Scherpenisse
+%% Copyright 2009-2014 Marc Worrell, Arjan Scherpenisse
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -32,7 +30,7 @@
 
     flush/2,
     
-    normalize_props/2,
+    normalize_props/3,
 
     delete_nocheck/2,
     props_filter/3,
@@ -78,7 +76,7 @@ delete_nocheck(Id, Context) ->
     Props = m_rsc:get(Id, Context),
     
     F = fun(Ctx) ->
-        z_notifier:notify(#rsc_delete{id=Id}, Ctx),
+        z_notifier:notify(#rsc_delete{id=Id, is_a=CatList}, Ctx),
         m_rsc_gone:gone(Id, Ctx),
         z_db:delete(rsc, Id, Ctx)
     end,
@@ -101,6 +99,7 @@ delete_nocheck(Id, Context) ->
                         pre_props=Props,
                         post_props=[]
                     }, Context),
+    z_edge_log_server:check(Context),
     ok.
 
 
@@ -171,7 +170,7 @@ update(Id, Props, Options, Context) when is_integer(Id) orelse Id == insert_rsc 
 
     case IsEditable of
         true ->
-            AtomProps = normalize_props(Props, Context),
+            AtomProps = normalize_props(Id, Props, Context),
             EditableProps = props_filter_protected(
                                 props_filter(
                                     props_trim(AtomProps), [], Context)),
@@ -261,7 +260,7 @@ update(Id, Props, Options, Context) when is_integer(Id) orelse Id == insert_rsc 
                 
                 UpdateProps3 = case IsImport of
                                   false ->
-                                      [{modified, calendar:local_time()} | UpdateProps2 ];
+                                      [{modified, calendar:universal_time()} | UpdateProps2 ];
                                   true ->
                                       case imported_prop(IsImport, modified, AtomProps, undefined) of
                                           undefined -> UpdateProps2;
@@ -310,7 +309,7 @@ update(Id, Props, Options, Context) when is_integer(Id) orelse Id == insert_rsc 
                     % Flush some low level caches
                     case proplists:get_value(name, NewProps) of
                         undefined -> nop;
-                        Name -> z_depcache:flush({rsc_name, z_convert:to_list(Name)}, Context)
+                        Name -> z_depcache:flush({rsc_name, z_string:to_name(Name)}, Context)
                     end,
                     case proplists:get_value(uri, NewProps) of
                         undefined -> nop;
@@ -354,10 +353,10 @@ update(Id, Props, Options, Context) when is_integer(Id) orelse Id == insert_rsc 
 
 %% @doc Recombine all properties from the ones that are posted by a form.
 %% @todo Move this one layer up, to the routines receiving the posted data.
-normalize_props(Props, Context) ->
-    DateProps = recombine_dates(Props),
+normalize_props(Id, Props, Context) ->
+    DateProps = recombine_dates(Id, Props, Context),
     TextProps = recombine_languages(DateProps, Context),
-    BlockProps = recombine_blocks(TextProps, Props),
+    BlockProps = recombine_blocks(TextProps, Props, Context),
     [ {map_property_name(P), V} || {P, V} <- BlockProps ].
 
 
@@ -551,8 +550,12 @@ props_filter([{is_authoritative, P}|T], Acc, Context) ->
     end;
 props_filter([{is_featured, P}|T], Acc, Context) ->
     props_filter(T, [{is_featured, z_convert:to_bool(P)} | Acc], Context);
+props_filter([{is_protected, P}|T], Acc, Context) ->
+    props_filter(T, [{is_protected, z_convert:to_bool(P)} | Acc], Context);
 props_filter([{is_query_live, P}|T], Acc, Context) ->
     props_filter(T, [{is_query_live, z_convert:to_bool(P)} | Acc], Context);
+props_filter([{date_is_all_day, P}|T], Acc, Context) ->
+    props_filter(T, [{date_is_all_day, z_convert:to_bool(P)} | Acc], Context);
 props_filter([{visible_for, Vis}|T], Acc, Context) ->
     VisibleFor = z_convert:to_integer(Vis),
     case VisibleFor of
@@ -669,16 +672,59 @@ is_trimmable(rsc_id, _)      -> true;
 is_trimmable(_, _)           -> false.
 
 
-recombine_dates(Props) ->
-    Now = erlang:localtime(),
-    {Dates, Props1} = recombine_dates(Props, [], []),
+%% @doc Combine all textual date fields into real date. Convert them to UTC afterwards.
+recombine_dates(Id, Props, Context) ->
+    LocalNow = z_datetime:to_local(erlang:universaltime(), Context),
+    {Dates, Props1} = recombine_dates_1(Props, [], []),
     {Dates1, DateGroups} = group_dates(Dates),
     {DateGroups1, DatesNull} = collect_empty_date_groups(DateGroups, [], []),
     {Dates2, DatesNull1} = collect_empty_dates(Dates1, [], DatesNull),
-    Dates3 = [ {Name, date_from_default(Now, D)} || {Name, D} <- Dates2 ],
-    DateGroups2 = [ {Name, dategroup_fill_parts(date_from_default(Now, S), E)} || {Name, {S,E}} <- DateGroups1 ],
-    Dates4 = lists:foldl(fun({Name, {S, E}}, Acc) -> [{Name++"_start", S}, {Name++"_end", E} | Acc] end, Dates3, DateGroups2),
-    Dates4 ++ DatesNull1 ++ Props1.
+    Dates3 = [ {Name, date_from_default(LocalNow, D)} || {Name, D} <- Dates2 ],
+    DateGroups2 = [ {Name, dategroup_fill_parts(date_from_default(LocalNow, S), E)} || {Name, {S,E}} <- DateGroups1 ],
+    Dates4 = lists:foldl(
+                    fun({Name, {S, E}}, Acc) ->
+                        [
+                            {Name++"_start", S},
+                            {Name++"_end", E} 
+                            | Acc
+                        ] 
+                    end,
+                    Dates3,
+                    DateGroups2),
+    DatesUTC = maybe_dates_to_utc(Id, Dates4, Props, Context),
+    [
+        {tz, z_context:tz(Context)}
+        | DatesUTC ++ DatesNull1 ++ Props1
+    ].
+
+maybe_dates_to_utc(Id, Dates, Props, Context) ->
+    IsAllDay = is_all_day(Id, Props, Context),
+    [ maybe_to_utc(IsAllDay, NameDT,Context) || NameDT <- Dates ].
+
+maybe_to_utc(true, {"date_start", _Date} = D, _Context) ->
+    D;
+maybe_to_utc(true, {"date_end", _Date} = D, _Context) ->
+    D;
+maybe_to_utc(_IsAllDay, {Name, Date}, Context) ->
+    {Name, z_datetime:to_utc(Date, Context)}.
+
+is_all_day(Id, Props, Context) ->
+    case proplists:get_value(date_is_all_day, Props) of
+        undefined ->
+            case proplists:get_value("date_is_all_day", Props) of
+                undefined ->
+                    case is_integer(Id) of
+                        false ->
+                            false;
+                        true  ->
+                            z_convert:to_bool(m_rsc:p_no_acl(Id, date_is_all_day, Context))
+                    end;
+                IsAllDay ->
+                    z_convert:to_bool(IsAllDay)
+            end;
+        IsAllDay ->
+            z_convert:to_bool(IsAllDay)
+    end.
 
 
 collect_empty_date_groups([], Acc, Null) ->
@@ -704,14 +750,14 @@ collect_empty_dates([H|T], Acc, Null) ->
 
 
 
-recombine_dates([], Dates, Acc) ->
+recombine_dates_1([], Dates, Acc) ->
     {Dates, Acc};
-recombine_dates([{"dt:"++K,V}|T], Dates, Acc) ->
+recombine_dates_1([{"dt:"++K,V}|T], Dates, Acc) ->
     [Part, End, Name] = string:tokens(K, ":"),
     Dates1 = recombine_date(Part, End, Name, V, Dates),
-    recombine_dates(T, Dates1, Acc);
-recombine_dates([H|T], Dates, Acc) ->
-    recombine_dates(T, Dates, [H|Acc]).
+    recombine_dates_1(T, Dates1, Acc);
+recombine_dates_1([H|T], Dates, Acc) ->
+    recombine_dates_1(T, Dates, [H|Acc]).
 
     recombine_date(Part, End, Name, undefined, Dates) ->
         recombine_date(Part, End, Name, "", Dates);
@@ -781,7 +827,7 @@ group_dates(Dates) ->
                         group_dates(T, Groups1, Acc);
 
                     false ->
-                        group_dates(T, Groups, [T|Acc])
+                        group_dates(T, Groups, [{Name,D}|Acc])
                 end
         end.
 
@@ -891,11 +937,16 @@ recombine_languages(Props, Context) ->
         end.
 
 
-recombine_blocks(Props, OrgProps) ->
+recombine_blocks(Props, OrgProps, Context) ->
     {BPs, Ps} = lists:partition(fun({"block-"++ _, _}) -> true; (_) -> false end, Props),
     case BPs of
         [] ->
-            Props;
+            case proplists:get_value(blocks, Props) of
+                Blocks when is_list(Blocks) ->
+                    z_utils:prop_replace(blocks, normalize_blocks(Blocks, Context), Props);
+                _ ->
+                    Props
+            end;
         _ ->
             Keys = block_ids(OrgProps, []),
             Dict = lists:foldr(
@@ -905,11 +956,11 @@ recombine_blocks(Props, OrgProps) ->
                                     Ts = string:tokens(Name, "-"),
                                     BlockId = iolist_to_binary(tl(lists:reverse(Ts))),
                                     BlockField = lists:last(Ts),
-                                    dict:append(BlockId, opt_value_map(BlockField, Val), Acc)
+                                    dict:append(BlockId, {BlockField, Val}, Acc)
                             end,
                             dict:new(),
                             BPs),
-            [{blocks, [ dict:fetch(K, Dict) || K <- Keys ]} | Ps ]
+            [{blocks, normalize_blocks([ dict:fetch(K, Dict) || K <- Keys ], Context)} | Ps ]
     end.
 
 block_ids([], Acc) -> 
@@ -924,12 +975,24 @@ block_ids([{"block-"++Name,_}|Rest], Acc) when Name =/= [] ->
 block_ids([_|Rest], Acc) ->
     block_ids(Rest, Acc).
 
-% Map some values to non-strings
-opt_value_map("rsc_id", V) -> {rsc_id, z_convert:to_integer(V)};
-opt_value_map("is_"++_ = K, V) -> {list_to_existing_atom(K), z_convert:to_bool(V)};
-opt_value_map(K, V) -> {list_to_existing_atom(K), V}.
 
-
+normalize_blocks(Blocks, Context) ->
+    lists:map(fun(B) -> normalize_block(B, Context) end, Blocks).
+                       
+normalize_block(B, Context) ->
+    lists:map(fun
+                  ({"rsc_id", V}) ->
+                      {rsc_id, m_rsc:rid(V, Context)};
+                  ({"is_" ++ _ = K, V}) ->
+                      {list_to_existing_atom(K), z_convert:to_bool(V)};
+                  ({K, V}) when is_list(K) ->
+                      {list_to_existing_atom(K), V};
+                  ({rsc_id, V}) ->
+                      {rsc_id, m_rsc:rid(V, Context)};
+                  (Pair) ->
+                      Pair
+              end,
+              B).
 
 %% @doc Accept only configured languages
 filter_langs(L, Cfg) ->
@@ -976,7 +1039,7 @@ test() ->
     [{"publication_start",{{2009,7,9},{0,0,0}}},
           {"publication_end",?ST_JUTTEMIS},
           {"plop","hello"}]
-     = recombine_dates([
+     = recombine_dates(insert_rsc, [
         {"dt:y:0:publication_start", "2009"},
         {"dt:m:0:publication_start", "7"},
         {"dt:d:0:publication_start", "9"},
@@ -984,7 +1047,7 @@ test() ->
         {"dt:m:1:publication_end", ""},
         {"dt:d:1:publication_end", ""},
         {"plop", "hello"}
-    ]),
+    ], z_context:new_tests()),
     ok.
 
 

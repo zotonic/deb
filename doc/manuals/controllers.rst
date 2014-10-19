@@ -41,6 +41,20 @@ The simplest controller uses Zotonic’s ``controller_html_helper.hrl`` include 
 
    html(Context) ->
        {<<"<h1>Hello</h1>">>, Context}.
+       
+To return the rendered output of a template file in the module's 
+``templates`` directory, use ``z_template:render/3``:
+
+.. code-block:: erlang  
+
+   -module(controller_example).
+
+   -include_lib("controller_html_helper.hrl").
+
+   html(Context) ->
+       % foo and bam will be available as template variables in mytemplate.tpl.
+       Html = z_template:render("mytemplate.tpl", [{foo, 'bar'}, {bam, 1234}], Context),
+       z_context:output(Html, Context).       
 
 If you need more examples, :ref:`mod_base` contains many controllers,
 implementing basic HTTP interaction but also redirects, websockets, et

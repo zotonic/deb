@@ -1,9 +1,9 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009 Marc Worrell
+%% @copyright 2009-2014 Marc Worrell
 %%
 %% @doc Model for resource data. Interfaces between zotonic, templates and the database.
 
-%% Copyright 2009 Marc Worrell
+%% Copyright 2009-2014 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@
 
     page_path_to_id/2,
     
+    get_visible/2,
     get/2,
     get_raw/2,
     get_acl_props/2,
@@ -77,9 +78,11 @@
 
 %% @doc Fetch the value for the key from a model source
 %% @spec m_find_value(Key, Source, Context) -> term()
+-spec m_find_value(resource()|atom(), #m{}, #context{}) -> #m{} | undefined | any().
 m_find_value(Id, #m{value=undefined} = M, Context) ->
     case rid(Id, Context) of
-        undefined -> undefined;
+        undefined -> 
+            undefined;
         RId ->
             case z_acl:rsc_visible(RId, Context) of
                 true ->
@@ -98,18 +101,25 @@ m_find_value(Key, #m{value=Id}, Context) when is_integer(Id) ->
     p(Id, Key, Context).
 
 %% @doc Transform a m_config value to a list, used for template loops
-%% @spec m_to_list(Source, Context) -> List
+-spec m_to_list(#m{}, #context{}) -> list().
 m_to_list(#m{value=#rsc_list{list=List}}, _Context) ->
     List;
-m_to_list(#m{}, _Context) ->
-    [].
+m_to_list(#m{value=undefined}, _Context) ->
+    [];
+m_to_list(#m{value=Id}, Context) ->
+    case get_visible(Id, Context) of
+        undefined ->
+            [];
+        L when is_list(L) ->
+            L
+    end.
 
 %% @doc Transform a model value so that it can be formatted or piped through filters
-%% @spec m_value(Source, Context) -> term()
+-spec m_value(#m{}, #context{}) -> undefined | any().
 m_value(#m{value=undefined}, _Context) ->
     undefined;
-m_value(#m{value=V}, _Context) ->
-    V.
+m_value(#m{value=Id}, Context) ->
+    get_visible(Id, Context).
 
 %% @doc Return the id of the resource with the name
 % @spec name_to_id(NameString, Context) -> {ok, int()} | {error, Reason}
@@ -173,15 +183,41 @@ page_path_to_id(Path, Context) ->
     end.
 
 
+%% @doc Read a whole resource, check all properties for access rights
+-spec get_visible(resource(), #context{}) -> list() | undefined.
+get_visible(RId, Context) ->
+    case rid(RId, Context) of
+        undefined ->
+            undefined;
+        Id ->
+            case z_acl:rsc_visible(Id, Context) of
+                true ->
+                    case get(Id, Context) of
+                        undefined ->
+                            undefined;
+                        Props ->
+                            {id,Id} = proplists:lookup(id, Props),
+                            lists:filter(fun({K,_V}) ->
+                                            z_acl:rsc_prop_visible(Id, K, Context) 
+                                         end,
+                                         Props)
+                    end;
+                false ->
+                    undefined
+            end
+    end.
+
 %% @doc Read a whole resource
-%% @spec get(Id, Context) -> PropList | undefined
+-spec get(resource(), #context{}) -> list() | undefined.
 get(Id, Context) ->
     case rid(Id, Context) of
         Rid when is_integer(Rid) ->
             z_depcache:memo(fun() -> 
                                 case get_raw(Rid, Context) of
-                                    undefined -> undefined;
-                                    Props -> z_notifier:foldr(#rsc_get{id=Rid}, Props, Context) 
+                                    undefined ->
+                                        undefined;
+                                    Props ->
+                                        z_notifier:foldr(#rsc_get{id=Rid}, Props, Context) 
                                 end
                             end,
                             Rid,
@@ -209,10 +245,52 @@ get_raw(Id, Context) when is_integer(Id) ->
                 Memo
           end,
     case z_db:assoc_props_row(SQL, [Id], Context) of
-        undefined -> [];
-        Raw -> Raw
+        undefined -> 
+            [];
+        Raw -> 
+            ensure_utc_dates(Raw, Context)
     end.
-             
+
+%% Fix old records which had serialized data in localtime and no date_is_all_day flag
+ensure_utc_dates(Props, Context) ->
+    case lists:keymember(tz, 1, Props) of
+        true ->
+            Props;
+        false ->
+            % Convert dates, assuming the system's default timezone
+            DateStart = lists:keyfind(date_start, 1, Props),
+            DateEnd = lists:keyfind(date_end, 1, Props),
+            IsAllDay = case {DateStart,DateEnd} of
+                {{date_start, {_, { 0, 0,_StartSec}}},
+                 {date_end,   {_, {23,59,_EndSec}}}} ->
+                    true;
+                _ ->
+                    false
+            end,
+            [
+                {tz, z_context:tz(Context)},
+                {date_is_all_day, IsAllDay}
+                | [ ensure_utc_date(P, IsAllDay) || P <- Props ]
+            ]
+    end.
+
+% publication_start, publication_end, created, and modified are already in UTC
+ensure_utc_date(Date, IsAllDay) ->
+    try
+        ensure_utc_date_1(Date, IsAllDay)
+    catch
+        error:badarg ->
+            {element(1, Date), undefined}
+    end.
+
+ensure_utc_date_1({date_start, DT}, false) when is_tuple(DT) ->
+    {date_start, hd(calendar:local_time_to_universal_time_dst(DT))};
+ensure_utc_date_1({date_end, DT}, false) when is_tuple(DT) ->
+    {date_end, hd(calendar:local_time_to_universal_time_dst(DT))};
+ensure_utc_date_1({org_pubdate, DT}, _IsAllDay) when is_tuple(DT) ->
+    {org_pubdate, hd(calendar:local_time_to_universal_time_dst(DT))};
+ensure_utc_date_1(P, _IsAllDay) ->
+    P.
 
 
 %% @doc Get the ACL fields for the resource with the id.
@@ -326,7 +404,7 @@ is_published_date(Id, Context) ->
         RscId when is_integer(RscId) ->
             case m_rsc:p_no_acl(RscId, is_published, Context) of
                 true ->
-                    Date = calendar:local_time(),
+                    Date = erlang:universaltime(),
                     m_rsc:p_no_acl(RscId, publication_start, Context) =< Date 
                       andalso m_rsc:p_no_acl(RscId, publication_end, Context) >= Date;
                 false ->
@@ -647,7 +725,7 @@ is_a_id(Id, Context) ->
     RscCatId = p(Id, category_id, Context),
     [ RscCatId | m_category:get_path(RscCatId, Context)].
 
-%% @doc Check if the resource is in a categorie.
+%% @doc Check if the resource is in a category.
 %% @spec is_a(int(), atom(), Context) -> bool()
 is_a(Id, Cat, Context) ->
     RscCatId = p(Id, category_id, Context),

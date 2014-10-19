@@ -160,7 +160,12 @@ module_reindexed(module_reindexed, Context) ->
 %% @doc Initiates the server.
 init(SiteProps) ->
     process_flag(trap_exit, true),
-    Context = z_context:new(proplists:get_value(host, SiteProps)),
+    {host, Host} = proplists:lookup(host, SiteProps),
+    lager:md([
+        {site, Host},
+        {module, ?MODULE}
+      ]),
+    Context = z_context:new(Host),
     z_notifier:observe(module_reindexed, {?MODULE, module_reindexed}, Context),
     {ok, #state{context=Context}}.
 
@@ -275,7 +280,7 @@ insert_mcs(UAClass, MCs, Tag, Site) ->
             {z_convert:to_binary(MediaClass),
              Props1,
              z_convert:to_binary(
-                z_string:to_lower(iolist_to_binary(z_utils:hex_encode(crypto:sha(term_to_binary(Props1)))))
+                z_string:to_lower(iolist_to_binary(z_utils:hex_encode(crypto:hash(sha, term_to_binary(Props1)))))
              )}
         end
         || {MediaClass, Props} <- lists:flatten(MCs)

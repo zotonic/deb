@@ -33,6 +33,7 @@
 ]).
 
 -include_lib("zotonic.hrl").
+-include_lib("webzmachine/include/webmachine_logger.hrl").
 
 %% @doc Fetch the value for the key from a model source
 %% @spec m_find_value(Key, Source, Context) -> term()
@@ -56,6 +57,9 @@ get(ua_class, #context{} = Context) ->
 get(ua_props, #context{} = Context) ->
     z_user_agent:get_props(Context);
 
+get(timezone, #context{} = Context) ->
+    z_context:tz(Context);
+
 get(What, #context{} = Context) -> get(What, z_context:get_reqdata(Context));
 get(_What, undefined) -> undefined;
 get(method, RD) -> wrq:method(RD);
@@ -72,6 +76,8 @@ get(path, RD) -> wrq:path(RD);
 get(qs, RD) -> wrq:req_qs(RD);
 get(headers, RD) -> wrq:req_headers(RD);
 get(user_agent, RD) -> proplists:get_value("user-agent", wrq:req_headers(RD));
+get(req_id, #wm_reqdata{log_data=#wm_log_data{req_id=ReqId}}) -> ReqId;
+
 get(_Key, _RD) -> undefined.
 
 

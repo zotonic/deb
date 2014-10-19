@@ -1,10 +1,10 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2009-2012 Marc Worrell
+%% @copyright 2009-2014 Marc Worrell
 %% @doc Make still previews of media, using image manipulation functions.  Resize, crop, gray, etc.
 %% This uses the command line imagemagick tools for all image manipulation.
 %% This code is adapted from PHP GD2 code, so the resize/crop could've been done more efficiently, but it works :-)
 
-%% Copyright 2009-2012 Marc Worrell
+%% Copyright 2009-2014 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
 %% interface functions
 -export([
     convert/4,
+    convert/5,
     size/3,
     can_generate_preview/1,
     out_mime/3,
@@ -35,8 +36,8 @@
     calc_size/7
 ]).
 
--define(MAX_WIDTH,  5000).
--define(MAX_HEIGHT, 5000).
+-define(MAX_WIDTH,  10000).
+-define(MAX_HEIGHT, 10000).
 
 % Low and max image size (in total pixels) for quality 99 and 55.
 % A small thumbnail needs less compression to keep image quality.
@@ -52,7 +53,11 @@ convert(InFile, InFile, _, _Context) ->
     lager:error("convert will overwrite input file ~p", [InFile]),
     {error, will_overwrite_infile};
 convert(InFile, OutFile, Filters, Context) ->
-    case z_media_identify:identify(InFile, Context) of
+    convert(InFile, InFile, OutFile, Filters, Context).
+
+
+convert(InFile, MediumFilename, OutFile, Filters, Context) ->
+    case z_media_identify:identify(InFile, MediumFilename, MediumFilename, Context) of
         {ok, FileProps} ->
             {mime, Mime} = proplists:lookup(mime, FileProps),
             case can_generate_preview(Mime) of
@@ -65,35 +70,84 @@ convert(InFile, OutFile, Filters, Context) ->
                             Error
                     end;
                 false ->
-                    lager:error("cannot convert a ~p (~p)", [Mime, InFile]),
+                    lager:info("cannot convert a ~p (~p)", [Mime, InFile]),
                     {error, mime_type}
             end;
         {error, Reason} ->
             {error, Reason}
     end.
 
-    convert_1(InFile, OutFile, Mime, FileProps, Filters) ->
-        OutMime = z_media_identify:guess_mime(OutFile),
-        {EndWidth, EndHeight, CmdArgs} = cmd_args(FileProps, Filters, OutMime),
-        z_utils:assert(EndWidth  < ?MAX_WIDTH, image_too_wide),
-        z_utils:assert(EndHeight < ?MAX_HEIGHT, image_too_high),
-        file:delete(OutFile),
-        ok = filelib:ensure_dir(OutFile),
-        Cmd = lists:flatten([
-            "convert ",
-            z_utils:os_filename(InFile++infile_suffix(Mime)), " ",
-            lists:flatten(z_utils:combine(32, CmdArgs)), " ",
-            z_utils:os_filename(OutFile)
-        ]),
-        lager:debug("Image Preview: ~p", [Cmd]),
-        Result = z_media_preview_server:exec(Cmd, OutFile),
-        case filelib:is_regular(OutFile) of
-            true ->
-                ok;
-            false -> 
-                lager:error("convert cmd ~p failed, result ~p", [Cmd, Result]),
-                {error, convert_error}
-        end.
+convert_1(InFile, OutFile, Mime, FileProps, Filters) ->
+    OutMime = z_media_identify:guess_mime(OutFile),
+    {EndWidth, EndHeight, CmdArgs} = cmd_args(FileProps, Filters, OutMime),
+    z_utils:assert(EndWidth  < ?MAX_WIDTH, image_too_wide),
+    z_utils:assert(EndHeight < ?MAX_HEIGHT, image_too_high),
+    file:delete(OutFile),
+    ok = filelib:ensure_dir(OutFile),
+    Cmd = lists:flatten([
+        "convert ",
+        opt_density(FileProps),
+        z_utils:os_filename(InFile++infile_suffix(Mime)), " ",
+        lists:flatten(z_utils:combine(32, CmdArgs)), " ",
+        z_utils:os_filename(OutFile)
+    ]),
+    case run_cmd(Cmd, OutFile) of
+        ok ->
+            case filelib:is_regular(OutFile) of
+                true ->
+                    ok;
+                false -> 
+                    case filelib:is_regular(InFile) of
+                        false -> {error, enoent};
+                        true -> {error, convert_error}
+                    end
+            end;
+        {error, _} = Error ->
+            lager:error("convert cmd ~p failed, result ~p", [Cmd, Error]),
+            Error
+    end.
+
+opt_density(Props) ->
+    case proplists:get_value(mime, Props) of
+        <<"application/pdf">> -> " -density 150x150 ";
+        "application/pdf" -> " -density 150x150 ";
+        _Mime -> ""
+    end.
+
+run_cmd(Cmd, OutFile) ->
+    jobs:run(media_preview_jobs,
+            fun() ->
+                case filelib:is_regular(OutFile) of
+                    true -> ok;
+                    false -> once(Cmd, OutFile)
+                end
+            end).
+
+
+once(Cmd, OutFile) ->
+    MyPid = self(),
+    Key = {n,l,Cmd},
+    case gproc:reg_or_locate(Key) of
+        {MyPid, _} ->
+            lager:debug("Convert: ~p", [Cmd]),
+            Result = os:cmd(Cmd),
+            gproc:unreg(Key),
+            case filelib:is_regular(OutFile) of
+                true ->
+                    ok;
+                false -> 
+                    lager:error("convert cmd ~p failed, result ~p", [Cmd, Result]),
+                    {error, convert_error}
+            end;
+        {_OtherPid, _} ->
+            lager:debug("Waiting for parallel: ~p", [Cmd]),
+            Ref = gproc:monitor(Key),
+            receive
+                {gproc, unreg, Ref, Key} -> 
+                    ok
+            end 
+    end.
+
 
 
 %% Return the ImageMagick input-file suffix.
@@ -122,7 +176,7 @@ size(InFile, Filters, Context) ->
             true ->
                 {width, ImageWidth}   = proplists:lookup(width, FileProps),
                 {height, ImageHeight} = proplists:lookup(height, FileProps),
-                {orientation, Orientation} = proplists:lookup(orientation, FileProps),
+                Orientation = proplists:get_value(orientation, FileProps, 1),
                 
                 ReqWidth   = z_convert:to_integer(proplists:get_value(width, Filters)),
                 ReqHeight  = z_convert:to_integer(proplists:get_value(height, Filters)),
@@ -158,7 +212,7 @@ cmd_args(FileProps, Filters, OutMime) ->
     {height, ImageHeight} = proplists:lookup(height, FileProps),
     {mime, Mime0} = proplists:lookup(mime, FileProps),
     Mime = z_convert:to_list(Mime0),
-    {orientation, Orientation} = proplists:lookup(orientation, FileProps),
+    Orientation = proplists:get_value(orientation, FileProps, 1),
     ReqWidth   = proplists:get_value(width, Filters),
     ReqHeight  = proplists:get_value(height, Filters),
     {CropPar,Filters1} = fetch_crop(Filters),
@@ -405,6 +459,15 @@ fetch_crop(Filters) ->
 
 
 %%@doc Calculate the size of the resulting image, depends on the crop and the original image size
+calc_size(0, Height, ImageWidth, ImageHeight, CropPar, Orientation, IsUpscale) ->
+    calc_size(1, Height, ImageWidth, ImageHeight, CropPar, Orientation, IsUpscale);
+calc_size(Width, 0, ImageWidth, ImageHeight, CropPar, Orientation, IsUpscale) ->
+    calc_size(Width, 1, ImageWidth, ImageHeight, CropPar, Orientation, IsUpscale);
+calc_size(Width, Height, 0, ImageHeight, CropPar, Orientation, IsUpscale) ->
+    calc_size(Width, Height, 1, ImageHeight, CropPar, Orientation, IsUpscale);
+calc_size(Width, Height, ImageWidth, 0, CropPar, Orientation, IsUpscale) ->
+    calc_size(Width, Height, ImageWidth, 1, CropPar, Orientation, IsUpscale);
+
 calc_size(Width, Height, ImageWidth, ImageHeight, CropPar, Orientation, IsUpscale) when Orientation >= 5 ->
     calc_size(Width, Height, ImageHeight, ImageWidth, CropPar, 1, IsUpscale);
 

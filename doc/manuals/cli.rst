@@ -1,7 +1,7 @@
 .. _manual-cli:
 
-The Zotonic shell command
-=========================
+The zotonic command
+===================
 
 The ``zotonic`` command runs a number of utility commands which all
 operate on a Zotonic instance.
@@ -23,13 +23,16 @@ Currently, the following subcommands are implemented:
   Stop the background Zotonic server instance.
 
 ``zotonic debug``
-  Launch the Zotonic server interactively and get an EShell on the running instance.  There is a "start.sh" command in the root folder which is a shortcut for this command.
+  Launch the Zotonic server interactively and get an EShell on the running instance. See :ref:`manual-cli-shell`. The ``start.sh`` command in the root folder is a shortcut for this command.
 
 ``zotonic restart``
   Restart the background Zotonic server instance.
 
 ``zotonic update``
   Update the server.  Compiles and loads any new code, flushes caches and rescans all modules.
+  
+``zotonic shell``
+  Get an EShell on the running instance. See :ref:`manual-cli-shell`.
 
 ``zotonic addsite [options] <site_name>``
   Creates a new site with [site_name] as its name.  See :ref:`manual-cli-addsite` for a full overview of this command.
@@ -51,6 +54,8 @@ Currently, the following subcommands are implemented:
 
   ``reinstall <module> [module2, ...]``  Reinstall a module
 
+  ``sync-branches``  Tries to update all installed modules to reflect the module's branch to the currently checked out Zotonic branch.
+
   ``list``  List all modules available on the Zotonic Module Repository
 
   ``search <query>``  Search for a module
@@ -63,7 +68,7 @@ Currently, the following subcommands are implemented:
   -s SITE, --site=SITE  affected Zotonic site
   -d, --debug   enable debugging
   -n NODE, --node=NODE  Zotonic Erlang node
-  
+
 
 ``zotonic copysite [site_name] [source_server]``
   Copy [site_name] and its database content from the [source_server] over SSH and load its content into the filesystem and database of the local machine. You will need to have created the database zotonic_[site_name] for this to work.
@@ -88,6 +93,14 @@ Currently, the following subcommands are implemented:
 ``zotonic update``
   Update the server. Compiles and loads any new code, flushes caches and rescans all modules.
 
+``zotonic compile``
+  Compiles all the Zotonic Erlang source files, modules and sites,
+  including those in the user sites directory and user modules
+  directory (see :ref:`manual-configuration`). This command is mainly
+  called from the Makefile when building Zotonic. It does *not*
+  compile Zotonic's dependencies (the Erlang files under the ``deps/``
+  folder). This command can only be run when Zotonic is not running; for hot code reloads, use ``zotonic update``.
+  
 ``zotonic compilefile [files...]``
   Compiles and reloads a single :term:`Erlang module` within the
   Zotonic folder. This runs very fast and works very well on a
@@ -106,14 +119,4 @@ Currently, the following subcommands are implemented:
 
 ``zotonic logtail``
   Starts a ``tail -F`` on the three Zotonic log files, console.log, error.log and crash.log
-
-             
-Legacy zotonic.sh script
-------------------------
-
-For archival purposes, the ``zotonic.sh`` script that was used before
-release 0.8 is listed here.
-
-.. highlight:: bash
-.. literalinclude:: zotonic.sh
 

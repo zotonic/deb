@@ -36,6 +36,7 @@ init(DispatchArgs) -> {ok, DispatchArgs}.
 
 service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
     Context  = z_context:new(ReqData, ?MODULE),
+    z_context:lager_md(Context),
     Context1 = z_context:set(DispatchArgs, z_context:ensure_qs(Context)),
     ?WM_REPLY(true, Context1).
 
@@ -76,7 +77,11 @@ do_redirect(ReqData, Context) ->
                                     A = z_context:get_q_all(Context),
                                     lists:foldl(fun(K, Acc) -> [{K, proplists:get_value(atom_to_list(K), A)}|Acc] end, Args, ArgList)
                             end,
-					Args2 = lists:foldl(fun(K, Acc) -> proplists:delete(K, Acc) end, Args1, [is_permanent, dispatch, q, qargs, zotonic_dispatch, ssl]),
+					Args2 = lists:foldl(fun(K, Acc) -> 
+											proplists:delete(K, Acc) 
+										end, 
+										Args1,
+										z_dispatcher:dispatcher_args()),
 					z_dispatcher:url_for(Dispatch, Args2, Context)
 			end;
 		Url ->
