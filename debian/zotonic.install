@@ -6,5 +6,4 @@ modules/ /var/lib/zotonic/zotonic
 priv/ /var/lib/zotonic/zotonic
 GNUmakefile /var/lib/zotonic/zotonic
 Makefile /var/lib/zotonic/zotonic
-Emakefile /var/lib/zotonic/zotonic
 .profile /var/lib/zotonic
