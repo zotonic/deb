@@ -28,7 +28,7 @@
 %%              | {ok, #dispatch_match{}} 
 %%              | {ok, #dispatch_redirect{}}
 %%              | undefined.
--record(dispatch, {host, path="", method='GET', protocol=http}).
+-record(dispatch, {host, path="", method='GET', protocol=http, tracer_pid}).
     
     -record(dispatch_redirect, {location, is_permanent=false}).
     -record(dispatch_match, {dispatch_name, mod, mod_opts=[], path_tokens=[], bindings=[], app_root="", string_path=""}).
@@ -100,7 +100,11 @@
 %% the request. (first), 'trigger' the id of the element which triggered the postback, and 'target' the 
 %% id of the element which should receive possible updates. Note: postback_notify is also used as an event.
 %% Return either 'undefined' or a #context with the result of the postback
--record(postback_notify, {message, trigger, target}).
+-record(postback_notify, {message, trigger, target, data}).
+
+%% @doc Message sent by an user-agent on a postback event. Encapsulates the encoded postback and any
+%% additional data. This is handled by z_transport.erl, which will call the correct event/2 functions.
+-record(postback_event, {postback, trigger, target, triggervalue, data}).
 
 %% @doc Notification to signal an inserted comment. (notify)
 %% 'comment_id' is the id of the inserted comment, 'id' is the id of the resource commented on.
@@ -204,7 +208,7 @@
 %% @doc Resource will be deleted. (notify)
 %% This notification is part of the delete transaction, it's purpose is to clean up
 %% associated data.
--record(rsc_delete, {id}).
+-record(rsc_delete, {id, is_a}).
 
 %% @doc Foldr for an resource insert, modify the insertion properties.
 -record(rsc_insert, {}).
@@ -291,8 +295,9 @@
 % 'auth_autologon' - (first) check if there is an automatic log on enabled for this session/user-agent
 %                    returns {ok, UserId} when an user should be logged on.
 %                    Called for every single request!
+% 'request_context' - Called after parsing the query arguments (by z_context:ensure_qs/1) (foldl)
 % 'session_context' - Initialize a context from the current session (foldl).
-%                     Called on every request.
+%                     Called on every request with a session.
 % 'session_init'    - Notification that a new session has been initialized (session_pid is in the context)
 % 'session_init_fold' - foldl over the context containing a new session (after session_init)
 
@@ -300,6 +305,8 @@
 %% Return true, false or undefined
 -record(user_is_enabled, {id}).
 
+%% @doc Set #context fields depending on the user and/or the preferences of the user. (foldl)
+-record(user_context, {id}).
 
 %% @doc Request API logon
 -record(service_authorize, {service_module}).
@@ -318,11 +325,15 @@
 
 %% @doc An edge has been inserted. (notify)
 %% The predicate is an atom.
--record(edge_insert, {subject_id, predicate, object_id}).
+-record(edge_insert, {subject_id, predicate, object_id, edge_id}).
 
 %% @doc An edge has been deleted. (notify)
 %% The predicate is an atom.
--record(edge_delete, {subject_id, predicate, object_id}).
+-record(edge_delete, {subject_id, predicate, object_id, edge_id}).
+
+%% @doc An edge has been updated. (notify)
+%% The predicate is an atom.
+-record(edge_update, {subject_id, predicate, object_id, edge_id}).
 
 
 %% @doc Notification that a site configuration is changed (notify)
@@ -368,6 +379,19 @@
 %% Must return an iolist()
 -record(scomp_script_render, {is_nostartup=false, args=[]}).
 
+
+%% @doc Render the javascript for a custom action event type.
+%% The custom event type must be a tuple, for example:
+%% <code>{% wire type={live id=myid} action={...} %}</code>
+%% Must return {ok, Javascript, Context}
+-record(action_event_type, {
+            event :: tuple(),
+            trigger_id :: string(),
+            trigger :: string(),
+            postback_js :: iolist(),
+            postback_pickled :: string()|binary(),
+            action_js :: iolist()
+}).
 
 %% @doc Find an import definition for a CSV file by checking the filename of the to be imported file. (first)
 %% Should return the #import_csv_definition or undefined (in which case the column headers are used as property names).

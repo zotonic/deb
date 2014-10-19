@@ -68,8 +68,12 @@ scan(Context) ->
 %%                     {stop, Reason}
 %% @doc Initiates the server.  Options are: dropbox_dir, processing_dir, unhandled_dir, interval, max_age and min_age
 init(SiteProps) ->
-    Host     = proplists:get_value(host, SiteProps),
-    Context  = z_context:new(Host),
+    Host = proplists:get_value(host, SiteProps),
+    lager:md([
+        {site, Host},
+        {module, ?MODULE}
+      ]),
+    Context = z_context:new(Host),
 	DefaultDropBoxDir = z_path:files_subdir_ensure("dropbox", Context),
 	DefaultProcessingDir = z_path:files_subdir_ensure("processing", Context),
 	DefaultUnhandledDir = z_path:files_subdir_ensure("unhandled", Context),
@@ -153,10 +157,12 @@ do_scan(State) ->
     SafeDropFiles = lists:foldl(fun(F, Acc)-> min_age_check(F, MinAge, Acc) end,
                                 [],
                                 AllDropFiles), 
-    Moved      = lists:map(fun(F) -> move_file(DropDir, F, false, ProcDir) end, SafeDropFiles),
+    Moved      = lists:map(fun(F) -> {F,move_file(DropDir, F, false, ProcDir)} end, SafeDropFiles),
     ToProcess1 = lists:foldl(   fun
-                                    ({ok, File}, Acc) -> [File|Acc];
-                                    ({error, _Reason}, Acc) -> Acc
+                                    ({_, {ok, File}}, Acc) -> [File|Acc];
+                                    ({F, {error, Reason}}, Acc) ->
+                                        lager:warning("z_dropbox: Failed to move file: ~p to ~p: ~p", [F, ProcDir, Reason]),
+                                        Acc
                                 end,
                                 ToProcess,
                                 Moved),

@@ -25,6 +25,14 @@
  {
      $.extend(
          {
+             // center the dialog vertically again
+             dialogReposition: function() {
+                 var dialog = $("#zmodal");
+                 if ($(window).width() >= 768) {
+                     //dialog.css({marginTop: -Math.floor(dialog.height()/2)+'px'});
+                 }
+             },
+
              dialogAdd: function(options)
              {
                  $('#zmodal').remove();
@@ -45,14 +53,18 @@
                  if (typeof(options.addclass) == "string")
                      dialogClass += ' ' + options.addclass;
 
+                 var modalDialog = $("<div>").addClass("modal-dialog")
+                     .append($("<div>").addClass("modal-content").append(title).append(body));
+                 
                  var dialog = $("<div>")
                      .attr("id", "zmodal")
                      .addClass(dialogClass)
-                     .append(title)
-                     .append(body)
+                     .append(modalDialog)
                      .appendTo($("body"));
 
-                 dialog.modal({backdrop: true});
+                 dialog
+                    .modal({backdrop: true})
+                    .css({"overflow-x": "hidden", "overflow-y": "auto"});
 
                  if (width > 0) {
                      dialog.css({
@@ -63,15 +75,18 @@
                      });
                  }
                  
-                 if ($(window).width() <= 480) {
-                    dialog.css({top: ($(window).scrollTop() + 10) + "px"});
-                 } else if (dialog.height() > 0.8 * $(window).height()) {
-                    dialog.addClass('high');
+                 if ($(window).width() >= 768) {
+                    if (dialog.height() > 0.8 * $(window).height()) {
+                        dialog.addClass('high');
+                    } else {
+                        //dialog.css({marginTop: -Math.floor(dialog.height()/2)+'px'});
+                    }
                  }
+
                  if (typeof($.widgetManager) != 'undefined') {
                      dialog.widgetManager();
                  }
-                 z_tinymce_add(dialog);
+                 z_editor_add(dialog);
              },
 
              dialogClose: function()
@@ -82,7 +97,7 @@
              dialogRemove: function(obj)
              {
                  obj = obj || $('#zmodal');
-                 z_tinymce_remove(obj);
+                 z_editor_remove(obj);
                  obj.draggable('destroy').resizable('destroy').fadeOut(300, function()
                                                                        {
                                                                            $(this).remove();

@@ -29,6 +29,8 @@
     cleanup/1
 ]).
 
+-include_lib("zotonic_file.hrl").
+
 % Check every 10 minutes if we have anything to delete.
 % Check every 10 seconds when working through a backlog. 
 -define(CLEANUP_TIMEOUT_LONG, 600000).
@@ -66,6 +68,10 @@ start_link(Args) when is_list(Args) ->
 %% @doc Initiates the server.
 init(Args) ->
     {host, Host} = proplists:lookup(host, Args),
+    lager:md([
+        {site, Host},
+        {module, ?MODULE}
+      ]),
     {ok, #state{host=Host}, ?CLEANUP_TIMEOUT_LONG}.
 
 %% @spec handle_call(Request, From, State) -> {reply, Reply, State} |
@@ -140,15 +146,33 @@ do_cleanup_1(Rs, Context) ->
     lists:foreach(fun(R) ->
                     do_cleanup_file(R, Context)
                   end, Rs),
-    {MaxId, _, _} = lists:last(Rs),
-    z_db:q("delete from medium_deleted where id <= $1", [MaxId], Context),
+    Ranges = z_utils:ranges([ Id || {Id, _, _} <- Rs ]),
+    z_db:transaction(
+            fun(Ctx) ->
+                lists:foreach(fun
+                                ({A,A}) ->
+                                    z_db:q("delete from medium_deleted where id = $1", [A], Ctx);
+                                ({A,B}) ->
+                                    z_db:q("delete from medium_deleted where id >= $1 and id <= $2", [A,B], Ctx)
+                              end,
+                              Ranges)
+             end,
+             Context),
     {ok, length(Rs)}.
 
 do_cleanup_file({_Id, Filename, Date}, Context) ->
-    BasePreview = filename:join(z_path:media_preview(Context), Filename),
+    PreviewPath = z_path:media_preview(Context),
+    ArchivePath = z_path:media_archive(Context),
+    % Remove from the file system
+    BasePreview = filename:join(PreviewPath, Filename),
     Previews = filelib:wildcard(binary_to_list(iolist_to_binary([BasePreview, "(*"]))),
     [ file:delete(Preview) || Preview <- Previews ],
-    Res = file:delete(z_media_archive:abspath(Filename, Context)),
-    lager:debug("Medium cleanup: ~p (from ~p) result ~p", [Filename, Date, Res]),
+    file:delete(filename:join(ArchivePath, Filename)),
+    % Remove from the file store
+    PreviewStore = iolist_to_binary([filename:basename(PreviewPath), $/, Filename, $( ]),
+    ArchiveStore = iolist_to_binary([filename:basename(ArchivePath), $/, Filename ]), 
+    z_notifier:first(#filestore{action=delete, path={prefix, PreviewStore}}, Context),
+    z_notifier:first(#filestore{action=delete, path=ArchiveStore}, Context),
+    lager:debug("Medium cleanup: ~p (from ~p)", [Filename, Date]),
     ok.
 

@@ -1,8 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2010 Marc Worrell
+%% @copyright 2010-2014 Marc Worrell
 %% @doc WebSocket connections
 
-%% Copyright 2010 Marc Worrell
+%% Copyright 2010-2014 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 
 -export([
     init/1, 
-    forbidden/2,
+    service_available/2,
     upgrades_provided/2,
     charsets_provided/2,
     content_types_provided/2,
@@ -42,15 +42,15 @@
 -include_lib("controller_webmachine_helper.hrl").
 -include_lib("zotonic.hrl").
 
-init(DispatchArgs) -> {ok, DispatchArgs}.
+init(DispatchArgs) ->
+    {ok, DispatchArgs}.
 
-%% @doc The request must have a valid session cookie.
-forbidden(ReqData, DispatchArgs) ->
-    Context = z_context:new(ReqData),
+service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
+    Context  = z_context:new(ReqData, ?MODULE),
     Context1 = z_context:set(DispatchArgs, Context),
     Context2 = z_context:continue_session(Context1),
-    ?WM_REPLY(not z_context:has_session(Context2) andalso
-              z_context:get(require_session, Context2, true), Context2).
+    z_context:lager_md(Context2),
+    ?WM_REPLY(true, Context2).
 
 %% @doc Possible connection upgrades
 upgrades_provided(ReqData, Context) ->
@@ -66,40 +66,53 @@ content_types_provided(ReqData, Context) ->
 
 provide_content(ReqData, Context) ->
     Context1 = ?WM_REQ(ReqData, Context),
-    Context2 = z_context:ensure_qs(Context1),
-    Context3 = z_context:set_resp_header("X-Robots-Tag", "noindex", Context2),
-    Rendered = z_template:render("error_websocket.tpl", z_context:get_all(Context), Context3),
-    {Output, OutputContext} = z_context:output(Rendered, Context3),
+    Context2 = z_context:set_resp_header("X-Robots-Tag", "noindex", Context1),
+    Rendered = z_template:render("error_websocket.tpl", z_context:get_all(Context2), Context2),
+    {Output, OutputContext} = z_context:output(Rendered, Context2),
     ?WM_REPLY(Output, OutputContext).
 
 %% @doc Initiate the websocket connection upgrade
 websocket_start(ReqData, Context) ->
-    ContextReq = ?WM_REQ(ReqData, Context),
-    Context1 = z_context:ensure_all(ContextReq),
+    Context1 = ?WM_REQ(ReqData, Context),
     Context2 = case z_context:get(ws_handler, Context1) of
-        undefined ->
-            z_context:set(ws_handler, ?MODULE, Context1);
+        undefined -> z_context:set(ws_handler, ?MODULE, Context1);
         _Hdlr -> Context1
     end,
     Context3 = z_context:set(ws_request, true, Context2),
-    case z_context:get_req_header("sec-websocket-version", Context3) of
+    PrunedContext = prune_context(Context3),
+    case wrq:get_req_header_lc("sec-websocket-version", ReqData) of
         undefined ->
-            case z_context:get_req_header("sec-websocket-key1", Context3) of
+            case wrq:get_req_header_lc("sec-websocket-key1", ReqData) of
                 undefined ->
-                    z_websocket_hixie75:start(ReqData, Context3);
+                    z_websocket_hixie75:start(ReqData, PrunedContext);
                 WsKey1 ->
-                    z_websocket_hybi00:start(WsKey1, ReqData, Context3)
+                    z_websocket_hybi00:start(WsKey1, ReqData, PrunedContext)
             end;
         "7" ->
             % http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-07
-            z_websocket_hybi17:start(ReqData, Context3);
+            z_websocket_hybi17:start(ReqData, PrunedContext);
         "8" ->
             % http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-10
-            z_websocket_hybi17:start(ReqData, Context3);
+            z_websocket_hybi17:start(ReqData, PrunedContext);
         "13" ->
             % http://tools.ietf.org/html/draft-ietf-hybi-thewebsocketprotocol-17
-            z_websocket_hybi17:start(ReqData, Context3)
+            z_websocket_hybi17:start(ReqData, PrunedContext)
     end.
+
+
+%% @doc Prune a context and reqdata for the long-lived websocket processes
+prune_context(Context) ->
+    ContextQs = z_context:ensure_qs(Context),
+    ContextPruned = z_context:prune_for_scomp(ContextQs),
+    ReqData = z_context:get_reqdata(ContextQs),
+    ReqData1 = #wm_reqdata{
+                  peer=ReqData#wm_reqdata.peer,
+                  port=ReqData#wm_reqdata.port,
+                  resp_headers=mochiweb_headers:empty(),
+                  req_cookie=[]
+    },
+    z_context:set_reqdata(ReqData1, ContextPruned). 
+
 
 %% @doc Returns true if this a websocket request
 is_websocket_request(Context) ->
@@ -116,40 +129,22 @@ websocket_send_data(Pid, Data) ->
 websocket_init(_Context) ->
     ok.
 
-%% Handle a message from the browser, should contain an url encoded request. Sends result script back to browser.
-websocket_message(<<"Z:PING:",PingId/binary>>, SenderPid, Context) ->
-    PageId = z_convert:to_binary(Context#context.page_id),
-    case PingId of
-        PageId ->
-            % Ping for this page-id, reply with a pong
-            z_session_page:websocket_attach(SenderPid, Context),
-            SenderPid ! {send_data, iolist_to_binary(["Z:PONG:",PageId])},
-            ok;
-        _Other ->
-            % Ping for wrong page-id, stay silent.
-            ok
-    end;
-websocket_message(Msg, _SenderPid, Context) ->
-    Qs = mochiweb_util:parse_qs(Msg),
-    Context1 = z_context:set('q', Qs, Context),
-
-    {ResultScript, ResultContext} = try
-        % Enable caching lookup values, essential for fast data handling
-        z_depcache:in_process(true),
-        controller_postback:process_postback(Context1)
+%% Handle a message from the browser, should contain an ubf encoded request. Sends result script back to browser.
+websocket_message(<<>>, _SenderPid, Context) ->
+    {ok, Context};
+websocket_message(Data, SenderPid, Context) ->
+    try
+        {ok, Term, RestData} = z_transport:data_decode(Data),
+        {ok, Reply, ContextWs} = z_transport:incoming(Term, Context),
+        {ok, ReplyData} = z_transport:data_encode(Reply),
+        z_session_page:websocket_attach(SenderPid, ContextWs),
+        websocket_send_data(SenderPid, ReplyData),
+        websocket_message(RestData, SenderPid, ContextWs)
     catch
         Error:X ->
-            ?zWarning(io_lib:format("~p:~p~n~p", [Error, X, erlang:get_stacktrace()]), Context1),
-            {case z_context:get_q("z_trigger_id", Context1) of 
-                undefined -> [];
-                ZTrigger -> [" z_unmask_error('",z_utils:js_escape(ZTrigger),"');"]
-             end, 
-             Context1}
-    end,
-    % Cleanup process dict, so our process heap is smaller between calls
-    z_session_page:add_script(ResultScript, ResultContext),
-    z_utils:erase_process_dict(),
-    ok.
+            ?zWarning(io_lib:format("~p:~p~n~p", [Error, X, erlang:get_stacktrace()]), Context),
+            ok
+    end.
 
 websocket_info(_Msg, _Context) -> 
     ok.

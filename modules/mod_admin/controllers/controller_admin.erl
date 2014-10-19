@@ -25,7 +25,7 @@
 -include_lib("controller_html_helper.hrl").
 
 is_authorized(ReqData, Context) ->
-    z_acl:wm_is_authorized(use, z_context:get(acl_module, Context, mod_admin), admin_logon, ReqData, Context).
+    z_admin_controller_helper:is_authorized(mod_admin, ReqData, Context).
 
 html(Context) ->
     Template = z_context:get(template, Context, "admin.tpl"),

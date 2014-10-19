@@ -20,22 +20,16 @@
 -module(service_zotonic_status_check).
 -author("Arjan Scherpenisse <arjan@scherpenisse.net>").
 
--svc_title("Retrieve a full export of an object.").
+-svc_title("Checks if all sites are running.").
 -svc_needauth(false).
 
 -export([process_get/2]).
 
 -include_lib("zotonic.hrl").
 
-
 process_get(_ReqData, _Context) ->
-    Statuses = [Stat || [_Site, Stat |_] <- z_sites_manager:get_sites_status()],
-    Result = case lists:member(failed, Statuses) orelse
-                 lists:member(retrying, Statuses) of
-                 true ->
-                     fail;
-                 false ->
-                     ok
-             end,
-    {struct, [{status, Result}]}.
+    {struct, [{status, result(z_sites_manager:all_sites_running())}]}.
+
+result(true) -> ok;
+result(false) -> fail.
 

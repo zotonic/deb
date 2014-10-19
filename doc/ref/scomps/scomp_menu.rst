@@ -12,17 +12,17 @@ Example::
 
 Generates something like::
 
-   <ul id="navigation" class="clearfix at-menu do_superfish">
-     <li id="nav-item-1" class=" first ">
+   <ul id="navigation" class="nav">
+     <li>
        <a href="/" class="welcome">Home</a>
      </li>
-     <li id="nav-item-2" class="">
+     <li>
        <a href="/features" class="page_features">Features</a>
      </li>
-     <li id="nav-item-3" class="">
-       <a href="/documentation" class=" current documentation">Documentation</a>
+     <li>
+       <a href="/documentation" class="documentation active">Documentation</a>
      </li>
-     <li id="nav-item-4" class=" last ">
+     <li>
        <a href="/documentation/628/installation" class="page_install">Install</a>
      </li>
    </ul>
@@ -30,11 +30,10 @@ Generates something like::
 The menu has the following features:
 
 * The menu is a unordered list.
-* The id of the menu is "navigation".
-* The class of the menu is always "clearfix at-menu do_superfish"
+* The id of the menu is ``navigation`` and can be prepended with param ``id_prefix``.
+* The class of the menu is set with param ``class`` (default ``nav``).
 * Menu items are a <li> with a single <a>
-* The first and last <li> are given the respective classes "first" and "last".
-* The link of the menu item referring to the current page has the class "active"
+* The link of the menu item referring to the current page has the class ``active``.
 * Every link also gets the unique name of the target as a class.
 * Every menu item can have single level submenus.  A submenu has the same properties as the menu.
 
@@ -47,4 +46,10 @@ The menu has the following features:
 |menu_id        |The id of the menu that you want to           |               |
 |               |display. If left empty, the main menu is      |               |
 |               |shown.                                        |               |
++---------------+----------------------------------------------+---------------+
+|id_prefix      |String prepended to menu id.                  |               |
++---------------+----------------------------------------------+---------------+
+|class          |HTML class for the list; default "nav".       |               |
++---------------+----------------------------------------------+---------------+
+|maxdepth       |Maximum depth of the menu; default 999.       |               |
 +---------------+----------------------------------------------+---------------+

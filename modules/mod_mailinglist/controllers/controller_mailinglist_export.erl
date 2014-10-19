@@ -38,12 +38,14 @@ init(DispatchArgs) -> {ok, DispatchArgs}.
 
 service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
     Context  = z_context:new(ReqData, ?MODULE),
+    z_context:lager_md(Context),
     Context1 = z_context:set(DispatchArgs, Context),
     ?WM_REPLY(true, Context1).
 
 forbidden(ReqData, Context) ->
     Context1 = ?WM_REQ(ReqData, Context),
     Context2 = z_context:ensure_all(Context1),
+    z_context:lager_md(Context2),
 	Id = z_convert:to_integer(z_context:get_q(id, Context2)),
 	Allowed = z_acl:rsc_editable(Id, Context2),
 	?WM_REPLY(not Allowed, Context2).
@@ -64,6 +66,6 @@ to_text_csv(ReqData, Context) ->
 	Recipients = m_mailinglist:get_enabled_recipients(Id, Context1),
 	Export = z_utils:combine([13,10], Recipients),
 	%% Set the content disposition filename
-	Filename = "mailinglist-"++z_string:to_slug(m_rsc:p(Id, title, Context1))++".csv",
+	Filename = "mailinglist-"++binary_to_list(z_string:to_slug(m_rsc:p(Id, title, Context1)))++".csv",
 	Context2 = z_context:set_resp_header("Content-Disposition", "attachment; filename="++Filename, Context1),
 	?WM_REPLY(Export, Context2).

@@ -42,12 +42,14 @@ init(DispatchArgs) -> {ok, DispatchArgs}.
 
 service_available(ReqData, DispatchArgs) when is_list(DispatchArgs) ->
     Context  = z_context:new(ReqData, ?MODULE),
+    z_context:lager_md(Context),
     Context1 = z_context:set(DispatchArgs, Context),
     ?WM_REPLY(true, Context1).
 
 resource_exists(ReqData, Context) ->
     Context1 = ?WM_REQ(ReqData, Context),
     {Id, ContextQs} = get_id(z_context:ensure_qs(z_context:continue_session(Context1))),
+    z_context:lager_md(ContextQs),
     ?WM_REPLY(m_rsc:exists(Id, ContextQs), ContextQs).
 
 previously_existed(ReqData, Context) ->
@@ -117,7 +119,7 @@ do_body(State, Context) ->
     ContentType = z_context:get(content_type_mime, Context),
     {Id, _} = get_id(Context),
     Dispatch = z_context:get(zotonic_dispatch, Context),
-    case z_notifier:first(#export_resource_data{id=Id, content_type=ContentType, dispatch=Dispatch}, Context) of
+    case z_notifier:first(#export_resource_data{id=Id, content_type=ContentType, dispatch=Dispatch, state=State}, Context) of
         undefined -> do_body_data([Id], State, Context);
         {ok, List} -> do_body_data(List, State, Context);
         {ok, List, NewState} -> do_body_data(List, NewState, Context)

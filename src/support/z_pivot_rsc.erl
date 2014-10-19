@@ -137,13 +137,15 @@ insert_queue(Id, Context) ->
 
 %% @doc Insert a slow running pivot task. For example syncing category numbers after an category update.
 insert_task(Module, Function, Context) ->
-    insert_task(Module, Function, z_ids:id(), [], Context).
+    insert_task(Module, Function, undefined, [], Context).
 
 %% @doc Insert a slow running pivot task. Use the UniqueKey to prevent double queued tasks.
 insert_task(Module, Function, UniqueKey, Context) ->
     insert_task(Module, Function, UniqueKey, [], Context).
     
 %% @doc Insert a slow running pivot task with unique key and arguments.
+insert_task(Module, Function, undefined, Args, Context) ->
+    insert_task(Module, Function, z_ids:id(), Args, Context);
 insert_task(Module, Function, UniqueKey, Args, Context) ->
     insert_task_after(undefined, Module, Function, UniqueKey, Args, Context).
 
@@ -157,7 +159,7 @@ insert_task_after(SecondsOrDate, Module, Function, UniqueKey, Args, Context) ->
                     undefined;
                 N when is_integer(N) ->
                     calendar:gregorian_seconds_to_datetime(
-                        calendar:datetime_to_gregorian_seconds(calendar:local_time()) + N);
+                        calendar:datetime_to_gregorian_seconds(calendar:universal_time()) + N);
                 {Y,M,D} = YMD when is_integer(Y), is_integer(M), is_integer(D) ->
                     {YMD,{0,0,0}};
                 {{Y,M,D},{H,I,S}} when is_integer(Y), is_integer(M), is_integer(D), is_integer(H), is_integer(I), is_integer(S) ->
@@ -225,8 +227,13 @@ start_link(SiteProps) ->
 %%                     {stop, Reason}
 %% @doc Initiates the server.
 init(SiteProps) ->
-    Context = z_context:new(proplists:get_value(host, SiteProps)),
-    Timer = timer:apply_interval(?PIVOT_POLL_INTERVAL * 1000, ?MODULE, poll, [Context]),
+    {host, Host} = proplists:lookup(host, SiteProps), 
+    lager:md([
+        {site, Host},
+        {module, ?MODULE}
+      ]),
+    Context = z_context:new(Host),
+    Timer = timer:apply_interval(timer:seconds(?PIVOT_POLL_INTERVAL), ?MODULE, poll, [Context]),
     {ok, #state{timer=Timer, context=Context}}.
 
 
@@ -301,7 +308,7 @@ do_poll(Context) ->
                 case erlang:apply(Module, Function, z_convert:to_list(Args) ++ [Context]) of
                     {delay, Seconds} ->
                         Due = calendar:gregorian_seconds_to_datetime(
-                                calendar:datetime_to_gregorian_seconds(calendar:local_time()) + Seconds
+                                calendar:datetime_to_gregorian_seconds(calendar:universal_time()) + Seconds
                               ),
                         z_db:q("update pivot_task_queue set due = $1 where id = $2", [Due, TaskId], Context);
                     _OK ->
@@ -355,7 +362,7 @@ do_poll(Context) ->
                          from pivot_task_queue 
                          where due is null
                             or due < now()
-                         order by id asc 
+                         order by due asc 
                          limit 1", Context) 
         of
             {Id,Module,Function,Key,Props} ->
@@ -439,7 +446,9 @@ pivot_resource(Id, Context) ->
         {pivot_date_end, proplists:get_value(pivot_date_end, PropsPrePivoted)},
         {pivot_date_start_month_day, proplists:get_value(pivot_date_start_month_day, PropsPrePivoted)},
         {pivot_date_end_month_day, proplists:get_value(pivot_date_end_month_day, PropsPrePivoted)},
-        {pivot_title, proplists:get_value(pivot_title, PropsPrePivoted)}
+        {pivot_title, proplists:get_value(pivot_title, PropsPrePivoted)},
+        {pivot_location_lat, z_convert:to_float(proplists:get_value(location_lat, R))},
+        {pivot_location_lng, z_convert:to_float(proplists:get_value(location_lng, R))}
     ],
     
     KVsFolded = z_notifier:foldr(#pivot_fields{id=Id, rsc=R}, KVs, Context),
@@ -468,9 +477,9 @@ pivot_resource(Id, Context) ->
                                       {"update rsc set ",[]},
                                       KVsChanged),
 
-            1 = z_db:q1(iolist_to_binary([Sql, " where id = $", integer_to_list(length(Args)+1)]),
-                        lists:reverse([Id|Args]),
-                        Context)
+            z_db:q1(iolist_to_binary([Sql, " where id = $", integer_to_list(length(Args)+1)]),
+                    lists:reverse([Id|Args]),
+                    Context)
     end,
     
     CustomPivots = z_notifier:map(#custom_pivot{id=Id}, Context),
@@ -718,27 +727,41 @@ define_custom_pivot(Module, Columns, Context) ->
         true ->
             ok;
         false ->
-            Fields = custom_columns(Columns),
-            Sql = "CREATE TABLE " ++ TableName ++ "(" ++
-                "id int NOT NULL," ++ Fields ++ " primary key(id))",
-            z_db:q(lists:flatten(Sql), Context),
-            z_db:q("ALTER TABLE " ++ TableName ++ " ADD CONSTRAINT fk_" ++ TableName ++ "_id FOREIGN KEY (id) REFERENCES rsc(id) ON UPDATE CASCADE ON DELETE CASCADE", Context),
-            
-            Indexable = lists:filter(fun({_,_}) -> true;
-                                        ({_,_,Opts}) -> not lists:member(noindex, Opts)
-                                     end,
-                                     Columns),
-            Idx = [ 
-                    begin
-                        K = element(1,Col),
-                        "CREATE INDEX " ++ z_convert:to_list(K) ++ "_key ON " 
-                        ++ TableName ++ "(" ++ z_convert:to_list(K) ++ ")"
-                    end
-                    || Col <- Indexable
-                ],
-            [z_db:q(Sql1, Context) || Sql1 <- Idx]
-    end,
-    ok.
+            ok = z_db:transaction(
+                    fun(Ctx) ->
+                        Fields = custom_columns(Columns),
+                        Sql = "CREATE TABLE " ++ TableName ++ "(" ++
+                              "id int NOT NULL," ++ Fields ++ " primary key(id))",
+
+                        [] = z_db:q(lists:flatten(Sql), Ctx),
+
+                        [] = z_db:q("ALTER TABLE " ++ TableName ++ 
+                                    " ADD CONSTRAINT fk_" ++ TableName ++ "_id " ++
+                                    " FOREIGN KEY (id) REFERENCES rsc(id) ON UPDATE CASCADE ON DELETE CASCADE", Ctx),
+                        
+                        Indexable = lists:filter(fun({_,_}) -> true;
+                                                    ({_,_,Opts}) -> not lists:member(noindex, Opts)
+                                                 end,
+                                                 Columns),
+                        Idx = [ 
+                                begin
+                                    K = element(1,Col),
+                                    "CREATE INDEX " ++ z_convert:to_list(K) ++ "_key ON " 
+                                    ++ TableName ++ "(" ++ z_convert:to_list(K) ++ ")"
+                                end
+                                || Col <- Indexable
+                            ],
+                        lists:foreach(
+                            fun(Sql1) ->
+                                [] = z_db:q(Sql1, Ctx)
+                            end,
+                            Idx),
+                        ok
+                    end,
+                    Context),
+            z_db:flush(Context),
+            ok
+    end.
 
 
 custom_columns(Cols) ->

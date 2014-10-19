@@ -38,7 +38,7 @@ Glossary
       An Erlang module which is the main accessor for retrieving data. The Erlang modules are prefixed with `m_`; in the templates they are accessible using .m... For instance, the model to access :term:`resources <resource>` is called ``m_rsc.erl``; in the template this model lets you access resources by id as ``{{ m.rsc[id] }}``.
 
    Service
-      Provides a generalized way to create API calls. These calls automatically use the authentication mechanism (session id or OAuth) to perform access checks. See :ref:`manual-services`.
+      Also: API Service. Gives access to data or enables to call a function. The total set of API *calls* defines how an application responds to the outside world. Zotonic API Services provide a generalized way to create an API. API calls automatically use the authentication mechanism (session id or :ref:`OAuth <module-mod_oauth>`) to perform access checks. See :ref:`manual-services`.
 
    Validator
       A validator is used to check input fields in a HTML form. A validator has two parts: the client side javascript and a server side check. You add validators to a form with the {% validate %} template tag. A validated query argument can be accessed on the server using z_context:get_q_validated/2.
@@ -108,3 +108,10 @@ Glossary
 
    Delegate
         A reference to a module which will be used to call a callback function on. Used in the templates when attaching actions like a :term:postback to a DOM Event. See :ref:`manual-template-actions`.
+
+   User sites directory
+        The directory in which user-installed Zotonic sites are placed. Defaults to the path ``user/sites`` relative to the Zotonic installation, but can be adjusted by changing the ``user_sites_dir`` configuration variable in the global ``zotonic.config`` file. See :ref:`manual-configuration`.
+
+   User modules directory
+        The directory in which user-installed Zotonic modules are placed. Defaults to the path ``user/modules`` relative to the Zotonic installation, but can be adjusted by changing the ``user_modules_dir`` configuration variable in the global ``zotonic.config`` file. See :ref:`manual-configuration`.
+        

@@ -48,7 +48,9 @@
     insert_url/4,
     replace_url/4,
     replace_url/5,
-	save_preview/4
+	save_preview/4,
+    make_preview_unique/3,
+    is_unique_file/2
 ]).
 
 -include_lib("zotonic.hrl").
@@ -86,14 +88,17 @@ identify(ImageFile, Context) ->
     case z_media_archive:is_archived(ImageFile, Context) of
         true ->
             RelFile = z_media_archive:rel_archive(ImageFile, Context),
-            case z_db:assoc_row("select id, mime, width, height, orientation from medium where filename = $1", [RelFile], Context) of
-                undefined ->
-                    {error, enoent};
-                Props ->
-                    {ok, Props}
-            end;
+            identify_medium_filename(RelFile, Context);
         false ->
-            {error, enoent}
+            identify_medium_filename(ImageFile, Context)
+    end.
+
+identify_medium_filename(MediumFilename, Context) ->
+    case z_db:assoc_row("select id, mime, width, height, orientation from medium where filename = $1", [MediumFilename], Context) of
+        undefined ->
+            {error, enoent};
+        Props ->
+            {ok, Props}
     end.
 
 
@@ -156,30 +161,44 @@ get_by_filename(Filename, Context) ->
             Row
     end.
 
+
 %% @doc Get the medium record that depicts the resource id. "depiction" Predicates are preferred, when 
 %% they are missing then the attached medium record itself is returned.  We must be able to generate a preview
 %% from the medium.
 %% @spec depiction(RscId, Context) -> PropList | undefined
-depiction(Id, Context) when is_integer(Id) ->
-    F = fun() ->
-        find_previewable(m_edge:objects(Id, depiction, Context) ++ [Id], Context)
-    end,
-    z_depcache:memo(F, {depiction, Id}, ?WEEK, [Id], Context).
+depiction(Id, Context) ->
+    try
+        z_depcache:memo(
+            fun() -> depiction([Id], [], Context) end,
+            {depiction, Id}, 
+            ?WEEK, [Id], Context)
+    catch
+        exit:{timeout, _} ->
+            undefined
+    end.
 
-    %% @doc Find the first image in the the list of depictions that can be used to generate a preview.
-    find_previewable([], _Context) ->
-        undefined;
-    find_previewable([Id|Rest], Context) ->
-        case get(Id, Context) of
-            undefined ->
-                find_previewable(Rest, Context);
-            Props ->
-                case z_media_preview:can_generate_preview(proplists:get_value(mime, Props)) of
-                    true -> Props;
-                    false -> find_previewable(Rest, Context)
-                end
-        end.
-    
+depiction([], _Visited, _Context) ->
+    undefined;
+depiction([Id|Ids], Visited, Context) ->
+    case lists:member(Id, Visited) of
+        true ->
+            undefined;
+        false ->
+            Depictions = m_edge:objects(Id, depiction, Context) ++ [Id],
+            case depiction(Depictions, [Id|Visited], Context) of
+                undefined ->
+                    case get(Id, Context) of
+                        undefined ->
+                            depiction(Ids, [Id|Visited], Context);
+                        Props when is_list(Props) ->
+                            Props
+                    end;
+                Props when is_list(Props) ->
+                    Props
+            end
+    end.
+
+
 
 %% @doc Return the list of resources that is depicted by the medium (excluding the rsc itself)
 %% @spec depicts(RscId, Context) -> [Id]
@@ -196,6 +215,7 @@ delete(Id, Context) ->
             medium_delete(Id, Context),
             [ z_depcache:flush(DepictId, Context) || DepictId <- Depicts ],
             z_depcache:flush(Id, Context),
+            z_notifier:notify(#media_replace_file{id=Id, medium=[]}, Context),
             ok;
         false ->
             {error, eacces}
@@ -216,6 +236,7 @@ replace(Id, Props, Context) ->
         {ok, _} -> 
             [ z_depcache:flush(DepictId, Context) || DepictId <- Depicts ],
             z_depcache:flush(Id, Context),
+            z_notifier:notify(#media_replace_file{id=Id, medium=get(Id, Context)}, Context),
             ok;
         {rollback, {Error, _Trace}} ->
              {error, Error}
@@ -246,7 +267,7 @@ maybe_duplicate_file(Ms, Context) ->
                 false ->
                     {ok, Ms};
                 true ->
-                    {ok, NewFile} = duplicate_file(Filename, Context),
+                    {ok, NewFile} = duplicate_file(archive, Filename, Context),
                     RootName = filename:rootname(filename:basename(NewFile)),
                     Ms1 = proplists:delete(filename, 
                             proplists:delete(rootname, 
@@ -272,23 +293,36 @@ maybe_duplicate_preview(Ms, Context) ->
                 false ->
                     {ok, Ms};
                 true ->
-                    {ok, NewFile} = duplicate_file(Filename, Context),
-                    Ms1 = proplists:delete(preview_filename, 
-                            proplists:delete(is_deletable_preview, Ms)), 
-                    Ms2 = [
-                        {preview_filename, NewFile}, 
-                        {is_deletable_preview, true}
-                        | Ms1
-                    ],
-                    {ok, Ms2}
+                    case duplicate_file(preview, Filename, Context) of
+                        {ok, NewFile} ->
+                            Ms1 = proplists:delete(preview_filename, 
+                                    proplists:delete(is_deletable_preview, Ms)), 
+                            Ms2 = [
+                                {preview_filename, NewFile}, 
+                                {is_deletable_preview, true}
+                                | Ms1
+                            ],
+                            {ok, ?DEBUG(Ms2)};
+                        {error, _} = Error ->
+                            lager:error(z_context:lager_md(Context),
+                                        "Duplicate preview: error ~p for preview file ~p",
+                                        [Error, Filename]),
+                            Ms1 = proplists:delete(preview_filename, 
+                                    proplists:delete(is_deletable_preview, Ms)),
+                            {ok, Ms1}
+                    end
             end
     end.
 
 
-duplicate_file(Filename, Context) ->
-    File = z_media_archive:abspath(Filename, Context),
-    ArchiveFile = z_media_archive:archive_copy(File, Context),
-    {ok, ArchiveFile}.
+duplicate_file(Type, Filename, Context) ->
+    case z_file_request:lookup_file(Filename, Context) of
+        {ok, FileInfo} ->
+            {ok, File} = z_file_request:content_file(FileInfo, Context),
+            {ok, z_media_archive:archive_copy(Type, File, filename:basename(Filename), Context)};
+        {error, _} = Error ->
+            Error
+    end.
 
 
 %% @doc Make a new resource for the file, when the file is not in the archive dir then a copy is made in the archive dir
@@ -416,7 +450,7 @@ replace_file_db(RscId, PreProc, Props, Opts, Context) ->
     SafeRootName = z_string:to_rootname(PreProc#media_upload_preprocess.original_filename),
     PreferExtension = z_convert:to_binary(filename:extension(PreProc#media_upload_preprocess.original_filename)),
     Mime = PreProc#media_upload_preprocess.mime,
-    SafeFilename = SafeRootName ++ z_media_identify:extension(Mime, PreferExtension, Context),
+    SafeFilename = iolist_to_binary([SafeRootName, z_media_identify:extension(Mime, PreferExtension, Context)]),
     ArchiveFile = case PreProc#media_upload_preprocess.file of
                     undefined -> undefined;
                     UploadFile -> z_media_archive:archive_copy_opt(UploadFile, SafeFilename, Context)
@@ -479,26 +513,30 @@ replace_file_db(RscId, PreProc, Props, Opts, Context) ->
                 end
         end,
     
-    {ok, Id} = z_db:transaction(F, Context),
-    Depicts = depicts(Id, Context),
-    [ z_depcache:flush(DepictId, Context) || DepictId <- Depicts ],
-    z_depcache:flush(Id, Context),
+    case z_db:transaction(F, Context) of
+        {ok, Id} ->
+            Depicts = depicts(Id, Context),
+            [ z_depcache:flush(DepictId, Context) || DepictId <- Depicts ],
+            z_depcache:flush(Id, Context),
 
-    %% Flush categories
-    CatList = m_rsc:is_a(Id, Context),
-    [ z_depcache:flush(Cat, Context) || Cat <- CatList ],
-    
-    m_rsc:get(Id, Context), %% Prevent side effect that empty things are cached?
+            %% Flush categories
+            CatList = m_rsc:is_a(Id, Context),
+            [ z_depcache:flush(Cat, Context) || Cat <- CatList ],
+            
+            m_rsc:get(Id, Context), %% Prevent side effect that empty things are cached?
 
-    % Run possible post insertion function.
-    case PreProc#media_upload_preprocess.post_insert_fun of
-        undefined -> ok;
-        PostFun when is_function(PostFun, 3) -> PostFun(Id, Medium1, Context)
-    end, 
+            % Run possible post insertion function.
+            case PreProc#media_upload_preprocess.post_insert_fun of
+                undefined -> ok;
+                PostFun when is_function(PostFun, 3) -> PostFun(Id, Medium1, Context)
+            end, 
 
-    %% Pass the medium record along in the notification; this also fills the depcache (side effect).
-    z_notifier:notify(#media_replace_file{id=Id, medium=get(Id, Context)}, Context),
-    {ok, Id}.
+            %% Pass the medium record along in the notification; this also fills the depcache (side effect).
+            z_notifier:notify(#media_replace_file{id=Id, medium=get(Id, Context)}, Context),
+            {ok, Id};
+        {rollback, {{error, not_allowed}, _StackTrace}} ->
+            {error, not_allowed}
+    end.
 
 is_deletable_file(undefined, _Context) ->
     false;
@@ -615,72 +653,54 @@ add_medium_info(File, OriginalFilename, Props, Context) ->
 save_preview(RscId, Data, Mime, Context) ->
 	case z_acl:rsc_editable(RscId, Context) of
     	true ->
-			Filename = data2filepath(RscId, Data, z_media_identify:extension(Mime)),
-			{OldPreviewFilename, OldIsDeletablePreview} = z_db:q_row("select preview_filename, is_deletable_preview from medium where id = $1", [RscId], Context),
-			case z_convert:to_list(OldPreviewFilename) of
-				Filename -> 
-					ok;
-				OldFile ->
-					FileUnique = make_preview_unique(Filename, Context),
-					FileUniqueAbs = z_media_archive:abspath(FileUnique, Context),
-					ok = filelib:ensure_dir(FileUniqueAbs),
-					ok = file:write_file(FileUniqueAbs, Data),
-					
-					try
-						{ok, MediaInfo} = z_media_identify:identify(FileUniqueAbs, Context),
-						{width, Width} = proplists:lookup(width, MediaInfo),
-						{height, Height} = proplists:lookup(height, MediaInfo),
-					
-						UpdateProps = [
-							{preview_filename, FileUnique},
-							{preview_width, Width},
-							{preview_height, Height},
-							{is_deletable_preview, true}
-						],
-						{ok,1} = z_db:update(medium, RscId, UpdateProps, Context),
-						z_depcache:flush({medium, RscId}, Context),
-						
-						case {OldIsDeletablePreview, OldFile} of 
-							{_,[]} -> ok;
-							{false,_} -> ok;
-							{true,_} ->
-								OldFileAbs = z_media_archive:abspath(OldFile, Context),
-								case filelib:is_file(OldFileAbs) of
-									true -> 
-										file:delete(OldFileAbs),
-										z_db:q("insert into medium_deleted (filename) values ($1)", [OldFile]);
-									false -> ok
-								end
-						end,
-						{ok, FileUnique}
-					catch 
-						Error -> 
-							file:delete(FileUniqueAbs), 
-							Error
-					end
+			FileUnique = make_preview_unique(RscId, z_media_identify:extension(Mime), Context),
+			FileUniqueAbs = z_media_archive:abspath(FileUnique, Context),
+			ok = filelib:ensure_dir(FileUniqueAbs),
+			ok = file:write_file(FileUniqueAbs, Data),
+			
+			try
+				{ok, MediaInfo} = z_media_identify:identify(FileUniqueAbs, Context),
+				{width, Width} = proplists:lookup(width, MediaInfo),
+				{height, Height} = proplists:lookup(height, MediaInfo),
+			
+				UpdateProps = [
+					{preview_filename, FileUnique},
+					{preview_width, Width},
+					{preview_height, Height},
+					{is_deletable_preview, true}
+				],
+				{ok,1} = z_db:update(medium, RscId, UpdateProps, Context),
+				z_depcache:flush({medium, RscId}, Context),
+				{ok, FileUnique}
+			catch 
+				Error -> 
+					file:delete(FileUniqueAbs), 
+					Error
 			end;
 		false ->
 			{error, eacces}
 	end.
 
-	data2filepath(RscId, Data, Extension) ->
-		<<A:8, B:8, Rest/binary>> = crypto:sha(Data),
-		filename:join([ "preview", mochihex:to_hex(A), mochihex:to_hex(B), 
-						integer_to_list(RscId) ++ [$-|mochihex:to_hex(Rest)] ++ Extension ]).
+-spec make_preview_unique(integer()|insert_rsc, string(), #context{}) -> file:filename().
+make_preview_unique(RscId, Extension, Context) ->
+    Basename = iolist_to_binary([id_to_list(RscId), $-, z_ids:identifier(16), Extension]), 
+    Filename = filename:join([
+                    "preview", 
+                    z_ids:identifier(2),
+                    z_ids:identifier(2),
+                    Basename ]),
+    case is_unique_file(Filename, Context) of
+        true ->
+            Filename;
+        false ->
+            make_preview_unique(RscId, Extension, Context)
+	end.
 
-	make_preview_unique(Filename, Context) ->
-		case filelib:is_file(z_media_archive:abspath(Filename, Context)) of
-			false -> 
-				Filename;
-			true ->
-				Dirname = filename:dirname(Filename),
-				Basename = filename:basename(Filename),
-				Rootname = filename:rootname(Basename),
-				Rootname1 = Rootname ++ [$-|z_ids:identifier()],
-				Filename1 = filename:join([Dirname, Rootname1 ++ filename:extension(Basename)]),
-				make_preview_unique(Filename1, Context)
-		end.
+id_to_list(N) when is_integer(N) -> integer_to_list(N);
+id_to_list(insert_rsc) -> "video".
 
+is_unique_file(Filename, Context) ->
+    z_db:q1("select count(*) from medium_log where filename = $1", [Filename], Context) =:= 0.
 
 medium_insert(Id, Props, Context) ->
     IsA = m_rsc:is_a(Id, Context),

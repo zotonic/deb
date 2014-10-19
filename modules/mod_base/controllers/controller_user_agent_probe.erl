@@ -1,8 +1,8 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2012 Marc Worrell
-%% @doc User Agent selection
+%% @copyright 2012-2014 Marc Worrell
+%% @doc User Agent and timezone selection
 
-%% Copyright 2012 Marc Worrell
+%% Copyright 2012-2014 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ service_available(ReqData, DispatchArgs) ->
     ContextArgs = z_context:set(DispatchArgs, Context),
     ContextSession = z_context:continue_session(ContextArgs),
     ContextQs = z_context:ensure_qs(ContextSession),
+    z_context:lager_md(ContextQs),
     ?WM_REPLY(true, ContextQs).
 
 allowed_methods(ReqData, Context) ->
@@ -52,6 +53,7 @@ malformed_request(ReqData, Context) ->
                             {is_touch, z_convert:to_bool(z_context:get_q("t", C1))}
                            ],
                            C1),
+        maybe_set_tz(z_context:get_q("tz", C2), C2),
         ?WM_REPLY(false, C2)
     catch
         _:_ -> {true, ReqData, Context}
@@ -73,3 +75,12 @@ to_js(ReqData, Context) ->
             ?WM_REPLY(<<>>, CRD)
     end.
 
+maybe_set_tz(undefined, _Context) ->
+    ok;
+maybe_set_tz(Tz, Context) ->
+    case z_module_manager:active(mod_l10n, Context) of
+        true ->
+            mod_l10n:set_user_timezone(Tz, Context);
+        false ->
+            ok
+    end.

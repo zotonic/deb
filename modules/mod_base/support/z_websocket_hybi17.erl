@@ -40,8 +40,8 @@
 
 start(ReqData, Context) ->
     Socket = webmachine_request:socket(ReqData),
-    WsKey = z_string:trim(z_context:get_req_header("sec-websocket-key", Context)),
-    Accept = base64:encode(crypto:sha(WsKey++"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")),
+    WsKey = z_string:trim(wrq:get_req_header_lc("sec-websocket-key", ReqData)),
+    Accept = base64:encode(crypto:hash(sha, WsKey++"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")),
 
     %% Send the handshake
     Data = ["HTTP/1.1 101 Switching Protocols", 13, 10,
@@ -68,7 +68,7 @@ receive_loop(Buff, Socket, SenderPid, Context) ->
 
 
 % Check if we received a full frame
-handle_data(Data, Socket, SenderPid, Context) when byte_size(Data) =< 1 ->
+handle_data(Data, Socket, SenderPid, Context) when byte_size(Data) =< 2 ->
     receive_loop(Data, Socket, SenderPid, Context);
 handle_data(Data, Socket, SenderPid, Context) ->
     << 1:1, 0:3, Opcode:4, Mask:1, PayloadLen:7, Rest/bits >> = Data,
@@ -123,12 +123,12 @@ unmask_data(Opcode, <<O:8>>, MaskKey, RemainingData, Socket, SenderPid, Context,
 
 % Text frame
 handle_frame(RemainingData, 1, Message, Socket, SenderPid, Context) ->
-    handle_message(Message, SenderPid, Context),
-    handle_data(RemainingData, Socket, SenderPid, Context);
+    {ok, Context1} = handle_message(Message, SenderPid, Context),
+    handle_data(RemainingData, Socket, SenderPid, Context1);
 % Binary frame
 handle_frame(RemainingData, 2, Message, Socket, SenderPid, Context) ->
-    handle_message(Message, SenderPid, Context),
-    handle_data(RemainingData, Socket, SenderPid, Context);
+    {ok, Context1} = handle_message(Message, SenderPid, Context),
+    handle_data(RemainingData, Socket, SenderPid, Context1);
 % Close control frame
 handle_frame(_RemainingData, 8, _Message, Socket, SenderPid, Context) ->
     close({normal, closed}, Socket, SenderPid, Context);
@@ -147,9 +147,17 @@ handle_init(Context) ->
     W = z_context:get(ws_handler,  Context),
     W:websocket_init(Context).
 
-handle_message(Message, SenderPid, Context) ->
+handle_message(Msg, SenderPid, Context) ->
     H = z_context:get(ws_handler, Context),
-    H:websocket_message(Message, SenderPid, Context).
+    z_depcache:in_process(true),
+    case H:websocket_message(Msg, SenderPid, Context) of
+        ok ->
+            z_utils:erase_process_dict(),
+            {ok, Context};
+        {ok, Context1} ->
+            z_utils:erase_process_dict(),
+            {ok, z_context:prune_for_scomp(Context1)}
+    end.
 
 handle_info(Message, Context) ->
     H = z_context:get(ws_handler, Context),

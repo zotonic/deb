@@ -27,53 +27,38 @@
 
 %% interface functions
 -export([
-    pre_install/2,
-    install/1
-]).
+         install/1,
+
+         medium_log_table/0,
+         medium_update_function/0,
+         medium_update_trigger/0,
+
+         edge_log_table/0,
+         edge_log_function/0,
+         edge_log_trigger/0,
+
+         rsc_page_path_log/0,
+         rsc_page_path_log_fki/0
+        ]).
 
 -include_lib("zotonic.hrl").
 
-%% @doc Perform pre-installation commands.
-%% @spec pre_install(Host, SiteProps) -> ok
-pre_install(testsandbox, SiteProps) ->
-    %% The test sandbox needs cleanup first:
-    {ok, C} = pgsql_pool:get_connection(testsandbox),
-    Schema = proplists:get_value(dbschema, SiteProps, "public"),
-
-    %% Drop all tables
-    pgsql:equery(C, "DROP SCHEMA " ++ Schema ++ " CASCADE"),
-    pgsql:equery(C, "CREATE SCHEMA " ++ Schema),
-
-    %% Remove all files
-    FilesDir = z_utils:os_filename(filename:join([z_utils:lib_dir(priv), "sites", testsandbox, "files", "preview"])),
-    os:cmd("rm -rf " ++ z_utils:os_filename(FilesDir)),
-    os:cmd("mkdir -p " ++ z_utils:os_filename(FilesDir)),
-    ok;
-
-pre_install(_, _) ->
-    ok.
-
-
 %% @doc Install the database for the given host.
 %% @spec install(Host) -> ok
-install(Host) ->
-    {ok, C} = pgsql_pool:get_connection(Host),
-    ok = pgsql:with_transaction(C, fun (C2) ->
-                                           install_sql_list(C, model_pgsql()),
-                                           z_install_data:install(Host, C2),
-                                           ok 
-                                   end
-                               ),
-    pgsql_pool:return_connection(Host, C),
-    
+install(Context) ->
+    ok = z_db:transaction(
+           fun(Context1) ->
+                   ok = install_sql_list(Context1, model_pgsql()),
+                   ok = z_install_data:install(z_context:site(Context1), Context1)
+           end,
+           Context),
+
     InstallData = fun() ->
                           timer:sleep(200), %% give other processes some time to start
-                          
-                          Context = z_context:new(Host),
-                          
+
                           %% install the default data for the skeleton the site is based on
                           z_install_defaultdata:install(m_site:get(skeleton, Context), Context),
-                          
+
                           %% renumber the category tree.
                           m_category:renumber(Context)
                   end,
@@ -81,171 +66,177 @@ install(Host) ->
     ok.
 
 
-install_sql_list(C, Model) ->
-    [ {ok, [], []} = pgsql:squery(C, Sql) || Sql <- Model ].
-    
+install_sql_list(Context, Model) ->
+    C = z_db_pgsql:get_raw_connection(Context),
+    [ {ok, [], []} = pgsql:squery(C, Sql) || Sql <- Model ],
+    ok.
+
 
 %% @doc Return a list containing the SQL statements to build the database model
 model_pgsql() ->
     [
-    
-    % Table config
-    % Holds all configuration keys
-    "CREATE TABLE config
+
+                                                % Table config
+                                                % Holds all configuration keys
+     "CREATE TABLE config
     (
-        id serial NOT NULL,
-        module character varying(80) NOT NULL DEFAULT 'zotonic'::character varying,
-        key character varying(80) NOT NULL DEFAULT ''::character varying,
-        value text NOT NULL DEFAULT ''::character varying,
-        props bytea,
-        created timestamp with time zone NOT NULL DEFAULT now(),
-        modified timestamp with time zone NOT NULL DEFAULT now(),
-        
-        CONSTRAINT config_pkey PRIMARY KEY (id),
-        CONSTRAINT config_module_key_key UNIQUE (module, key)
+      id serial NOT NULL,
+      module character varying(80) NOT NULL DEFAULT 'zotonic'::character varying,
+      key character varying(80) NOT NULL DEFAULT ''::character varying,
+      value text NOT NULL DEFAULT ''::character varying,
+      props bytea,
+      created timestamp with time zone NOT NULL DEFAULT now(),
+      modified timestamp with time zone NOT NULL DEFAULT now(),
+
+      CONSTRAINT config_pkey PRIMARY KEY (id),
+      CONSTRAINT config_module_key_key UNIQUE (module, key)
     )",
 
-    
-    % Table module
-    % Holds install state of all known modules
+
+                                                % Table module
+                                                % Holds install state of all known modules
 
     "CREATE TABLE module
     (
-        id serial NOT NULL,
-        name character varying(80) NOT NULL DEFAULT ''::character varying,
-        uri character varying(250) NOT NULL DEFAULT ''::character varying,
-        is_active boolean NOT NULL DEFAULT false,
-        created timestamp with time zone NOT NULL DEFAULT now(),
-        modified timestamp with time zone NOT NULL DEFAULT now(),
-        schema_version int NULL,
+      id serial NOT NULL,
+      name character varying(80) NOT NULL DEFAULT ''::character varying,
+      uri character varying(250) NOT NULL DEFAULT ''::character varying,
+      is_active boolean NOT NULL DEFAULT false,
+      created timestamp with time zone NOT NULL DEFAULT now(),
+      modified timestamp with time zone NOT NULL DEFAULT now(),
+      schema_version int NULL,
 
-        CONSTRAINT module_pkey PRIMARY KEY (id),
-        CONSTRAINT module_name_key UNIQUE (name)
+      CONSTRAINT module_pkey PRIMARY KEY (id),
+      CONSTRAINT module_name_key UNIQUE (name)
     )",
 
-    
-    % Table: rsc
-    % Holds all resources (posts, persons etc.)
-    % @todo Split the pivot part when we want to support MySQL (no fulltext in InnoDB...)
+
+                                                % Table: rsc
+                                                % Holds all resources (posts, persons etc.)
+                                                % @todo Split the pivot part when we want to support MySQL (no fulltext in InnoDB...)
 
     "CREATE TABLE rsc
     (
-        id serial NOT NULL,
-        uri character varying(250),
-        name character varying(80),
-        page_path character varying(80),
-        is_authoritative boolean NOT NULL DEFAULT true,
-        is_published boolean NOT NULL DEFAULT false,
-        is_featured boolean NOT NULL DEFAULT false,
-        is_protected boolean NOT NULL DEFAULT false,
-        publication_start timestamp with time zone NOT NULL DEFAULT now(),
-        publication_end timestamp with time zone NOT NULL DEFAULT '9999-06-01 00:00:00'::timestamp with time zone,
-        creator_id int,
-        modifier_id int,
-        version int NOT NULL DEFAULT 1,
-        category_id int NOT NULL,
-        visible_for int NOT NULL DEFAULT 1, -- 0 = public, 1 = community, 2 = group
-        slug character varying(80) NOT NULL DEFAULT ''::character varying,
-        props bytea,
-        created timestamp with time zone NOT NULL DEFAULT now(),
-        modified timestamp with time zone NOT NULL DEFAULT now(),
+      id serial NOT NULL,
+      uri character varying(250),
+      name character varying(80),
+      page_path character varying(80),
+      is_authoritative boolean NOT NULL DEFAULT true,
+      is_published boolean NOT NULL DEFAULT false,
+      is_featured boolean NOT NULL DEFAULT false,
+      is_protected boolean NOT NULL DEFAULT false,
+      publication_start timestamp with time zone NOT NULL DEFAULT now(),
+      publication_end timestamp with time zone NOT NULL DEFAULT '9999-06-01 00:00:00'::timestamp with time zone,
+      creator_id int,
+      modifier_id int,
+      version int NOT NULL DEFAULT 1,
+      category_id int NOT NULL,
+      visible_for int NOT NULL DEFAULT 1, -- 0 = public, 1 = community, 2 = group
+      slug character varying(80) NOT NULL DEFAULT ''::character varying,
+      props bytea,
+      created timestamp with time zone NOT NULL DEFAULT now(),
+      modified timestamp with time zone NOT NULL DEFAULT now(),
 
-        -- pivot fields for searching
-        pivot_category_nr int,
-        pivot_tsv tsvector,       -- texts 
-        pivot_rtsv tsvector,      -- related ids (cat, prop, rsc)
+      -- pivot fields for searching
+      pivot_category_nr int,
+      pivot_tsv tsvector,       -- texts 
+      pivot_rtsv tsvector,      -- related ids (cat, prop, rsc)
 
-    	pivot_first_name character varying(100),
-    	pivot_surname character varying(100),
-        pivot_gender character varying(1),
-        
-        pivot_date_start timestamp with time zone,
-        pivot_date_end timestamp with time zone,
-        pivot_date_start_month_day int,  -- used for birthdays
-        pivot_date_end_month_day int,    -- used for decease dates
-        
-        pivot_street character varying(120),
-        pivot_city character varying(100),
-        pivot_state character varying(50),
-        pivot_postcode character varying(30),
-        pivot_country character varying(80),
-        pivot_geocode bigint,
-        pivot_geocode_qhash bytea,
-        pivot_title character varying(100),
+      pivot_first_name character varying(100),
+      pivot_surname character varying(100),
+      pivot_gender character varying(1),
 
-        CONSTRAINT rsc_pkey PRIMARY KEY (id),
-        CONSTRAINT rsc_uri_key UNIQUE (uri),
-        CONSTRAINT rsc_name_key UNIQUE (name),
-        CONSTRAINT rsc_page_path_key UNIQUE (page_path)
+      pivot_date_start timestamp with time zone,
+      pivot_date_end timestamp with time zone,
+      pivot_date_start_month_day int,  -- used for birthdays
+      pivot_date_end_month_day int,    -- used for decease dates
+
+      pivot_street character varying(120),
+      pivot_city character varying(100),
+      pivot_state character varying(50),
+      pivot_postcode character varying(30),
+      pivot_country character varying(80),
+      pivot_geocode bigint,
+      pivot_geocode_qhash bytea,
+      pivot_title character varying(100),
+
+      pivot_location_lat float,
+      pivot_location_lng float,
+
+      CONSTRAINT rsc_pkey PRIMARY KEY (id),
+      CONSTRAINT rsc_uri_key UNIQUE (uri),
+      CONSTRAINT rsc_name_key UNIQUE (name),
+      CONSTRAINT rsc_page_path_key UNIQUE (page_path)
     )",
     "COMMENT ON COLUMN rsc.visible_for IS '0 = public, 1 = community, 2 = group'",
 
-    "ALTER TABLE rsc ADD CONSTRAINT fk_rsc_creator_id FOREIGN KEY (creator_id)
+     "ALTER TABLE rsc ADD CONSTRAINT fk_rsc_creator_id FOREIGN KEY (creator_id)
       REFERENCES rsc (id)
-      ON UPDATE CASCADE ON DELETE SET NULL",
+     ON UPDATE CASCADE ON DELETE SET NULL",
     "ALTER TABLE rsc ADD CONSTRAINT fk_rsc_modifier_id FOREIGN KEY (modifier_id)
       REFERENCES rsc (id)
-      ON UPDATE CASCADE ON DELETE SET NULL",
-      
+     ON UPDATE CASCADE ON DELETE SET NULL",
+
     "CREATE INDEX fki_rsc_creator_id ON rsc (creator_id)",
-    "CREATE INDEX fki_rsc_modifier_id ON rsc (modifier_id)",
-    "CREATE INDEX fki_rsc_created ON rsc (created)",
-    "CREATE INDEX fki_rsc_modified ON rsc (modified)",
+     "CREATE INDEX fki_rsc_modifier_id ON rsc (modifier_id)",
+     "CREATE INDEX fki_rsc_created ON rsc (created)",
+     "CREATE INDEX fki_rsc_modified ON rsc (modified)",
 
-    "CREATE INDEX rsc_pivot_tsv_key ON rsc USING gin(pivot_tsv)",
-    "CREATE INDEX rsc_pivot_rtsv_key ON rsc USING gin(pivot_rtsv)",
+     "CREATE INDEX rsc_pivot_tsv_key ON rsc USING gin(pivot_tsv)",
+     "CREATE INDEX rsc_pivot_rtsv_key ON rsc USING gin(pivot_rtsv)",
 
-    "CREATE INDEX rsc_pivot_category_nr ON rsc (pivot_category_nr)",
-    "CREATE INDEX rsc_pivot_surname_key ON rsc (pivot_surname)",
-    "CREATE INDEX rsc_pivot_first_name_key ON rsc (pivot_first_name)",
-    "CREATE INDEX rsc_pivot_gender_key ON rsc (pivot_gender)",
-    "CREATE INDEX rsc_pivot_date_start_key ON rsc (pivot_date_start)",
-    "CREATE INDEX rsc_pivot_date_end_key ON rsc (pivot_date_end)",
-    "CREATE INDEX rsc_pivot_date_start_month_day_key ON rsc (pivot_date_start_month_day)",
-    "CREATE INDEX rsc_pivot_date_end_month_day_key ON rsc (pivot_date_end_month_day)",
-    "CREATE INDEX rsc_pivot_city_street_key ON rsc (pivot_city, pivot_street)",
-    "CREATE INDEX rsc_pivot_country_key ON rsc (pivot_country)",
-    "CREATE INDEX rsc_pivot_postcode_key ON rsc (pivot_postcode)",
-    "CREATE INDEX rsc_pivot_geocode_key ON rsc (pivot_geocode)",
-    "CREATE INDEX rsc_pivot_title_key ON rsc (pivot_title)",
+     "CREATE INDEX rsc_pivot_category_nr ON rsc (pivot_category_nr)",
+     "CREATE INDEX rsc_pivot_surname_key ON rsc (pivot_surname)",
+     "CREATE INDEX rsc_pivot_first_name_key ON rsc (pivot_first_name)",
+     "CREATE INDEX rsc_pivot_gender_key ON rsc (pivot_gender)",
+     "CREATE INDEX rsc_pivot_date_start_key ON rsc (pivot_date_start)",
+     "CREATE INDEX rsc_pivot_date_end_key ON rsc (pivot_date_end)",
+     "CREATE INDEX rsc_pivot_date_start_month_day_key ON rsc (pivot_date_start_month_day)",
+     "CREATE INDEX rsc_pivot_date_end_month_day_key ON rsc (pivot_date_end_month_day)",
+     "CREATE INDEX rsc_pivot_city_street_key ON rsc (pivot_city, pivot_street)",
+     "CREATE INDEX rsc_pivot_country_key ON rsc (pivot_country)",
+     "CREATE INDEX rsc_pivot_postcode_key ON rsc (pivot_postcode)",
+     "CREATE INDEX rsc_pivot_geocode_key ON rsc (pivot_geocode)",
+     "CREATE INDEX rsc_pivot_title_key ON rsc (pivot_title)",
+     "CREATE INDEX rsc_pivot_location_key ON rsc (pivot_location_lat, pivot_location_lng)",
 
-    % Table: rsc_gone
-    % Tracks deleted or moved resources, adding "410 gone" support
-    % Also contains new id or new url for 301 moved permanently replies.
-    % mod_backup is needed to recover a deleted resource's content.
+                                                % Table: rsc_gone
+                                                % Tracks deleted or moved resources, adding "410 gone" support
+                                                % Also contains new id or new url for 301 moved permanently replies.
+                                                % mod_backup is needed to recover a deleted resource's content.
 
-    "CREATE TABLE rsc_gone (
+     "CREATE TABLE rsc_gone (
         id bigint not null,
-        new_id bigint,
-        new_uri character varying(250),
-        version int not null,
-        uri character varying(250),
-        name character varying(80),
-        page_path character varying(80),
-        is_authoritative boolean NOT NULL DEFAULT true,
-        creator_id bigint,
-        modifier_id bigint,
-        created timestamp with time zone NOT NULL DEFAULT now(),
-        modified timestamp with time zone NOT NULL DEFAULT now(),
-        CONSTRAINT rsc_gone_pkey PRIMARY KEY (id)
+     new_id bigint,
+     new_uri character varying(250),
+     version int not null,
+     uri character varying(250),
+     name character varying(80),
+     page_path character varying(80),
+     is_authoritative boolean NOT NULL DEFAULT true,
+     creator_id bigint,
+     modifier_id bigint,
+     created timestamp with time zone NOT NULL DEFAULT now(),
+     modified timestamp with time zone NOT NULL DEFAULT now(),
+     CONSTRAINT rsc_gone_pkey PRIMARY KEY (id)
     )",
     "CREATE INDEX rsc_gone_name ON rsc_gone(name)",
     "CREATE INDEX rsc_gone_page_path ON rsc_gone(page_path)",
     "CREATE INDEX rsc_gone_modified ON rsc_gone(modified)",
 
 
-    % Table: protect
-    % By making an entry in this table we protect a rsc from being deleted.
-    % This table is maintained by the update/insert trigger.
+                                                % Table: protect
+                                                % By making an entry in this table we protect a rsc from being deleted.
+                                                % This table is maintained by the update/insert trigger.
 
     "CREATE TABLE protect (
         id int NOT NULL,
-        
-        CONSTRAINT protect_id PRIMARY KEY (id),
-        CONSTRAINT fk_protect_id FOREIGN KEY (id)
-          REFERENCES rsc(id)
-          ON UPDATE CASCADE ON DELETE RESTRICT
-    )",
+
+    CONSTRAINT protect_id PRIMARY KEY (id),
+    CONSTRAINT fk_protect_id FOREIGN KEY (id)
+        REFERENCES rsc(id)
+        ON UPDATE CASCADE ON DELETE RESTRICT
+        )",
 
     % Table: edge
     % All relations between resources, forming a directed graph
@@ -556,16 +547,143 @@ model_pgsql() ->
     ON medium FOR EACH ROW EXECUTE PROCEDURE medium_delete()
     ",
 
-     %% Holds administration of previous page paths
-     "CREATE TABLE rsc_page_path_log ( 
-        id int not null,
-        page_path character varying(80),
-        created timestamp with time zone NOT NULL DEFAULT now(),
-        CONSTRAINT rsc_page_path_log_pkey PRIMARY KEY (page_path),
-        CONSTRAINT rsc_page_path_log_fkey FOREIGN KEY (id) REFERENCES rsc(id)
-      )"
+    % Table with all uploaded filenames, used to ensure unique filenames in the upload archive
+    medium_log_table(),
 
+    % Update/insert trigger on medium to fill the deleted files queue
+    medium_update_function(),
+    medium_update_trigger(),
+
+    %% Holds administration of previous page paths
+    rsc_page_path_log(),
+    rsc_page_path_log_fki(),
+
+    %% Track deletion/insert/changes of edges
+    edge_log_table(),
+    edge_log_function(),
+    edge_log_trigger()
     ].
+
+
+edge_log_table() ->
+    "CREATE TABLE edge_log
+    (
+        id bigserial NOT NULL,
+        op character varying(6),
+        edge_id int not null,
+        subject_id int not null,
+        predicate_id int not null,
+        predicate character varying (80),
+        object_id int not null,
+        seq integer not null,
+        created timestamp NOT NULL default now(),
+        
+        CONSTRAINT edge_log_pkey PRIMARY KEY (id)
+    )".
+
+edge_log_function() ->
+    "
+    CREATE FUNCTION edge_update() RETURNS trigger AS $$
+    declare
+        new_predicate character varying(80);
+    begin
+        if (tg_op = 'INSERT') then
+            select into new_predicate r.name from rsc r where r.id = new.predicate_id;
+            insert into edge_log (op, edge_id, subject_id, object_id, predicate_id, predicate, seq)
+            values (tg_op, new.id, new.subject_id, new.object_id, new.predicate_id, new_predicate, new.seq);
+        elseif (tg_op = 'UPDATE') then
+            select into new_predicate r.name from rsc r where r.id = new.predicate_id;
+            insert into edge_log (op, edge_id, subject_id, object_id, predicate_id, predicate, seq)
+            values (tg_op, new.id, new.subject_id, new.object_id, new.predicate_id, new_predicate, new.seq);
+        elseif (tg_op = 'DELETE') then
+            select into new_predicate r.name from rsc r where r.id = old.predicate_id;
+            insert into edge_log (op, edge_id, subject_id, object_id, predicate_id, predicate, seq)
+            values (tg_op, old.id, old.subject_id, old.object_id, old.predicate_id, new_predicate, old.seq);
+        end if;
+        return null;
+    end;
+    $$ LANGUAGE plpgsql
+    ".
+
+
+edge_log_trigger() ->
+    "
+    CREATE TRIGGER edge_update_trigger AFTER INSERT OR UPDATE OR DELETE
+    ON edge FOR EACH ROW EXECUTE PROCEDURE edge_update()
+    ".
+
+
+medium_log_table() ->
+    "CREATE TABLE medium_log
+    (
+        id serial NOT NULL,
+        usr_id int,
+        filename character varying (400) NOT NULL,
+        created timestamp NOT NULL default now(),
+        
+        CONSTRAINT medium_log_pkey PRIMARY KEY (id),
+        CONSTRAINT medium_log_filename_key UNIQUE (filename)
+    )".
+
+
+medium_update_function() ->
+    "
+    CREATE FUNCTION medium_update() RETURNS trigger AS $$
+    declare
+        user_id integer;
+    begin
+        select into user_id r.creator_id from rsc r where r.id = new.id;
+        if (tg_op = 'INSERT') then
+            if (new.filename <> '' and new.filename is not null and new.is_deletable_file) then
+                insert into medium_log (filename, usr_id)
+                values (new.filename, user_id);
+            end if;
+            if (new.preview_filename <> '' and new.preview_filename is not null and new.is_deletable_preview) then
+                insert into medium_log (filename, usr_id)
+                values (new.preview_filename, user_id);
+            end if;
+        elseif (tg_op = 'UPDATE') then
+            if (new.filename <> '' and new.filename is not null and new.is_deletable_file and new.filename != old.filename) then
+                insert into medium_log (filename, usr_id)
+                values (new.filename, user_id);
+            end if;
+            if (new.preview_filename <> '' and new.preview_filename is not null and new.is_deletable_preview and new.preview_filename != old.preview_filename) then
+                insert into medium_log (filename, usr_id)
+                values (new.preview_filename, user_id);
+            end if;
+            -- Insert files into the medium_deleted queue table
+            if (old.filename <> '' and old.filename is not null and old.is_deletable_file and new.filename != old.filename) then
+                insert into medium_deleted (filename) values (old.filename);
+            end if;
+            if (old.preview_filename <> '' and old.preview_filename is not null and old.is_deletable_preview and new.preview_filename != old.preview_filename) then
+                insert into medium_deleted (filename) values (old.preview_filename);
+            end if;
+        end if;
+        return null;
+    end;
+    $$ LANGUAGE plpgsql
+    ".
+
+medium_update_trigger() ->
+    "
+    CREATE TRIGGER medium_update_trigger AFTER INSERT OR UPDATE
+    ON medium FOR EACH ROW EXECUTE PROCEDURE medium_update()
+    ".
+
+rsc_page_path_log() ->
+   "CREATE TABLE rsc_page_path_log ( 
+      page_path character varying(80),
+      id int not null,
+      created timestamp with time zone NOT NULL DEFAULT now(),
+      CONSTRAINT rsc_page_path_log_pkey PRIMARY KEY (page_path),
+      CONSTRAINT fk_rsc_page_path_log_id FOREIGN KEY (id) 
+        REFERENCES rsc(id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+    )".
+
+rsc_page_path_log_fki() ->
+    "CREATE INDEX fki_rsc_page_path_log_id ON rsc_page_path_log (id)".
+
 
 %    -- Fulltext index of products
 %    -- TODO: Also mix in the shop product id, brand, group and properties

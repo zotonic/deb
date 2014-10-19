@@ -17,6 +17,12 @@ up Zotonic to serve from those ports without running as superuser
 presents a problem, as \*nix considers all ports below 1024 to be
 "privileged", requiring special access.
 
+Other webservers (like nginx) typically do not have this problem, as
+they usually run their main unix process as root, but forking off
+child processes as non-privileged workers. Zotonic cannot be made to
+work like that because it is just one unix process, and running
+Zotonic entirely as the root user is considered harmful.
+
 This manual outlines three different methods to let Zotonic listen on
 port 80. All of them are for \*nix based systems only.
 
@@ -36,10 +42,12 @@ For production release of your new Zotonic site you need to:
   (e.g. `www.mysite.com`) to point to your server’s IP address.
 
 - Change ``{hostname, "mysite:8000"}`` to ``{hostname,
-  "www.mysite.com"}`` in ``priv/sites/mysite/config``.  This last
+  "www.mysite.com"}`` in ``user/sites/mysite/config``.  This last
   change enables the virtual hosting: it makes sure that Zotonic knows
   which site is being requested when somebody visits `www.mysite.com`.
 
+   .. note:: Your actual site location might be different, see the :term:`User sites directory`.
+  
 
 Running behind another web server / proxy
 -----------------------------------------
@@ -100,7 +108,7 @@ Delete the Zotonic config file (this will be re-generated automatically when zot
 
   zotonic:~$ rm ~zotonic/zotonic/priv/config
   
-Set the port for your site. Edit the hostname entry in ~zotonic/priv/sites/yoursite/config to read as follows::
+Set the port for your site. Edit the hostname entry in ``zotonic/user/sites/yoursite/config`` to read as follows::
 
   {hostname, "yoursite:80"}
 

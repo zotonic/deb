@@ -9,11 +9,14 @@
         <meta name="author" content="Arjan Scherpenisse" />
 
         {% lib
-                "css/bootstrap-admin.css"
-                "css/bootstrap-admin-responsive.css"
+            "admin-bootstrap3/css/bootstrap.min.css"
+            "admin-bootstrap3/css/bootstrap-theme.min.css"
+        %}
 
+        {% lib
                 "css/jquery-ui.datepicker.css"
                 "css/jquery.timepicker.css"
+                "css/z.logo.css"
                 "css/zp-menuedit.css"
                 "css/zotonic-admin.css"
                 "css/z.modal.css"
@@ -40,18 +43,21 @@
         {% include "_admin_menu.tpl" %}
     {% endblock %}
 
-    <div class="container-fluid">
+    <div class="admin-container">
         {% block content %}{% endblock %}
     </div>
 
     {% include "_admin_js_include.tpl" %}
     {% block js_extra %}{% endblock %}
 
-    {% stream %}
     {% script %}
 
-    {% block tinymce %}{% endblock %}
+    {% block editor %}{% endblock %}
         
     {% block html_body_admin %}{% all include "_html_body_admin.tpl" %}{% endblock %}
+
+    {% block ua_probe %}
+        {% include "_ua_probe.tpl"%}
+    {% endblock %}
 </body>
 </html>

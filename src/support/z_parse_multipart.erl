@@ -70,20 +70,27 @@ recv_parse(UploadCheckFun, Context) ->
 
 
 %% @doc Report progress back to the page.
+progress(0, _ContentLength, _ReceivedLength, _Context) ->
+    nop;
 progress(Percentage, ContentLength, _ReceivedLength, Context) when ContentLength > ?CHUNKSIZE*5 ->
-	case {	z_convert:to_bool(z_context:get_q("z_comet", Context)),
-			z_context:get_q("z_pageid", Context), 
+	case {	is_push_attached(Context),
+			is_pid(Context#context.page_id), 
 			z_context:get_q("z_trigger_id", Context)} of
-		{true, PageId, TriggerId} when PageId /= undefined; TriggerId /= undefined ->
-			ContextEnsured = z_context:ensure_all(Context),
-			z_session_page:add_script("z_progress('"
-						++z_utils:js_escape(TriggerId)++"',"
-						++integer_to_list(Percentage)++");", ContextEnsured);
-		_ -> nop
+		{true, true, TriggerId} when TriggerId =/= undefined, TriggerId =/= "" ->
+            JS = iolist_to_binary([
+                        "z_progress('", z_utils:js_escape(TriggerId),
+                            "',", integer_to_list(Percentage),");"
+                    ]),
+			z_transport:page(javascript, JS, Context);
+		_ -> 
+            nop
 	end;
 progress(_, _, _, _) ->
     nop.
 	
+is_push_attached(Context) ->
+    z_convert:to_bool(z_context:get_q("z_comet", Context))
+    orelse z_session_page:get_attach_state(Context) =:= attached.
 
 %% @doc Callback function collecting all data found in the multipart/form-data body
 %% @spec callback(Next, function(), form()) -> function() | form()
@@ -121,24 +128,24 @@ callback(Next, Form, UploadCheckFun) ->
             end;
 
         {body, Data} ->
-            if  Form#multipart_form.filename =/= undefined ->
-                if Form#multipart_form.file =/= undefined ->
-                    file:write(Form#multipart_form.file, Data),
-                    NewForm = Form;
+            NewForm = 
+                if  Form#multipart_form.filename =/= undefined ->
+                    if Form#multipart_form.file =/= undefined ->
+                        file:write(Form#multipart_form.file, Data),
+                        Form;
+                    true ->
+                        case file:open(Form#multipart_form.tmpfile, [raw,write]) of
+                            {ok, File} ->
+                                file:write(File, Data),
+                                Form#multipart_form{file=File};
+                            {error, Error} ->
+                                lager:error("Couldn't open ~p for writing, error: ~p~n", [Form#multipart_form.tmpfile, Error]),
+                                exit(could_not_open_file_for_writing)
+                        end
+                    end;
                 true ->
-                    case file:open(Form#multipart_form.tmpfile, [raw,write]) of
-                        {ok, File} ->
-                            file:write(File, Data),
-                            NewForm = Form#multipart_form{file=File};
-                        {error, Error} ->
-                            ?ERROR("Couldn't open ~p for writing, error: ~p~n", [Form#multipart_form.tmpfile, Error]),
-                            NewForm = Form,
-                            exit(could_not_open_file_for_writing)
-                    end
-                end;
-            true ->
-                NewForm = Form#multipart_form{data=[Form#multipart_form.data, binary_to_list(Data)]}
-            end,
+                    Form#multipart_form{data=[Form#multipart_form.data, binary_to_list(Data)]}
+                end,
             fun(N) -> callback(N, NewForm, UploadCheckFun) end;
 
          body_end ->
@@ -179,16 +186,22 @@ parse_multipart_request(ProgressFunction, Callback, Context) ->
     Prefix = <<"\r\n--", Boundary/binary>>,
     BS = size(Boundary),
     {{Chunk, Next}, ReqData1} = wrq:stream_req_body(ReqData, ?CHUNKSIZE),
-    Context1 = z_context:set_reqdata(ReqData1, Context),
-    <<"--", Boundary:BS/binary, "\r\n", Rest/binary>> = Chunk,
-    feed_mp(headers, #mp{boundary=Prefix,
-                         length=size(Chunk),
-                         content_length=Length,
-                         buffer=Rest,
-                         callback=Callback,
-                         progress=ProgressFunction,
-                         next_chunk=Next,
-                         context=Context1}).
+    case Chunk of
+        <<"--", Boundary:BS/binary, "\r\n", Rest/binary>> ->
+            Context1 = z_context:set_reqdata(ReqData1, Context),
+            feed_mp(headers, #mp{boundary=Prefix,
+                                 length=size(Chunk),
+                                 content_length=Length,
+                                 buffer=Rest,
+                                 callback=Callback,
+                                 progress=ProgressFunction,
+                                 next_chunk=Next,
+                                 context=Context1});
+        _ ->
+            lager:debug(z_context:lager_md(Context), "Could not decode multipart (~p) chunk: ~p", [Boundary, Chunk]),
+            throw({stop_request, 400})
+    end.
+
 
 
 feed_mp(headers, State=#mp{buffer=Buffer, callback=Callback}) ->
@@ -196,10 +209,15 @@ feed_mp(headers, State=#mp{buffer=Buffer, callback=Callback}) ->
         {exact, N} ->
             {State, N};
         _ ->
-           S1 = read_more(State),
-           %% Assume headers must be less than ?CHUNKSIZE
-           {exact, N} = find_in_binary(<<"\r\n\r\n">>, S1#mp.buffer),
-           {S1, N}
+            S1 = read_more(State),
+            %% Assume headers must be less than ?CHUNKSIZE
+            case find_in_binary(<<"\r\n\r\n">>, S1#mp.buffer) of
+                {exact, N} ->
+                    {S1, N};
+                _ ->
+                    lager:debug("Could not decode multipart: headers incomplete or too long: ~p", [S1#mp.buffer]),
+                    throw({stop_request, 400})
+            end
     end,
     <<Headers:P/binary, "\r\n\r\n", Rest/binary>> = State1#mp.buffer,
     NextCallback = Callback({headers, parse_headers(Headers)}),
@@ -219,8 +237,11 @@ feed_mp(body, State=#mp{boundary=Prefix, buffer=Buffer, callback=Callback}) ->
         {maybe, 0} ->
             % Found a boundary, without an ending newline
             case read_more(State) of
-                State -> throw({error, incomplete_end_boundary});
-                S1 -> feed_mp(body, S1)
+                State ->
+                    lager:debug("Could not decode multipart: incomplete end boundary at: ~p", [Buffer]),
+                    throw({stop_request, 400});
+                S1 ->
+                    feed_mp(body, S1)
             end;
         {maybe, Start} ->
             <<Data:Start/binary, Rest/binary>> = Buffer,

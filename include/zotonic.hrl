@@ -20,13 +20,12 @@
 -include("zotonic_release.hrl").
 -include("zotonic_notifications.hrl").
 -include("zotonic_events.hrl").
--include("zotonic_stats.hrl").
 -include_lib("webzmachine/include/wm_reqdata.hrl").
 
 %% @doc The request context, session information and other
 -record(context, {
         %% The host
-        host=default,
+        host=default :: atom(),
 
         %% Webmachine request data (only set when this context is used because of a request)
         wm_reqdata=undefined :: #wm_reqdata{} | undefined,
@@ -36,6 +35,7 @@
         
         %% The page and session processes associated with the current request
         session_pid=undefined :: pid() | undefined,  % one session per browser (also manages the persistent data)
+        session_id=undefined :: string() | undefined,
         page_pid=undefined :: pid() | undefined,     % multiple pages per session, used for pushing information to the browser
         page_id=undefined :: string() | undefined,
 
@@ -53,12 +53,18 @@
         pivot_server,
         module_indexer,
         translation_table,
-        
+
         %% The database connection used for (nested) transactions, see z_db
         dbc=undefined :: pid() | undefined,
 
+        %% The pid of the database pool of this site and the db driver in use (usually z_db_pgsql)
+        db=undefined :: {pid(), atom()} | undefined,
+
         %% The language selected, used by z_trans and others
         language=en :: atom(),
+
+        %% The timezone for this request
+        tz= <<"UTC">> :: string()|binary(),
         
         %% The current logged on person, derived from the session and visitor
         acl=undefined,      %% opaque placeholder managed by the z_acl module
@@ -93,6 +99,34 @@
 %% Record used for parsing multipart body (see z_parse_multipart)
 -record(multipart_form, {name, data, filename, tmpfile, content_type, content_length, file, files=[], args=[]}).
 -record(upload, {filename, tmpfile, data, mime}).
+
+%% Record used for transporting data between the user-agent and the server.
+-record(z_msg_v1, {
+        qos = 0 :: 0 | 1 | 2,
+        dup = false :: boolean(),
+        msg_id :: binary(),
+        timestamp :: pos_integer(),
+        content_type = ubf :: text | javascript | json | form | ubf | atom() | binary(),
+        delegate = postback :: postback | mqtt | atom() | binary(),
+        push_queue = page :: page | session | user,
+
+        % Set by transports from user-agent to server
+        ua_class=undefined :: ua_classifier:device_type() | undefined,
+        session_id :: binary(),
+        page_id :: binary(),
+
+        % Payload data
+        data :: any()
+    }).
+
+-record(z_msg_ack, {
+        qos = 1 :: 1 | 2,
+        msg_id :: binary(),
+        push_queue = page :: page | session | user,
+        session_id :: binary(),
+        page_id :: binary(),
+        result :: any()
+    }).
 
 %% Model value interface for templates
 -record(m, {model, value}).
@@ -185,7 +219,7 @@
 -define(SESSION_UA_CLASS_Q, "z_ua").
 
 %% Number of seconds between two comet polls before the page expires
--define(SESSION_PAGE_TIMEOUT, 20).
+-define(SESSION_PAGE_TIMEOUT, 30).
 
 %% Number of seconds between session expiration checks
 -define(SESSION_CHECK_EXPIRE, 10).
@@ -218,6 +252,8 @@
 %% Notifier defines
 -define(NOTIFIER_DEFAULT_PRIORITY, 500).
 
+-define(DB_PROPS(N), {term, N}).
+
 %% Below is copied (and adapted) from Nitrogen, which is copyright 2008-2009 Rusty Klophaus
 
 %%% LOGGING %%%
@@ -225,6 +261,9 @@
 -define(PRINT(Var), error_logger:info_msg("DEBUG: ~p:~p - ~p: ~p~n", [?MODULE, ?LINE, ??Var, Var])).
 -define(LOG(Msg, Args), error_logger:info_msg(Msg, Args)).
 -define(ERROR(Msg, Args), error_logger:error_msg("~p:~p "++Msg, [?MODULE, ?LINE|Args])).
+
+-define(STACKTRACE, erlang:display(try throw(a) of _ -> a catch _:_ -> erlang:get_stacktrace() end)).
+
 
 -define(zDebug(Msg, Context), z:debug(Msg, [{module, ?MODULE}, {line, ?LINE}], Context)).
 -define(zInfo(Msg, Context), z:info(Msg, [{module, ?MODULE}, {line, ?LINE}], Context)).

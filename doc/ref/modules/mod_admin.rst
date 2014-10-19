@@ -40,7 +40,7 @@ admin.
 
 .. highlight:: javascript
    
-The template must contain Javascript which modifies the `tinyInit`
+The template must contain JavasSript which modifies the `tinyInit`
 variable just before the editor is started. For example, to tweak the
 "paste" options you can put the following in the template::
 
@@ -51,6 +51,18 @@ variable just before the editor is started. For example, to tweak the
   tinyInit.paste_strip_class_attributes = true;
   tinyInit.paste_text_sticky = true;
   tinyInit.paste_text_sticky_default = true;
+
+
+TinyMCE Zotonic options
+```````````````````````
+
+Zotonic provides extra init options:
+
+``z_insert_dialog_enabled``
+  Set this to false to prevent the insert media dialog from showing. Default `true`.
+
+``z_properties_dialog_enabled``
+  Set this to false to prevent the media properties dialog from showing. Default `true`.
 
 
 Writing admin widget templates
@@ -99,8 +111,10 @@ import/export sidebar widget. Excerpt from mod_backup’s `_admin_edit_sidebar.t
         {% endif %}
     {% endblock %}
 
+In this example, when the condition is true, the wrapper is rendered normally (content is inherited from the extended template); when false, the wrapper block is overridden by new (but void) content.
 
-.. seealso:: :ref:`template-admin_edit_widget_i18n`
+
+.. seealso:: :ref:`template-admin_edit_widget_i18n`, :ref:`tag-inherit`
 
 
 Resource meta `features`
@@ -111,7 +125,7 @@ properties (usually in the form of checkboxes) that decide what to
 show or hide on certain pages in the admin. To use this, create a
 ``_admin_features.category.tpl`` in your module.
 
-For instance, :ref:`mod_geomap` defines the following
+For instance, the module `mod_geomap` defines the following
 ``_admin_features.category.tpl`` to create an extra checkbox so that
 per category can be defined whether or not the geodata box should be
 shown::

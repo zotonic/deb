@@ -1,17 +1,20 @@
 {% lib 
-    "bootstrap/js/bootstrap.min.js"
+    "admin-bootstrap3/js/bootstrap.min.js"
+%}
 
+{% lib
     "js/apps/zotonic-1.0.js"
     "js/apps/z.widgetmanager.js"
 
+    "js/modules/ubf.js"
     "js/modules/jquery.hotkeys.js"
 
     "js/apps/admin-common.js"
-    "js/modules/tiny-init.js"
-    "js/modules/z.adminwidget.js"
-    
+
     "js/jquery.ui.nestedSortable.js"
-    
+
+    "js/modules/z.adminwidget.js"
+   
     "js/modules/z.notice.js"
     "js/modules/z.tooltip.js"
     "js/modules/z.dialog.js"
@@ -23,6 +26,7 @@
     "js/modules/livevalidation-1.3.js"
     "js/modules/jquery.loadmask.js"
     "js/modules/jquery.timepicker.min.js"
+    "js/modules/jstz.min.js"
 %}
 {% all include "_admin_lib_js.tpl" %}
 

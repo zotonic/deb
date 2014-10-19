@@ -50,6 +50,10 @@
     lookup_by_type_and_key/3,
     lookup_by_type_and_key_multi/3,
 
+    lookup_by_rememberme_token/2,
+    get_rememberme_token/2,
+    reset_rememberme_token/2,
+
 	set_by_type/4,
 	set_by_type/5,
 	delete_by_type/3,
@@ -177,13 +181,13 @@ set_username_pw(Id, Username, Password, Context) ->
                                 propb = $3,
                                 is_verified = true,
                                 modified = now()
-                            where type = 'username_pw' and rsc_id = $1", [Id, Username1, Hash], Ctx),
+                            where type = 'username_pw' and rsc_id = $1", [Id, Username1, {term, Hash}], Ctx),
                 case Rupd of
                     0 ->
                         UniqueTest = z_db:q1("select count(*) from identity where type = 'username_pw' and key = $1", [Username1], Ctx),
                         case UniqueTest of
                             0 ->
-                                Rows = z_db:q("insert into identity (rsc_id, is_unique, is_verified, type, key, propb) values ($1, true, true, 'username_pw', $2, $3)", [Id, Username1, Hash], Ctx),
+                                Rows = z_db:q("insert into identity (rsc_id, is_unique, is_verified, type, key, propb) values ($1, true, true, 'username_pw', $2, $3)", [Id, Username1, {term, Hash}], Ctx),
                                 z_db:q("update rsc set creator_id = id where id = $1 and creator_id <> id", [Id], Ctx),
                                 Rows;
                             _Other ->
@@ -195,6 +199,7 @@ set_username_pw(Id, Username, Password, Context) ->
             end,
             case z_db:transaction(F, Context) of
                 1 ->
+                    reset_rememberme_token(Id, Context),
                     z_depcache:flush(Id, Context),
                     ok;
                 R ->
@@ -263,6 +268,55 @@ check_email_pw_1([Idn|Rest], Email, Password, Context) ->
             end
     end.
 
+%% @doc Find the user id connected to the 'rememberme' cookie value.
+-spec lookup_by_rememberme_token(binary(), #context{}) -> {ok, pos_integer()} | {error, enoent}.
+lookup_by_rememberme_token(Token, Context) ->
+    case z_db:q1("select rsc_id from identity where key = $1", [Token], Context) of
+        undefined ->
+            {error, enoent};
+        Id when is_integer(Id) ->
+            {ok, Id}
+    end.
+
+%% @doc Find the 'rememberme' cookie value for the user, generate a new one if not found.
+-spec get_rememberme_token(pos_integer(), #context{}) -> {ok, binary()}.
+get_rememberme_token(UserId, Context) ->
+    case z_db:q1("select key from identity
+                  where type = 'rememberme'
+                    and rsc_id = $1", [UserId], Context) of
+        undefined ->
+            reset_rememberme_token(UserId, Context);
+        Token ->
+            {ok, Token}
+    end.
+
+%% @doc Reset the 'rememberme' cookie value. Needed if an user's password is changed.
+-spec reset_rememberme_token(pos_integer(), #context{}) -> {ok, binary()}.
+reset_rememberme_token(UserId, Context) ->
+    z_db:transaction(
+        fun(Ctx) ->
+            delete_by_type(UserId, rememberme, Ctx),
+            Token = new_unique_key(rememberme, Ctx),
+            {ok, _} = insert_unique(UserId, rememberme, Token, Ctx),
+            {ok, Token}
+        end,
+        Context).
+
+new_unique_key(Type, Context) ->
+    Key = z_convert:to_binary(z_ids:id()),
+    case z_db:q1("select id
+                  from identity
+                  where type = $1
+                    and key = $2",
+                 [Type, Key],
+                 Context)
+    of
+        undefined ->
+            Key;
+        _Id ->
+            new_unique_key(Type, Context)
+    end.
+
 
 %% @doc Fetch a specific identity entry.
 get(IdnId, Context) ->
@@ -286,14 +340,14 @@ get_rsc(Id, Type, Context) ->
 %% @spec hash(Password) -> tuple()
 hash(Pw) ->
     Salt = z_ids:id(10),
-    Hash = crypto:sha([Salt,Pw]),
+    Hash = crypto:hash(sha, [Salt,Pw]),
     {hash, Salt, Hash}.
 
 
 %% @doc Compare if a password is the same as a hash.
 %% @spec hash_is_equal(Password, Hash) -> bool()
 hash_is_equal(Pw, {hash, Salt, Hash}) ->
-    NewHash = crypto:sha([Salt, Pw]),
+    NewHash = crypto:hash(sha, [Salt, Pw]),
     Hash =:= NewHash;
 hash_is_equal(_, _) ->
     false.
@@ -407,8 +461,8 @@ set_by_type(RscId, Type, Key, Context) ->
     set_by_type(RscId, Type, Key, [], Context).
 set_by_type(RscId, Type, Key, Props, Context) ->
 	F = fun(Ctx) -> 
-		case z_db:q("update identity set key = $3, propb = $4 where rsc_id = $1 and type = $2", [RscId, Type, Key, Props], Ctx) of
-			0 -> z_db:q("insert into identity (rsc_id, type, key, propb) values ($1,$2,$3,$4)", [RscId, Type, Key, Props], Ctx);
+		case z_db:q("update identity set key = $3, propb = $4 where rsc_id = $1 and type = $2", [RscId, Type, Key, {term, Props}], Ctx) of
+			0 -> z_db:q("insert into identity (rsc_id, type, key, propb) values ($1,$2,$3,$4)", [RscId, Type, Key, {term, Props}], Ctx);
             N when N > 0 -> ok
 		end
 	end,

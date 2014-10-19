@@ -23,7 +23,9 @@
 	{_ You are not allowed to edit the _} {{ m.rsc[r.category_id].title|lower }} “<span {% include "_language_attrs.tpl" %}>{{ r.title|striptags }}</span>”
 	</h2>
 	{% else %}
-	<p class="admin-chapeau">
+	    <p class="admin-chapeau">
+            {% include "_admin_edit_leader_image.tpl" %}
+            
 		{_ editing _}
 		{% if m.acl.insert[r.category.name|as_atom] and not r.is_a.category and not r.is_a.predicate %}
 		<a	href="javascript:;" id="changecategory" title="{_ Change category _}">{{ m.rsc[r.category_id].title|lower }}</a>:
@@ -42,16 +44,16 @@
 {% block admin_edit_form_pre %}{% endblock %}
 
 {% wire id="rscform" type="submit" postback="rscform" %}
-<form id="rscform" method="post" action="postback" class="form-horizontal">
+<form id="rscform" method="post" action="postback" class="form">
 	<input type="hidden" name="id" value="{{ id }}" />
 
-	<div class="row-fluid">
-		<div class="span8" id="poststuff">
+	<div class="row">
+		<div class="col-lg-8 col-md-8" id="poststuff">
             {% block admin_edit_form_top %}{% endblock %}
 			{% catinclude "_admin_edit_main_parts.tpl" id is_editable=is_editable languages=languages r=r %}
 		</div>
 
-		<div class="span4" id="sidebar">
+		<div class="col-lg-4 col-md-4" id="sidebar">
 			{% catinclude "_admin_edit_sidebar_parts.tpl" id is_editable=is_editable languages=languages r=r %}
 		</div>
 	</div>
@@ -69,7 +71,7 @@
 
 {% endblock %}
 
-{% block tinymce %}
-	{% include "_admin_tinymce.tpl" %}
+{% block editor %}
+	{% include "_editor.tpl" %}
 {% endblock %}
 

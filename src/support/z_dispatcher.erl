@@ -27,6 +27,7 @@
 
 %% z_dispatch exports
 -export([
+    dispatcher_args/0,
 	url_for/2,
 	url_for/3,
 	url_for/4,
@@ -51,6 +52,13 @@
 %%====================================================================
 %% API
 %%====================================================================
+
+%% @doc A list of dispatch rule arguments that shouldn't be considered with redirects.
+%%      Used by controller_file_id and controller_redirect
+%% TODO: this behaviour should be changed to an _inclusive_ list instead of a filter list 
+dispatcher_args() ->
+    [ is_permanent, dispatch, q, qargs, zotonic_dispatch, ssl, protocol, session_id, set_session_id ].
+
 %% @spec start_link(SiteProps) -> {ok,Pid} | ignore | {error,Error}
 %% @doc Starts the dispatch server
 start_link(SiteProps) ->
@@ -96,12 +104,12 @@ url_for(Name, Args, Escape, #context{dispatcher=Dispatcher} = Context) ->
 %% @spec hostname(Context) -> iolist()
 %% @doc Fetch the preferred hostname for this site
 hostname(#context{dispatcher=Dispatcher}) ->
-    gen_server:call(Dispatcher, 'hostname').
+    gen_server:call(Dispatcher, 'hostname', infinity).
 
 %% @spec hostname_port(Context) -> iolist()
 %% @doc Fetch the preferred hostname, including port, for this site
 hostname_port(#context{dispatcher=Dispatcher}) ->
-    gen_server:call(Dispatcher, 'hostname_port').
+    gen_server:call(Dispatcher, 'hostname_port', infinity).
 
 %% @doc Make the url an absolute url
 abs_url(Url, Context) ->
@@ -110,19 +118,19 @@ abs_url(Url, Context) ->
 %% @spec dispatchinfo(Context) -> {host, hostname, streamhost, smtphost, hostaliases, redirect, dispatchlist}
 %% @doc Fetch the dispatchlist for the site.
 dispatchinfo(#context{dispatcher=Dispatcher}) -> 
-    gen_server:call(Dispatcher, 'dispatchinfo');
+    gen_server:call(Dispatcher, 'dispatchinfo', infinity);
 dispatchinfo(Server) when is_pid(Server) orelse is_atom(Server) -> 
-    gen_server:call(Server, 'dispatchinfo').
+    gen_server:call(Server, 'dispatchinfo', infinity).
 
 
 %% @doc Update the dispatch list but don't reload it yet. Used when flushing all sites, see z:flush/0
 update(#context{dispatcher=Dispatcher}) ->
-    gen_server:call(Dispatcher, 'reload').
+    gen_server:call(Dispatcher, 'reload', infinity).
 
 
 %% @doc Reload all dispatch lists.  Finds new dispatch lists and adds them to the dispatcher
 reload(#context{dispatcher=Dispatcher}) ->
-    gen_server:call(Dispatcher, 'reload'),
+    gen_server:call(Dispatcher, 'reload', infinity),
     z_sites_dispatcher:update_dispatchinfo().
 
 reload(module_ready, Context) ->
@@ -192,6 +200,10 @@ to_bool(N) -> z_convert:to_bool(N).
 init(SiteProps) ->
     {host, Host} = proplists:lookup(host, SiteProps),
     {hostname, Hostname} = proplists:lookup(hostname, SiteProps),
+    lager:md([
+        {site, Host},
+        {module, ?MODULE}
+      ]),
     Streamhost = proplists:get_value(streamhost, SiteProps),
     Smtphost = proplists:get_value(smtphost, SiteProps),
     HostAlias = proplists:get_value(hostalias, SiteProps, []),
@@ -306,7 +318,7 @@ reload_dispatch_list(#state{context=Context} = State) ->
 
 %% @doc Collect all dispatch lists.  Checks priv/dispatch for all dispatch list definitions.
 collect_dispatch_lists(Context) ->
-    Files      = filelib:wildcard(filename:join([z_utils:lib_dir(priv), "sites", Context#context.host, "dispatch", "*"])),
+    Files      = filelib:wildcard(filename:join([z_path:site_dir(Context), "dispatch", "*"])),
     Modules    = z_module_manager:active(Context),
     ModuleDirs = z_module_manager:scan(Context),
     ModDisp    = [ {M, filelib:wildcard(filename:join([proplists:get_value(M, ModuleDirs), "dispatch", "*"]))} || M <- Modules ],

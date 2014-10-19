@@ -29,7 +29,9 @@
     observe_rsc_update/3,
     observe_media_viewer/2,
     observe_media_stillimage/2,
-    event/2
+    event/2,
+
+    preview_create/2
 ]).
 
 -include_lib("zotonic.hrl").
@@ -124,7 +126,7 @@ observe_media_viewer(#media_viewer{id=Id, props=Props, filename=Filename, option
                        {oembed, OEmbed} ->
                            case proplists:lookup(provider_name, OEmbed) of
                                {provider_name, N} ->
-                                   Tpl = "_oembed_embeddable_" ++ z_string:to_name(N) ++ ".tpl",
+                                   Tpl = iolist_to_binary(["_oembed_embeddable_",z_string:to_name(N),".tpl"]),
                                    case z_template:find_template(Tpl, Context) of
                                        {ok, _} ->
                                            z_template:render(Tpl, TplOpts, Context);
@@ -163,21 +165,12 @@ is_ssl(Context) ->
 
 %% @doc Return the filename of a still image to be used for image tags.
 %% @spec observe_media_stillimage(Notification, _Context) -> undefined | {ok, Filename}
-observe_media_stillimage(#media_stillimage{id=Id, props=Props}, Context) ->
+observe_media_stillimage(#media_stillimage{props=Props}, _Context) ->
     case proplists:get_value(mime, Props) of
         ?OEMBED_MIME ->
-            case m_rsc:p(Id, depiction, Context) of
-                undefined ->
-                    case z_convert:to_list(proplists:get_value(preview_filename, Props)) of
-                        [] ->
-                            {ok, "lib/images/embed.jpg"};
-                        PreviewFile -> {ok, PreviewFile}
-                    end;
-                DepictionProps ->
-                    case z_convert:to_list(proplists:get_value(filename, DepictionProps)) of
-                        [] -> undefined;
-                        Filename -> {ok, Filename}
-                    end
+            case z_convert:to_list(proplists:get_value(preview_filename, Props)) of
+                [] -> {ok, "lib/images/embed.jpg"};
+                PreviewFile -> {ok, PreviewFile}
             end;
         _ ->
             undefined
@@ -294,6 +287,25 @@ event(#postback{message=fix_missing}, Context) ->
     end.
 
 
+%% @doc (Re)create a preview from the stored oembed information
+preview_create(Id, Context) ->
+    case z_acl:rsc_editable(Id, Context) of
+        true ->
+            case m_media:get(Id, Context) of
+                Ms when is_list(Ms) ->
+                    case proplists:get_value(oembed, Ms) of
+                        Json when is_list(Json) ->
+                            preview_create_from_json(Id, Json, Context);
+                        undefined ->
+                            {error, notoembed}
+                    end;
+                undefined ->
+                    {error, notfound}
+            end;
+        false ->
+            {error, eacces}
+    end.
+
 %%====================================================================
 %% support functions
 %%====================================================================
@@ -302,24 +314,14 @@ event(#postback{message=fix_missing}, Context) ->
 %% that need to be set on the rsc when the rsc as no title.
 preview_create(MediaId, MediaProps, Context) ->
     case z_convert:to_list(proplists:get_value(oembed_url, MediaProps)) of
-        [] -> undefined;
+        [] -> 
+            undefined;
         Url -> 
             case oembed_request(Url, Context) of
                 {ok, Json} ->
                     %% store found properties in the media part of the rsc
                     ok = m_media:replace(MediaId, [{oembed, Json} | MediaProps], Context),
-                    Type = proplists:get_value(type, Json),
-                    case preview_url_from_json(Type, Json) of
-                        undefined -> nop;
-                        ThumbUrl ->
-                            {CT, ImageData} = thumbnail_request(ThumbUrl, Context),
-                            {ok, _} = m_media:save_preview(MediaId, ImageData, CT, Context),
-                            %% move to correct category if rsc is a 'media'
-                            case m_rsc:is_a(MediaId, media, Context) of
-                                true -> m_rsc:update(MediaId, [{category, type_to_category(Type)}], Context);
-                                false -> m_rsc:touch(MediaId, Context)
-                            end
-                    end,
+                    _ = preview_create_from_json(MediaId, Json, Context),
                     proplists:get_value(title, Json);
                 {error, {http, Code, Body}} ->
                     Err = [{error, http_error}, {code, Code}, {body, Body}],
@@ -331,6 +333,25 @@ preview_create(MediaId, MediaProps, Context) ->
     end.
 
 
+preview_create_from_json(MediaId, Json, Context) ->
+    Type = proplists:get_value(type, Json),
+    case preview_url_from_json(Type, Json) of
+        undefined -> 
+            nop;
+        ThumbUrl ->
+            case thumbnail_request(ThumbUrl, Context) of
+                {ok, {CT, ImageData}} ->
+                    {ok, _} = m_media:save_preview(MediaId, ImageData, CT, Context),
+                    %% move to correct category if rsc is a 'media'
+                    case m_rsc:is_a(MediaId, media, Context) of
+                        true -> m_rsc:update(MediaId, [{category, type_to_category(Type)}], Context);
+                        false -> m_rsc:touch(MediaId, Context)
+                    end;
+                {error, _} ->
+                    nop
+            end
+    end.
+
 %% @doc Perform OEmbed discovery on a given URL.
 %% @spec oembed_request(string(), #context{}) -> [{Key, Value}]
 oembed_request(Url, Context) ->
@@ -340,18 +361,22 @@ oembed_request(Url, Context) ->
     z_depcache:memo(F, {oembed, Url}, 3600, Context).
 
 
-
 %% @doc Given a thumbnail URL, download it and return the content type plus image data pair.
-thumbnail_request(ThumbUrl, Context) ->
-    F = fun() ->
-                {ok, {{_, 200, _}, Headers, ImageData}} = httpc:request(get, {z_convert:to_list(ThumbUrl), []}, [], []),
-                CT = case proplists:lookup("content-type", Headers) of
-                         {"content-type", C} -> C;
-                         _ -> "image/jpeg"
-                     end,
-                {CT, ImageData}
-        end,
-    z_depcache:memo(F, {oembed_thumbnail, ThumbUrl}, 3600, Context).
+thumbnail_request(ThumbUrl, _Context) ->
+    case httpc:request(get, {z_convert:to_list(ThumbUrl), []}, [], []) of
+        {ok, {{_, 200, _}, Headers, ImageData}} ->
+            CT = case proplists:lookup("content-type", Headers) of
+                     {"content-type", C} -> C;
+                     _ -> "image/jpeg"
+                 end,
+            {ok, {CT, ImageData}};
+        {ok, {{_, 404, _}, _Headers, _ImageData}} ->
+            lager:info("mod_oembed: 404 on thumbnail url ~p", [ThumbUrl]),
+            {error, notfound};
+        Other ->
+            lager:warning("mod_oembed: unexpected result for ~p: ~p", [ThumbUrl, Other]),
+            {error, httpc}
+    end.
 
 
 %% @doc Get the preview URL from JSON structure. Either the thumbnail
