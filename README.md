@@ -1,3 +1,8 @@
+**Please note that these packages are OLD and NOT maintained.**
+
+**Use the Git repository or the Docker images at https://github.com/zotonic/zotonic instead.**
+
+
 Welcome to Zotonic [![Build Status](https://secure.travis-ci.org/zotonic/zotonic.png?branch=master)](http://travis-ci.org/zotonic/zotonic)
 ==================
 
